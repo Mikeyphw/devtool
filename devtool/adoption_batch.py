@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+from urllib.parse import urlsplit
 import stat
 import subprocess
 import sys
@@ -26,6 +27,8 @@ from .wrapper_launcher import expected_launcher_texts
 from .overlay.checker import check_overlay
 
 SCHEMA = "devtool.multi-repo-adoption.v1"
+DRAFT_INPUT_SCHEMA = "devtool.multi-repo-adoption-input.v1"
+DRAFT_KIND = "devtool.multi-repo-adoption.draft.v1"
 SHA = re.compile(r"^[a-f0-9]{40}$")
 DIGEST = re.compile(r"^[a-f0-9]{64}$")
 NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
@@ -115,6 +118,131 @@ def _read_config(path: Path) -> dict[str, Any]:
             raise AdoptionBlocked(f"{row['id']}: reviewed_wrapper_sha256 must map managed filenames to SHA-256")
     return payload
 
+
+
+def _strict_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject duplicate JSON names instead of accepting last-wins source pins."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise AdoptionBlocked("duplicate JSON key in adoption input: " + key[:64])
+        result[key] = value
+    return result
+
+
+def draft(input_path: Path) -> dict[str, Any]:
+    """Read-only source-locked manifest proposal, never an approval or mutation.
+
+    User supplies only the repository/overlay identities, not derived Git pins.
+    The existing assessment remains the sole adoption-preflight authority.
+    Save the returned ``manifest`` only after reviewing it explicitly.
+    """
+    if input_path.is_symlink() or not input_path.is_file() or input_path.stat().st_size > 2_000_000:
+        raise AdoptionBlocked("adoption input missing, symlinked or oversized")
+    try:
+        spec = json.loads(input_path.read_text(encoding="utf-8"), object_pairs_hook=_strict_json_pairs)
+    except (UnicodeError, ValueError, TypeError) as exc:
+        if isinstance(exc, AdoptionBlocked):
+            raise
+        raise AdoptionBlocked("invalid adoption input JSON") from exc
+    if not isinstance(spec, dict) or set(spec) != {"schema", "repositories"} or spec["schema"] != DRAFT_INPUT_SCHEMA:
+        raise AdoptionBlocked("unknown or ambiguous adoption input schema")
+    entries = spec["repositories"]
+    if not isinstance(entries, list) or not 1 <= len(entries) <= 32:
+        raise AdoptionBlocked("adoption input must contain 1-32 repositories")
+    rows: list[dict[str, Any]] = []
+    permitted = {"id", "path", "overlay", "remote", "wrapper", "migrate_config", "repair_gitignore", "reviewed_wrapper_sha256", "distribution"}
+    reviews: list[dict[str, Any]] = []
+    for item in entries:
+        if not isinstance(item, dict) or set(item) - permitted or not {"id", "path", "overlay", "remote"}.issubset(item):
+            raise AdoptionBlocked("adoption input has unknown or missing repository fields")
+        repo = Path(str(item["path"])).expanduser()
+        archive = Path(str(item["overlay"])).expanduser()
+        if not repo.is_absolute() or repo.is_symlink() or not repo.is_dir():
+            raise AdoptionBlocked("adoption checkout must be a non-symlink absolute directory")
+        if not archive.is_absolute() or archive.is_symlink() or not archive.is_file() or archive.stat().st_size > 150_000_000:
+            raise AdoptionBlocked("adoption artifact must be a bounded regular absolute file")
+        if not isinstance(item["remote"], str) or not item["remote"].strip() or item["remote"].startswith("-"):
+            raise AdoptionBlocked("explicit safe remote name required")
+        if not NAME.fullmatch(str(item["id"])):
+            raise AdoptionBlocked("adoption repository id must be a bounded slug")
+        flags = {name: item.get(name, False) for name in ("wrapper", "migrate_config", "repair_gitignore")}
+        if any(type(value) is not bool for value in flags.values()):
+            raise AdoptionBlocked("adoption options must be strict booleans")
+        review = item.get("reviewed_wrapper_sha256", {})
+        if not isinstance(review, dict) or any(k not in WRAPPER or not isinstance(v, str) or not DIGEST.fullmatch(v) for k,v in review.items()):
+            raise AdoptionBlocked("reviewed wrapper digests invalid")
+        # Never accept caller-selected head, tree or remote URL in a draft.
+        identity = _source(repo, {"remote": item["remote"]})
+        if not SHA.fullmatch(identity["head"]) or not SHA.fullmatch(identity["tree"]) or not identity["branch"] or not identity["remote"]:
+            raise AdoptionBlocked("unavailable Git HEAD/tree/branch/remote identity")
+        if (any(ord(ch)<33 or ord(ch)>126 for ch in identity["remote"]) or
+                '?' in identity["remote"] or '#' in identity["remote"] or
+                ("//" in identity["remote"] and bool(urlsplit(identity["remote"]).username)) or
+                ('@' in identity["remote"] and not identity["remote"].startswith('git@'))):
+            raise AdoptionBlocked("remote URL contains possible credentials or unsafe characters")
+        if not _clean(repo):
+            raise AdoptionBlocked("draft refuses dirty or untracked checkout: " + item["id"])
+        row = {"id": item["id"], "path": str(repo), "overlay": str(archive),
+               "overlay_sha256": _file_sha256(archive), "remote": item["remote"],
+               "remote_url": identity["remote"], "branch": identity["branch"],
+               "source_head": identity["head"], "source_tree": identity["tree"],
+               **flags}
+        if review:
+            row["reviewed_wrapper_sha256"] = review
+        declared = item.get("distribution")
+        if declared is not None:
+            if (not isinstance(declared, dict) or set(declared) != {"target", "workflow", "devtool_sha"}
+                    or not SHA.fullmatch(str(declared.get("devtool_sha", "")))):
+                raise AdoptionBlocked("distribution review requires target/workflow/exact Devtool SHA")
+            from .actions_language_providers import provider_plan, ProviderError
+            from .actions_distributions import distribution_contract, DistributionError
+            try:
+                contract = distribution_contract(repo, target=declared["target"], workflow=declared["workflow"])
+                provider = provider_plan(repo, target=declared["target"], workflow=declared["workflow"],
+                                         devtool_sha=declared["devtool_sha"])
+            except (ProviderError, DistributionError, ValueError, OSError) as exc:
+                raise AdoptionBlocked("consumer distribution source review blocked: " + str(exc)[:160]) from None
+            if not provider.get("distributions") or not contract["entries"]:
+                raise AdoptionBlocked("consumer source review lacks declared distributions")
+            reviews.append({"id": row["id"], "source_commit": identity["head"],
+                            "devtool_commit": declared["devtool_sha"],
+                            "target": contract["target"], "workflow": contract["workflow"],
+                            "contract_sha256": contract["contract_sha256"],
+                            "distribution_ids": [entry["id"] for entry in contract["entries"]],
+                            "source_plan_sha256": provider.get("plan_sha256", ""),
+                            "local_bytes_verified": False, "hosted_execution_verified": False,
+                            "consumer_qualified": False, "release_qualified": False})
+        rows.append(row)
+    # Reuse the strict batch manifest reader rather than introducing a weaker
+    # parser for draft output. Bounds, remote identities and overlap are shared.
+    _verify_rows_for_draft(rows)
+    assessments = [_assessment(Path(row["path"]), row, {}) for row in rows]
+    safe = all(x["state"] in ("FRESH", "APPLIED_UNCOMMITTED") for x in assessments)
+    return {"schema_version": 1, "kind": DRAFT_KIND, "read_only": True,
+            "manifest": {"schema": SCHEMA, "repositories": rows},
+            "assessments": assessments, "consumer_source_reviews": reviews,
+            "safe_to_apply": safe, "approval_required": True, "mutation_performed": False,
+            "cross_repository_atomic": False, "formal_release_qualified": False}
+
+
+def _file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _verify_rows_for_draft(rows: list[dict[str, Any]]) -> None:
+    ids: set[str] = set()
+    roots: list[Path] = []
+    for row in rows:
+        repo = Path(row["path"]).resolve()
+        if row["id"] in ids or any(repo == root or repo in root.parents or root in repo.parents for root in roots):
+            raise AdoptionBlocked("duplicate ids, paths or nested repositories in draft")
+        ids.add(row["id"])
+        roots.append(repo)
 
 def _archive(repo: Path, row: dict[str, Any]) -> tuple[dict[str, bytes | None], dict[str, bytes | None], dict[str, Any]]:
     """Inspect a source-bound overlay; never run hooks or stage changes."""
@@ -586,16 +714,26 @@ def apply(manifest_path: Path, state_dir: Path, *, yes: bool = False) -> dict[st
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Source-locked multi-repository Devtool adoption")
-    p.add_argument("operation", choices=("plan", "apply", "resume", "status"))
+    p.add_argument("operation", choices=("plan", "apply", "resume", "status", "draft"))
     p.add_argument("manifest", type=Path)
     p.add_argument("--state-dir", type=Path, default=Path.home() / ".local/state/devtool/adoption-batches")
     p.add_argument("--yes", action="store_true")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--manifest-only", action="store_true", help="draft only: print reviewed source-pinned manifest JSON")
     args = p.parse_args(argv)
     try:
-        if args.operation in ("apply", "resume"):
+        if args.operation == "draft":
+            result = draft(args.manifest)
+            if args.manifest_only and result["safe_to_apply"]:
+                print(json.dumps(result["manifest"], sort_keys=True, indent=2, ensure_ascii=False))
+                return 0
+        elif args.operation in ("apply", "resume"):
+            if args.manifest_only:
+                raise AdoptionBlocked("--manifest-only is valid only for draft")
             result = apply(args.manifest, args.state_dir, yes=args.yes)
         else:
+            if args.manifest_only:
+                raise AdoptionBlocked("--manifest-only is valid only for draft")
             result = plan(args.manifest, args.state_dir)
     except (AdoptionBlocked, OSError, ValueError, RuntimeError) as exc:
         result = {"schema": SCHEMA, "ok": False, "overall": "BLOCKED", "reason": str(exc),

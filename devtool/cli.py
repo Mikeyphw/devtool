@@ -13534,13 +13534,15 @@ def _main_after_parse(
         return 0 if payload.get("ok") else 2
 
     if args.command == "adopt-batch":
-        from .adoption_batch import plan as adoption_plan, apply as adoption_apply, AdoptionBlocked
+        from .adoption_batch import plan as adoption_plan, apply as adoption_apply, draft as adoption_draft, AdoptionBlocked
         from . import adoption_staged
         manifest = Path(str(args.batch_manifest)).expanduser()
         state_dir = Path(str(getattr(args, 'state_dir', '') or '')).expanduser() if getattr(args,'state_dir',None) else Path.home()/'.local/state/devtool/adoption-batches'
         try:
             operation = str(args.batch_operation)
-            if operation in {"prepare", "publish", "recover", "resume-staged"}:
+            if operation == "draft":
+                payload = adoption_draft(manifest)
+            elif operation in {"prepare", "publish", "recover", "resume-staged"}:
                 worker = {"prepare": adoption_staged.prepare, "publish": adoption_staged.publish,
                           "recover": adoption_staged.recover, "resume-staged": adoption_staged.publish}[operation]
                 payload = worker(manifest, state_dir, yes=bool(getattr(args, 'yes', False)))

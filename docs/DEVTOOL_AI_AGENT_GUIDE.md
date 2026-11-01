@@ -6261,8 +6261,8 @@ Source-locked multi-repository adoption, staged commit publication and guarded r
 
 | Argument / option | Meaning |
 | --- | --- |
-| `BATCH_OPERATION` | Operation (legacy plan/apply/resume/status or staged review/prepare/publish/resume-staged/recover/status-staged) Choices: plan, apply, resume, status, review-staged, prepare, publish, resume-staged, recover, status-staged, upgrade-review, recovery-plan |
-| `BATCH_MANIFEST` | Absolute path to source-lock JSON manifest |
+| `BATCH_OPERATION` | Operation (read-only draft, legacy plan/apply/resume/status, or staged lifecycle) Choices: draft, plan, apply, resume, status, review-staged, prepare, publish, resume-staged, recover, status-staged, upgrade-review, recovery-plan |
+| `BATCH_MANIFEST` | Absolute JSON path: draft input or source-locked adoption manifest |
 | `--state-dir STATE_DIR` | External durable batch-journal directory |
 | `--yes` | Explicitly permit per-repo adoption commits |
 | `--json` | Emit a stable JSON receipt |

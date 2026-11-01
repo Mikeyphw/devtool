@@ -124804,6 +124804,7 @@
               {
                 "action": "store",
                 "choices": [
+                  "draft",
                   "plan",
                   "apply",
                   "resume",
@@ -124821,7 +124822,7 @@
                 "default": null,
                 "dest": "batch_operation",
                 "group": null,
-                "help": "Operation (legacy plan/apply/resume/status or staged review/prepare/publish/resume-staged/recover/status-staged)",
+                "help": "Operation (read-only draft, legacy plan/apply/resume/status, or staged lifecycle)",
                 "metavar": null,
                 "mutex": null,
                 "nargs": null,
@@ -124836,7 +124837,7 @@
                 "default": null,
                 "dest": "batch_manifest",
                 "group": null,
-                "help": "Absolute path to source-lock JSON manifest",
+                "help": "Absolute JSON path: draft input or source-locked adoption manifest",
                 "metavar": null,
                 "mutex": null,
                 "nargs": null,
