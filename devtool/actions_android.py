@@ -367,7 +367,12 @@ def _instrumentation_xml(dump: str, *, test_package: str, target_package: str) -
             insts[0][0] <= roots[0][0] or insts[0][1] <= roots[0][1]):
         raise GitHubActionsError("Compiled manifest instrumentation declaration missing or ambiguous")
     def attrs_at(start: int, depth: int):
-        stop = next((i for i, d, _ in elements if i > start and d <= depth), len(lines))
+        # aapt XML-tree syntax lists an element's A: attributes immediately
+        # after its E: header, before its first child E: header.  An A: under
+        # a nested child must never be read as an attribute of its parent.
+        # Stopping only at a sibling/ancestor previously misclassified valid
+        # AndroidTest manifests as having duplicate android:name attributes.
+        stop = next((i for i, _, _ in elements if i > start), len(lines))
         values: dict[str, str] = {}
         for line in lines[start + 1:stop]:
             m = re.match(r'^\s*A:\s*([A-Za-z_][\w:]*)\s*(?:\([^)]*\))?\s*=\s*"([^"]*)"', line)
