@@ -1,0 +1,43 @@
+name: Devtool R37 MMRL paired device source contracts (non-release)
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'devtool/actions_r37_mmrl_device.py'
+      - 'tests/test_r37_mmrl_paired_device.py'
+      - '.github/workflows/devtool-r37-mmrl-device-source.yml'
+permissions:
+  contents: read
+jobs:
+  python-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact Devtool source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.13'
+      - name: Install test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python -m pip install --disable-pip-version-check -e . -r devtool-test-requirements.lock
+      - name: Run R37 no-device safety and artifact negative tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_r37_mmrl_paired_device.py --junitxml "$RUNNER_TEMP/r37-tests.xml"
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: devtool-r37-source-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r37-tests.xml
+          if-no-files-found: warn
+          retention-days: 7
