@@ -81,7 +81,9 @@ def run_actions_command(args: Any) -> int:
         payload = (actions_cli(args, root, observation_callback=callback) if streaming
                    else actions_cli(args, root))
     except GitHubActionsError as exc:
-        print(f"GitHub Actions: {exc}", file=sys.stderr)
+        from .actions_control_center import error_info, diagnostic_text
+        info=error_info(str(exc),operation=command,state='BLOCKED')
+        print('GitHub Actions: '+diagnostic_text(info,width=44),file=sys.stderr)
         return 1
     if streaming:
         result = payload.get('monitor', payload)

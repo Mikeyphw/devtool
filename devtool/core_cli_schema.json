@@ -66234,6 +66234,49 @@
       "sensitive": false,
       "stable_id": "cli.option.actions.run.require_local_head",
       "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--format",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "json",
+          "text"
+        ],
+        "dest": "format",
+        "help": "Output format; default JSON compatible",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "capabilities"
+        ],
+        "required": false
+      },
+      "scope": "capabilities",
+      "sensitive": false,
+      "stable_id": "cli.option.capabilities.format",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--width",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "width",
+        "help": "Text width 40..160 columns",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "capabilities"
+        ],
+        "required": false
+      },
+      "scope": "capabilities",
+      "sensitive": false,
+      "stable_id": "cli.option.capabilities.width",
+      "value_kind": "_StoreAction"
     }
   ],
   "parser": {
@@ -122189,7 +122232,7 @@
                         },
                         {
                           "aliases": [],
-                          "help": "Verify offline signed\u2192unsigned registry lineage and LIFE identity without release promotion",
+                          "help": "Verify offline signed→unsigned registry lineage and LIFE identity without release promotion",
                           "help_present": true,
                           "name": "local-evidence",
                           "parser": {
@@ -125144,6 +125187,43 @@
                 ],
                 "required": false,
                 "type": null
+              },
+              {
+                "action": "store",
+                "choices": [
+                  "json",
+                  "text"
+                ],
+                "const": null,
+                "default": "json",
+                "dest": "format",
+                "group": null,
+                "help": "Output format; default JSON compatible",
+                "metavar": null,
+                "mutex": null,
+                "nargs": null,
+                "option_strings": [
+                  "--format"
+                ],
+                "required": false,
+                "type": "str"
+              },
+              {
+                "action": "store",
+                "choices": null,
+                "const": null,
+                "default": 44,
+                "dest": "width",
+                "group": null,
+                "help": "Text width 40..160 columns",
+                "metavar": null,
+                "mutex": null,
+                "nargs": null,
+                "option_strings": [
+                  "--width"
+                ],
+                "required": false,
+                "type": "int"
               }
             ],
             "add_help": true,

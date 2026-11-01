@@ -178,6 +178,62 @@ def _inputs_digest(inputs: Mapping[str,str]) -> str:
                          ensure_ascii=False).encode('utf-8')).hexdigest()
 
 
+def dispatch_resume_decision(request_id: str, *, state_root: Path | None = None) -> dict[str, Any]:
+    """Local-only decision for one exact request. Never GETs, POSTs or alters journals.
+
+    Even an apparently matching remote run is not proof for an uncertain
+    dispatch. Exact existing API-correlated response is the sole local reuse
+    authority. All other states remain non-dispatching.
+    """
+    from .actions_runs import _read_dispatch_receipt, run_id
+    if not isinstance(request_id,str) or not re.fullmatch(r'[a-f0-9]{32}',request_id):
+        raise GitHubActionsError('Dispatch request ID must be a 32-character hexadecimal identifier')
+    folder = state_root if state_root is not None else _state_root()
+    if folder.is_symlink() or (folder.exists() and not folder.is_dir()):
+        raise GitHubActionsError('Dispatch journal root is unsafe')
+    location=folder/(request_id+'.json')
+    if not location.exists() and not location.is_symlink():
+        return {'schema':'devtool.actions.dispatch-decision.v1','decision':'NO_MATCH',
+                'request_id':request_id,'repository':None,'workflow_id':None,
+                'ref':None,'source_sha':None,'run_id':None,'run_attempt':None,
+                'journal_state':None,'attribution_proven':False,
+                'safe_to_redispatch':False,
+                'safe_next_command':'devtool actions recent --json',
+                'read_only':True,'qualified_release':False}
+    _, receipt = _read_dispatch_receipt(request_id, state_root)
+    state = receipt.get('state')
+    rid = receipt.get('run_id')
+    if state == 'rejected-by-api' and rid is None:
+        decision='REJECTED_BY_API'
+    elif state == 'accepted-correlated' and rid is not None:
+        run_id(rid)
+        decision='EXISTING_CORRELATED'
+    elif state in ('accepted-uncorrelated','dispatch-outcome-unknown') and rid is None:
+        decision='EXISTING_UNCORRELATED'
+    else:
+        decision='NEEDS_EXPLICIT_REVIEW'
+    ref = receipt.get('ref')
+    source = receipt.get('pre_dispatch_sha')
+    workflow = receipt.get('workflow_id')
+    if not isinstance(source,str) or not _SHA.fullmatch(source):
+        raise GitHubActionsError('Dispatch receipt lacks a safe source identity')
+    if not isinstance(ref,str):
+        raise GitHubActionsError('Dispatch receipt lacks a safe ref')
+    _ref(ref)
+    if type(workflow) is not int or workflow <= 0:
+        raise GitHubActionsError('Dispatch receipt lacks workflow identity')
+    safe_cmd = ('devtool actions resume --request-id '+request_id if decision=='EXISTING_CORRELATED'
+                else 'devtool actions detail --kind dispatch --identity '+request_id+' --json')
+    return {'schema':'devtool.actions.dispatch-decision.v1', 'decision':decision,
+            'request_id':request_id,'repository':_slug(receipt['repository']),
+            'workflow_id':workflow,'ref':ref,'source_sha':source.lower(),
+            'run_id':rid if decision=='EXISTING_CORRELATED' else None,
+            'run_attempt':None, 'journal_state':state,
+            'attribution_proven':decision=='EXISTING_CORRELATED',
+            'safe_to_redispatch':False, 'safe_next_command':safe_cmd,
+            'read_only':True,'qualified_release':False}
+
+
 def _existing_dispatches(folder: Path, summary: Mapping[str,Any], digest: str) -> list[dict[str,Any]]:
     from .actions_runs import _read_dispatch_receipt
     if folder.is_symlink() or (folder.exists() and not folder.is_dir()):
@@ -301,10 +357,12 @@ def dispatch_workflow(client: GitHubActionsClient, slug: str, workflow_id: str, 
         if len(matches)!=1 or matches[0]['ambiguous_inputs']:
             raise GitHubActionsError('Matching uncertain or legacy dispatch exists; inspect exact receipt, no second POST')
         receipt=matches[0]
+        decision=dispatch_resume_decision(receipt['request_id'],state_root=folder)
         return {'phase':'RM-16','dispatched':False,'resume_existing':True,
                 'request_id':receipt['request_id'],'state':receipt['state'],
-                'run_id':receipt['run_id'],'safe_to_redispatch':False,
-                'safe_next_command':('devtool actions resume --request-id '+receipt['request_id']),
+                'run_id':decision['run_id'],'safe_to_redispatch':False,
+                'resume_decision':decision['decision'],
+                'safe_next_command':decision['safe_next_command'],
                 **summary}
     if not execute:
         existing=_existing() if resume_if_existing else None
@@ -397,6 +455,7 @@ def inspect_uncorrelated_dispatch(client: GitHubActionsClient, request_id: str, 
                            "head_sha":run["head_sha"], "created_at":run["created_at"],
                            "html_url":run["html_url"], "conclusion":run["conclusion"]})
     return {"phase":"ACTIONS-G1", "operation":"dispatch-candidate-inspection",
+            "resume_decision":dispatch_resume_decision(request_id,state_root=state_root),
             "request_id":request_id, "repository":slug,
             "dispatch_state":receipt["state"], "run_id":None,
             "candidate_count":len(candidates), "candidates":candidates,

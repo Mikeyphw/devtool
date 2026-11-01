@@ -904,14 +904,18 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
             selected=client.repository(slug)
             checks.append({"name":"repository", "state":"accessible", "id":selected["id"]})
         except GitHubActionsError as exc:
-            checks.append({"name":"repository", "state":"not-accessible", "reason":str(exc)})
+            from .actions_control_center import error_info
+            checks.append({"name":"repository", "state":"not-accessible",
+                           "diagnostic":error_info(str(exc),repository=slug,operation='diagnose',state='BLOCKED')})
             return {"phase":"ACTIONS-03","repository":slug,"authentication":authentication,
                     "ok":False,"checks":checks,"advice":"Verify Git origin or --github-repo, authentication, and repository visibility"}
         try:
             work=client.workflows(slug)
             checks.append({"name":"actions-workflows", "state":"accessible", "count":len(work)})
         except GitHubActionsError as exc:
-            checks.append({"name":"actions-workflows", "state":"not-accessible", "reason":str(exc)})
+            from .actions_control_center import error_info
+            checks.append({"name":"actions-workflows", "state":"not-accessible",
+                           "diagnostic":error_info(str(exc),repository=slug,operation='diagnose',state='BLOCKED')})
         return {"phase":"ACTIONS-03", "repository":slug,"authentication":authentication,
                 "ok":all(c["state"]=="accessible" for c in checks), "checks":checks}
     if action in ("runs", "view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify"):

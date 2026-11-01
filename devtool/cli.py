@@ -13150,7 +13150,15 @@ def _handle_wrapper_command(args: argparse.Namespace) -> int:
         try:
             resolution = resolve_wrapper_argv(config, wrapper_args, launch_cwd=Path.cwd())
         except WrapperResolutionError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
+            from .actions_control_center import error_info, diagnostic_text
+            command_name=wrapper_args[0] if wrapper_args else ''
+            info=error_info(str(exc),code='WRAPPER_INVALID',target=command_name,
+                            operation='wrapper',state='BLOCKED')
+            if bool(getattr(args, 'json', False)):
+                print(json.dumps({'schema':'devtool.wrapper.error.v1','ok':False,
+                                  'diagnostic':info},indent=2,ensure_ascii=False,sort_keys=True))
+            else:
+                print(diagnostic_text(info,width=44),file=sys.stderr)
             return 2
 
         if resolution.mode == "help":
@@ -13772,7 +13780,7 @@ def _main_after_parse(
     _print_chroot_indicator_once(args)
 
     if args.command == "capabilities":
-        from .actions_control_center import capability_inventory
+        from .actions_control_center import capability_inventory, capabilities_text
         try:
             result=capability_inventory(Path(str(args.repo)))
         except Exception as exc:
@@ -13781,7 +13789,10 @@ def _main_after_parse(
                 print(f"Devtool capabilities: {exc}",file=sys.stderr)
                 return 1
             raise
-        print(json.dumps(result,indent=2,ensure_ascii=False,sort_keys=True))
+        if getattr(args,'format','json') == 'text':
+            print(capabilities_text(result,width=int(getattr(args,'width',44))))
+        else:
+            print(json.dumps(result,indent=2,ensure_ascii=False,sort_keys=True))
         return 0
 
     if args.command == "actions":

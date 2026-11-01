@@ -35,8 +35,11 @@ def operator_review(row: Mapping[str, Any], repository: str, *, client: Any = No
     request = selected_identity(row, repository, kind='dispatch')
     # An uncorrelated request NEVER triggers a network call or redispatch.
     if row.get('run_id') is None:
+        from .actions_control_center import error_info
         return {'kind':'review', 'request_id':request, 'state':'uncorrelated',
                 'remote_verified':False, 'qualified_release':False,
+                'diagnostic':error_info(code='REQUEST_UNCERTAIN',receipt=request,
+                    operation='review',repository=repository),
                 'message':'No correlated run: inspect request manually; do not redispatch.'}
     if client is None:
         token, _ = resolve_token('auto')
@@ -109,8 +112,8 @@ def operator_workflows(repository: str, *, client: Any = None) -> dict[str, Any]
             'read_only':True,'remote_observed':True,'qualified_release':False}
 
 
-def operator_lines(result: Mapping[str, Any], *, width: int = 44) -> str:
-    """Untrusted output sanitized and bounded for 40-column Termux screens."""
+def _operator_lines_unwrapped(result: Mapping[str, Any], *, width: int = 44) -> str:
+    """Existing semantic projection (bounded by operator_lines)."""
     kind = result.get('kind')
     if kind=='review':
         return ('REMOTE REVIEW (GET only)\n'
@@ -135,3 +138,9 @@ def operator_lines(result: Mapping[str, Any], *, width: int = 44) -> str:
         if len(result.get('items',[]))>30:lines.append('Additional workflows omitted in compact view')
         return '\n'.join(lines)+'\nNo dispatch performed'
     raise GitHubActionsError('Unsupported operator display result')
+
+
+def operator_lines(result: Mapping[str, Any], *, width: int = 44) -> str:
+    """Compact, dependency-free view of the same operator result."""
+    from .actions_control_center import _wrap_lines
+    return _wrap_lines(_operator_lines_unwrapped(result,width=width).splitlines(),width)
