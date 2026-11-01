@@ -1,0 +1,67 @@
+name: Devtool R38-R4 Synthetic DAG Benchmark (non-release)
+
+# Optional hosted measurement. This benchmark does not attest to real builds,
+# real cache hits, device execution, workflow release, or formal qualification.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: devtool-r38-r4-bench-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: Native scheduler synthetic benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install project
+        run: python -m pip install -e .
+      - name: Measure bounded native DAG scheduling and scratch routing
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/r38-r4
+          python -m devtool.workflow_benchmark \
+            --nodes 24 --repeats 5 --workers 4 --work-ms 4 --shape fanout_join --json \
+            > out/r38-r4/native-dag.json
+          python -m devtool.workflow_benchmark \
+            --nodes 12 --repeats 3 --workers 4 --work-ms 2 --shape chain --json \
+            > out/r38-r4/chain.json
+      - name: Validate exact source and no false qualification
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          for path in sorted(Path('out/r38-r4').glob('*.json')):
+              data = json.loads(path.read_text())
+              assert data['schema_version'] == 1
+              assert data['source']['commit'] == os.environ['SOURCE_SHA']
+              assert len(data['cases']) == 4
+              for key in ('real_build', 'real_cache_hit', 'device', 'release'):
+                  assert data['qualification'][key] is False
+              for case in data['cases']:
+                  assert len(case['samples']) == data['workload']['repeats']
+                  assert all(sample['completed_nodes'] == data['workload']['nodes'] for sample in case['samples'])
+              print(f'{path}: PASS (synthetic measurements, no release authority)')
+          PY
+      - name: Upload bounded benchmark measurements (not release evidence)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: devtool-r38-r4-synthetic-dag
+          path: out/r38-r4/
+          if-no-files-found: error
+          retention-days: 14
