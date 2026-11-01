@@ -50,7 +50,7 @@ jobs:
             --out "out/shard-$DT_SHARD"
       - name: Upload diagnostics, JUnit and exact-source receipt
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: devtool-full-shard-${{ matrix.shard }}
           path: out/shard-${{ matrix.shard }}/
@@ -74,7 +74,7 @@ jobs:
         with:
           python-version: '3.13'
       - name: Download shard evidence (missing shards remain failures)
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           pattern: devtool-full-shard-*
@@ -87,7 +87,7 @@ jobs:
             --shards 24 --artifacts artifacts --out out/summary
       - name: Upload consolidated report
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: devtool-full-pytest-summary
           path: out/summary/

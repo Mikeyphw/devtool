@@ -685,9 +685,10 @@ def build_execution_plan_from_specs(
 class _NodeProgressProxy:
     """Give concurrent nodes independent phase identity over one live HUD sink."""
 
-    def __init__(self, sink: Any, lock: threading.RLock):
+    def __init__(self, sink: Any, lock: threading.RLock, cancellation_probe: Callable[[], bool] | None = None):
         self._sink = sink
         self._lock = lock
+        self._cancellation_probe = cancellation_probe
         self.current_phase: dict[str, Any] | None = None
 
     def plan_phases(self, phases: list[dict[str, Any]], *, append: bool = True) -> None:
@@ -722,7 +723,7 @@ class _NodeProgressProxy:
             self._sink.current_phase = previous
 
     def cancel_requested(self) -> bool:
-        return bool(self._sink.cancel_requested())
+        return self._cancellation_probe() if self._cancellation_probe is not None else bool(self._sink.cancel_requested())
 
     def clear_cancel(self) -> None:
         # Worker-local run_specs calls must not clear the shared cancellation
@@ -931,6 +932,23 @@ def run_workflow_specs(
     fail_fast = False
     cancelled = False
     progress_lock = threading.RLock()
+    cancellation_latched = threading.Event()
+
+    def external_cancelled() -> bool:
+        """Latch a requested stop for the entire DAG, including worker proxies.
+
+        Worker-side clear_cancel is deliberately a no-op; a transient reset of
+        the HUD token must not resurrect a pending/starting node.
+        """
+        if cancellation_latched.is_set():
+            return True
+        if tasker_progress is not None:
+            try:
+                if bool(tasker_progress.cancel_requested()):
+                    cancellation_latched.set()
+            except Exception:
+                pass  # Existing sink fallback semantics; do not invent a stop.
+        return cancellation_latched.is_set()
 
     if tasker_progress is not None and not dry_run:
         tasker_progress.plan_phases([
@@ -955,7 +973,10 @@ def run_workflow_specs(
         initial_cancelled: bool = False,
     ) -> tuple[str, list[OperationResult], str]:
         local_specs = node_specs[key]
-        sink = _NodeProgressProxy(tasker_progress, progress_lock) if tasker_progress is not None else None
+        # A cancellation arriving after admission but before worker startup
+        # must use the native synthetic-cancel path, not launch a process.
+        initial_cancelled = bool(initial_cancelled or external_cancelled())
+        sink = _NodeProgressProxy(tasker_progress, progress_lock, external_cancelled) if tasker_progress is not None else None
         # Shared final log writes are serialized after workers finish. Per-node
         # run_specs logs stay independent and cannot interleave/corrupt JSON/text.
         def locked_progress(snapshot: Any) -> None:
@@ -1113,14 +1134,6 @@ def run_workflow_specs(
         if state == "failed" and not continue_on_error:
             fail_fast = True
 
-    def external_cancelled() -> bool:
-        if tasker_progress is None:
-            return False
-        try:
-            return bool(tasker_progress.cancel_requested())
-        except Exception:
-            return False
-
     def harvest_completions(done: Iterable[Any]) -> None:
         """Record already-terminal workers *before* the next admission pass.
 
@@ -1164,6 +1177,10 @@ def run_workflow_specs(
                 for key in node_order:
                     if key not in pending:
                         continue
+                    # Recheck before *every* admission, not just once per
+                    # scheduler iteration. Cancellation can race with callbacks.
+                    if external_cancelled():
+                        cancelled = True
                     # A worker might have become terminal during this scan.
                     # Drain it first rather than admitting a successor using
                     # an already-stale dependency/fail-fast snapshot.
@@ -1208,7 +1225,12 @@ def run_workflow_specs(
                         spec.metadata["workflow_scheduler_admission_mode"] = "dependency-ready"
                     if node_observer is not None:
                         node_observer(key, 'started', ())
-                    future = executor.submit(execute_node, key, initial, False, False)
+                    # The observer may synchronously request cancellation.
+                    # Passing it into the native synthetic runner preserves
+                    # terminal event provenance without spawning a child.
+                    if external_cancelled():
+                        cancelled = True
+                    future = executor.submit(execute_node, key, initial, False, cancelled)
                     active[future] = key
                     active_keys.add(key)
                     admitted = True

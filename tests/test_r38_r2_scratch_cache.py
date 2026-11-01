@@ -118,7 +118,7 @@ def test_dry_run_never_provisions_or_rewrites_env(tmp_path,monkeypatch):
 
 def test_regression_workflow_uses_node24_compatible_actions():
     workflow=(Path(__file__).resolve().parents[1]/'.github/workflows/devtool-full-repository-pytest.yml').read_text()
-    for name,major in [('checkout','v6'),('setup-python','v6'),('upload-artifact','v5'),('download-artifact','v5')]:
+    for name,major in [('checkout','v6'),('setup-python','v6'),('upload-artifact','v7'),('download-artifact','v8')]:
         assert f'actions/{name}@{major}' in workflow
     assert 'actions/checkout@v4' not in workflow
     assert 'actions/setup-python@v5' not in workflow
