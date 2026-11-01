@@ -528,6 +528,11 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '        if: always()\n        shell: bash\n        run: |\n'
                '          set -euo pipefail\n'
                f'          mkdir -p "$RUNNER_TEMP/rm06-evidence/{jid}"\n'
+               # Successful hosted nodes must have a typed native evidence receipt.
+               # Failure/missing evidence never inherits PASS from the text breadcrumb.
+               '          if test "${{ job.status }}" = "success"; then\n'
+               f'            test -s "$RUNNER_TEMP/rm06-evidence/{jid}/node-evidence.json"\n'
+               '          fi\n'
                f'          printf "%s\\n" "$GITHUB_SHA/$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT/{jid}" > "$RUNNER_TEMP/rm06-evidence/{jid}/source-run.txt"\n'
                '      - name: Upload review evidence\n'
                '        if: always()\n'
@@ -1137,7 +1142,28 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
             if (root/rel).resolve() not in reported:
                 raise ProviderError('RM-10 compiler JSON did not attest declared native binary artifact: '+rel)
     stage_outputs(root,outputs,graph,selected,source,run,attempt)
+    # NEXT-02/03-R1: the native DAG remains the execution owner. This is a
+    # typed projection of local evidence, not hosted authentication or CI trust.
+    from .actions_node_evidence import (build_node_evidence, verify_node_evidence,
+                                        write_node_evidence)
+    node_evidence = build_node_evidence(graph,selected,source=source,
+                                       source_tree=_git(root, 'rev-parse', 'HEAD^{tree}'),run_id=int(run),
+                                       attempt=attempt,staging=outputs,
+                                       repository=os.environ.get('GITHUB_REPOSITORY','local/unverified'))
+    verify_node_evidence(node_evidence,graph,selected,source=source,
+                         source_tree=_git(root, 'rev-parse', 'HEAD^{tree}'),run_id=int(run),
+                         attempt=attempt,staging=outputs)
+    # Only the real exported workflow workspace/output staging owns hosted
+    # evidence. GitHub's independent pytest runner may call run_node with
+    # synthetic temporary repositories; it must never publish those as CI nodes.
+    hosted_workspace=os.environ.get('GITHUB_WORKSPACE','')
+    hosted_temp=os.environ.get('RUNNER_TEMP','')
+    if (os.environ.get('GITHUB_ACTIONS') == 'true' and hosted_workspace and hosted_temp
+            and root == Path(hosted_workspace).resolve()
+            and outputs.resolve() == Path(hosted_temp).resolve() / 'rm06-output'):
+        write_node_evidence(outputs,job_id,node_evidence)
     return {'status':'LOCAL_JOB_SUCCEEDED', 'node':selected['node'], 'job_id':job_id,
+            'typed_node_evidence':node_evidence,
             'graph_sha256':graph_sha, 'workflow_sha256':hashlib.sha256(workflow_yaml(graph).encode()).hexdigest(), 'github_source':source,'run_id':run,'attempt':attempt,
             'wheel_smoke':smoke,'coverage':coverage,'repeat_build':repeat_build,'node_receipts':node_receipts,'shell_receipts':shell_receipts,'cpp_receipts':cpp_receipts,'jvm_receipts':jvm_receipts,'rust_receipts':rust_receipts,'rust_test_evidence':rust_test_evidence,'uploaded_artifacts_authenticated':False,'release_qualified':False}
 
