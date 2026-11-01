@@ -5893,7 +5893,7 @@ Review or execute a source-locked two-repository extraction
 
 | Argument / option | Meaning |
 | --- | --- |
-| `MIGRATION_OPERATION` | Extraction operation Choices: plan, prepare, execute, resume, status |
+| `MIGRATION_OPERATION` | Extraction operation Choices: discover, plan, prepare, execute, resume, status |
 | `MIGRATION_MANIFEST` | Absolute reviewed extraction manifest |
 | `--state-dir STATE_DIR` | External durable backup and journal directory |
 | `--yes` | Explicitly allow preparation or per-repository commits |

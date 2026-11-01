@@ -124918,6 +124918,7 @@
               {
                 "action": "store",
                 "choices": [
+                  "discover",
                   "plan",
                   "prepare",
                   "execute",

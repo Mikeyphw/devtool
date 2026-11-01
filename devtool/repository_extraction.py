@@ -572,6 +572,9 @@ def plan(manifest:Path,state_dir:Path) -> dict[str,Any]:
 
 
 def run(operation:str,manifest:Path,state_dir:Path,*,yes:bool=False) -> dict[str,Any]:
+    if operation == "discover":
+        from .repository_extraction_discovery import discover
+        return discover(manifest)
     if operation in ("plan","status"):return plan(manifest,state_dir)
     if not yes:raise ExtractionBlocked("prepare/execute/resume requires explicit --yes")
     config=_read_manifest(manifest)
@@ -655,7 +658,7 @@ def run(operation:str,manifest:Path,state_dir:Path,*,yes:bool=False) -> dict[str
 
 def main(argv:list[str]|None=None)->int:
     parser=argparse.ArgumentParser(description="Guarded two-checkout Git extraction")
-    parser.add_argument("operation",choices=("plan","prepare","execute","resume","status"))
+    parser.add_argument("operation",choices=("discover","plan","prepare","execute","resume","status"))
     parser.add_argument("manifest",type=Path)
     parser.add_argument("--state-dir",type=Path,default=Path.home()/".local/state/devtool/extractions")
     parser.add_argument("--yes",action="store_true")
