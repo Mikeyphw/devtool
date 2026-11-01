@@ -995,17 +995,13 @@ def run_workflow_specs(
         audit_cursor = audit_before
         def r38_terminal_hook(returncode: int, failure_kind: str, result_metadata: dict):
             nonlocal audit_cursor
-            from .workflow_write_audit import verify_node, WriteAuditError
-            try:
-                next_snapshot = snapshot(config.repo_root)
-                node = node_by_key[key]
-                proof = verify_node(audit_cursor, next_snapshot, node_key=key,
-                                    writes=node.writes, writes_known=node.writes_known,
-                                    read_only=node.read_only)
-                audit_cursor = next_snapshot
-            except WriteAuditError as exc:
-                proof = {"status": "fail", "code": str(exc), "node": key,
-                         "observed": [], "outside_scope": []}
+            from .workflow_write_audit import attest_node_transition
+            node = node_by_key[key]
+            audit_cursor, proof = attest_node_transition(
+                config.repo_root, audit_cursor, node_key=key,
+                writes=node.writes, writes_known=node.writes_known,
+                read_only=node.read_only,
+            )
             result_metadata["workflow_r38_tracked_write_audit"] = proof
             if proof["status"] != "pass":
                 returncode = returncode or 1
@@ -1035,16 +1031,13 @@ def run_workflow_specs(
             if audit_this_node and not all(
                 "workflow_r38_tracked_write_audit" in item.metadata for item in local_results
             ):
-                from .workflow_write_audit import verify_node, WriteAuditError
-                try:
-                    audit_after = snapshot(config.repo_root)
-                    node = node_by_key[key]
-                    proof = verify_node(audit_before, audit_after, node_key=key,
-                                        writes=node.writes, writes_known=node.writes_known,
-                                        read_only=node.read_only)
-                except WriteAuditError as exc:
-                    proof = {"status": "fail", "code": str(exc), "node": key,
-                             "observed": [], "outside_scope": []}
+                from .workflow_write_audit import attest_node_transition
+                node = node_by_key[key]
+                _, proof = attest_node_transition(
+                    config.repo_root, audit_before, node_key=key,
+                    writes=node.writes, writes_known=node.writes_known,
+                    read_only=node.read_only,
+                )
                 for item in local_results:
                     item.metadata["workflow_r38_tracked_write_audit"] = proof
                     if proof["status"] != "pass":

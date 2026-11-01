@@ -133,3 +133,28 @@ def verify_node(before: TrackedSnapshot, after: TrackedSnapshot, *, node_key: st
     return {"status": "fail" if outside else "pass", "code": "R38_OUT_OF_SCOPE_TRACKED_WRITE" if outside else "R38_TRACKED_WRITE_CHECK_PASSED",
             "node": node_key, "observed": observed, "outside_scope": outside,
             "limits": "git-tracked stable pre/post snapshots only; not an OS sandbox or continuous monitor"}
+
+
+def attest_node_transition(
+    root: Path,
+    before: TrackedSnapshot,
+    *,
+    node_key: str,
+    writes: Sequence[str],
+    writes_known: bool,
+    read_only: bool,
+) -> tuple[TrackedSnapshot, dict[str, object]]:
+    """Single owner for native R38 tracked-write proof generation.
+
+    Called by both the terminal hook and legacy-runner fallback. A failed
+    snapshot does not advance the cursor or claim a successful observation.
+    No authority to authorize writes or observe untracked paths is added.
+    """
+    try:
+        after = snapshot(root)
+        proof = verify_node(before, after, node_key=node_key, writes=writes,
+                            writes_known=writes_known, read_only=read_only)
+        return after, proof
+    except WriteAuditError as exc:
+        return before, {"status": "fail", "code": str(exc), "node": node_key,
+                        "observed": [], "outside_scope": []}
