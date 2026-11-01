@@ -2511,6 +2511,7 @@ def run_specs(
     workflow_initial_cancelled: bool = False,
     event_run_id: str = "",
     publish_workflow_plan: bool = True,
+    r38_terminal_hook: Callable[[int, str, dict], tuple[int, str, dict]] | None = None,
 ) -> tuple[list[OperationResult], str]:
     # EXEC-X05 library-call safety net. Normal CLI/workflow/TestSpec paths are
     # converged earlier, before reusable identity is pinned. Direct run_specs()
@@ -3630,6 +3631,19 @@ def run_specs(
             log_file = str(log_path)
         else:
             log_file = str(write_log(raw_text, log_path, append=False))
+        # R38-R1 opt-in node audit runs BEFORE EXO and workflow terminal
+        # publication, so audit refusal and the canonical result agree.
+        if r38_terminal_hook is not None:
+            try:
+                returncode, failure_kind, result_metadata = r38_terminal_hook(
+                    returncode, failure_kind, result_metadata)
+            except Exception:
+                returncode = returncode or 1
+                failure_kind = failure_kind or "workflow_r38_write_scope_violation"
+                result_metadata["workflow_r38_tracked_write_audit"] = {
+                    "status": "fail", "code": "R38_AUDIT_HOOK_UNAVAILABLE",
+                    "observed": [], "outside_scope": [],
+                }
         if workflow_node_key:
             if returncode == 130:
                 workflow_node_status[workflow_node_key] = "cancelled"

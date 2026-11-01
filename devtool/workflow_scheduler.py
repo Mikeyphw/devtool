@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 import threading
+import os
 import time
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -761,6 +762,7 @@ def run_workflow_specs(
     parallel_requested: bool | None = None,
     max_parallel_nodes: int = 0,
     node_observer: Callable[[str, str, Sequence[OperationResult]], None] | None = None,
+    write_audit_mode: str | None = None,
 ) -> tuple[list[OperationResult], str, WorkflowExecutionPlan | None]:
     """Execute workflow specs with resource-safe dependency-ready admission.
 
@@ -790,6 +792,33 @@ def run_workflow_specs(
         parallel_requested=parallel_requested,
         max_parallel_nodes=max_parallel_nodes,
     )
+    # R38-R1: tracked source mutation proof is opt-in and serial only.  The
+    # scheduler cannot attribute filesystem writes across concurrent workers.
+    audit_mode = (write_audit_mode if write_audit_mode is not None
+                  else os.environ.get("DEVTOOL_R38_WRITE_AUDIT", "off")).strip().lower()
+    if audit_mode not in {"off", "enforce"}:
+        raise WorkflowScheduleError("R38_INVALID_WRITE_AUDIT_MODE")
+    audit_enabled = audit_mode == "enforce" and not dry_run
+    if audit_enabled:
+        if plan is None or plan.parallel_requested:
+            raise WorkflowScheduleError("R38_WRITE_AUDIT_REQUIRES_SERIAL_WORKFLOW")
+        from .workflow_write_audit import snapshot, WriteAuditError
+        try:
+            initial_audit = snapshot(config.repo_root)
+        except WriteAuditError as exc:
+            raise WorkflowScheduleError(str(exc)) from exc
+        if initial_audit.changed:
+            raise WorkflowScheduleError("R38_WRITE_AUDIT_REQUIRES_CLEAN_TRACKED_BASELINE")
+        # A skipped/materialized operation bypasses the per-command terminal
+        # hook. Force actual execution so the write audit and canonical EXO
+        # event are always based on the same process result.
+        for spec in specs:
+            spec.metadata = {**spec.metadata, "reuse_disabled": True,
+                             "reuse_disabled_reason": "r38-tracked-write-audit"}
+        # A serial policy on the plan alone is not a concurrency primitive;
+        # the live ready queue uses max_parallel_nodes for worker admission.
+        plan = replace(plan, max_parallel_nodes=1, parallel_effective=False,
+                       notes=(*plan.notes, "R38 audit enforces one native worker at a time"))
     # RM-01: an execution-scoped root is minted per node, outside the repo.
     # Only nodes declaring run-temp receive an environment variable.
     owned_tmp: list[tuple[str, Path, tuple[int, int]]] = []
@@ -835,7 +864,7 @@ def run_workflow_specs(
                     "reason": "" if cleaned else "ownership_or_concurrent_mutation",
                 }
 
-    if plan is None or (not plan.parallel_requested and node_observer is None) or (len(plan.nodes) < 2 and node_observer is None) or dry_run:
+    if plan is None or (not plan.parallel_requested and node_observer is None and not audit_enabled) or (len(plan.nodes) < 2 and node_observer is None and not audit_enabled) or dry_run:
         try:
             results, raw = run_specs(
             config,
@@ -910,6 +939,34 @@ def run_workflow_specs(
             with progress_lock:
                 return heartbeat_callback(*args, **kwargs)
 
+        audit_before = None
+        # Blocked/cancelled successors run only the native runner's synthetic
+        # result path; never turn those results into another audit failure.
+        audit_this_node = (audit_enabled and not initial_fail_fast and not initial_cancelled
+                           and all(initial_statuses.get(dep) == "passed"
+                                   for dep in node_by_key[key].depends_on))
+        if audit_this_node:
+            audit_before = snapshot(config.repo_root)
+        audit_cursor = audit_before
+        def r38_terminal_hook(returncode: int, failure_kind: str, result_metadata: dict):
+            nonlocal audit_cursor
+            from .workflow_write_audit import verify_node, WriteAuditError
+            try:
+                next_snapshot = snapshot(config.repo_root)
+                node = node_by_key[key]
+                proof = verify_node(audit_cursor, next_snapshot, node_key=key,
+                                    writes=node.writes, writes_known=node.writes_known,
+                                    read_only=node.read_only)
+                audit_cursor = next_snapshot
+            except WriteAuditError as exc:
+                proof = {"status": "fail", "code": str(exc), "node": key,
+                         "observed": [], "outside_scope": []}
+            result_metadata["workflow_r38_tracked_write_audit"] = proof
+            if proof["status"] != "pass":
+                returncode = returncode or 1
+                failure_kind = failure_kind or "workflow_r38_write_scope_violation"
+            return returncode, failure_kind, result_metadata
+
         try:
             local_results, local_raw = run_specs(
                 config,
@@ -928,7 +985,29 @@ def run_workflow_specs(
                 workflow_initial_cancelled=initial_cancelled,
                 event_run_id=workflow_run_id,
                 publish_workflow_plan=False,
+                **({"r38_terminal_hook": r38_terminal_hook} if audit_this_node else {}),
             )
+            if audit_this_node and not all(
+                "workflow_r38_tracked_write_audit" in item.metadata for item in local_results
+            ):
+                from .workflow_write_audit import verify_node, WriteAuditError
+                try:
+                    audit_after = snapshot(config.repo_root)
+                    node = node_by_key[key]
+                    proof = verify_node(audit_before, audit_after, node_key=key,
+                                        writes=node.writes, writes_known=node.writes_known,
+                                        read_only=node.read_only)
+                except WriteAuditError as exc:
+                    proof = {"status": "fail", "code": str(exc), "node": key,
+                             "observed": [], "outside_scope": []}
+                for item in local_results:
+                    item.metadata["workflow_r38_tracked_write_audit"] = proof
+                    if proof["status"] != "pass":
+                        item.returncode = item.returncode or 1
+                        item.failure_kind = item.failure_kind or "workflow_r38_write_scope_violation"
+                        item.metadata["workflow_node_state"] = "failed"
+                if proof["status"] != "pass" and not local_results:
+                    raise WorkflowScheduleError(str(proof["code"]))
             return key, local_results, local_raw
         except BaseException as exc:
             metadata = dict(local_specs[0].metadata) if local_specs else {}
@@ -940,8 +1019,8 @@ def run_workflow_specs(
             # this scheduled node so CLI finalization never inherits a dangling
             # RUNNING/PLANNED descendant.
             from .core.events import NodeFinished, get_execution_store, publish_event
-            snapshot = get_execution_store().snapshot(workflow_run_id)
-            node = snapshot.node(key) if snapshot is not None else None
+            store_snapshot = get_execution_store().snapshot(workflow_run_id)
+            node = store_snapshot.node(key) if store_snapshot is not None else None
             if node is not None and node.status not in {"succeeded", "failed", "blocked", "skipped", "cancelled"}:
                 publish_event(NodeFinished(
                     run_id=workflow_run_id,
