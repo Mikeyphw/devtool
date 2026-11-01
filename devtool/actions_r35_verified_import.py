@@ -372,6 +372,15 @@ def import_exact_run(client: GitHubActionsClient, root: Path, plan: dict) -> dic
 
 
 def main() -> None:
+    # The reviewed R36 layout shares R35's authenticated download and Android
+    # inspection services, but retains its own profile-specific ZIP contract.
+    if '--layout' in sys.argv:
+        idx = sys.argv.index('--layout')
+        if idx + 1 >= len(sys.argv) or sys.argv[idx + 1] != 'r36':
+            _deny('unsupported exact-run artifact layout')
+        from .actions_r36_verified_import import main as r36_main
+        r36_main(sys.argv[1:idx] + sys.argv[idx + 2:])
+        return
     p = argparse.ArgumentParser(description='R35 exact-run GitHub Android evidence import (non-release)')
     p.add_argument('command', choices=('plan', 'import', 'inspect'))
     p.add_argument('--repo', type=Path, default=Path.cwd())
