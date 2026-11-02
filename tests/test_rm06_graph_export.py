@@ -42,6 +42,33 @@ def test_compiles_graph_edges_and_independent_siblings(tmp_path):
     assert '    needs: [' not in workflow_yaml(plan)
 
 
+def test_generated_job_env_is_valid_before_runner_allocation(tmp_path):
+    """GitHub rejects runner.temp in jobs.<job_id>.env before any jobs start."""
+    root, graph = compile_fixture(tmp_path)
+    yaml = workflow_yaml(graph)
+    # Every job sets up temporary stores only after its runner has started.
+    assert yaml.count('      - name: Bind runner-local tool stores\n') == len(graph['jobs'])
+    assert yaml.count('NUGET_PACKAGES=%s') == len(graph['jobs'])
+    assert yaml.count('PIP_CACHE_DIR=%s') == len(graph['jobs'])
+    assert yaml.count('>> "$GITHUB_ENV"') == 2 * len(graph['jobs'])
+    assert 'NUGET_PACKAGES: ${{ runner.temp }}' not in yaml
+    assert 'PIP_CACHE_DIR: ${{ runner.temp }}' not in yaml
+    for chunk in yaml.split('    env:\n')[1:]:
+        job_env = chunk.split('    steps:\n', 1)[0]
+        assert '${{ runner.' not in job_env
+    assert '    needs: [node-01]' in yaml
+
+
+def test_generated_stores_are_not_in_consumer_source_tree(tmp_path):
+    root, graph = compile_fixture(tmp_path)
+    yaml = workflow_yaml(graph)
+    assert '"$RUNNER_TEMP/devtool-nuget-store"' in yaml
+    assert '"$RUNNER_TEMP/devtool-python-wheel-store"' in yaml
+    assert '      CARGO_NET_OFFLINE: "true"\n' in yaml
+    assert '      NUGET_PACKAGES: ' not in yaml
+    assert '      PIP_CACHE_DIR: ' not in yaml
+
+
 def test_multi_review_write_verify_and_frozen_digest(tmp_path):
     root, graph=compile_fixture(tmp_path)
     review=provider_export(root,target='app',workflow='ci',devtool_sha=PIN,mode='multi-job')
