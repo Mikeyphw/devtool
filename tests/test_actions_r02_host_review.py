@@ -78,13 +78,20 @@ def test_write_and_verify_keep_no_qualified_provenance(tmp_path: Path):
     assert 'workflow_dispatch:' in t and 'pull_request:' not in t
 
 
-def test_python_shell_workflow_sha_remains_unmodified(tmp_path: Path):
+def test_python_shell_workflow_sha_matches_current_reviewed_generator(tmp_path: Path):
     repo = python_fixture(tmp_path)
     review = adopt(repo, target='app', workflow='ci', devtool_sha=SHA)
     assert review['ci_host_profile'] == 'python-shell'
     assert review['host_prerequisites'] == ['python3', 'bash', 'sh']
     assert 'setup-go' not in _yaml('app', 'ci', SHA)
-    assert hashlib.sha256(_yaml('app','ci',SHA).encode()).hexdigest() == review['workflow_sha256'] == '76382bc6c5ee0ec474e5b25ae0ce881f01cfefb6c79f84cabd5c07872320aca2'
+    # The prior 76382bc6... digest belongs to the older generator and must
+    # not be claimed as the identity of the reviewed current-source workflow.
+    # This pin is the deterministic current output with runner-local runtime setup.
+    current = _yaml('app', 'ci', SHA)
+    assert hashlib.sha256(current.encode()).hexdigest() == review['workflow_sha256'] == (
+        'c30ef7b21bf321965bf23fbcdcc9fa5611f5f8b7767dd365e480b1fb60b8d8fc')
+    assert 'NUGET_PACKAGES: ${{ runner.temp }}' not in current
+    assert 'PIP_CACHE_DIR: ${{ runner.temp }}' not in current
 
 
 @pytest.mark.parametrize('metadata,reason', [

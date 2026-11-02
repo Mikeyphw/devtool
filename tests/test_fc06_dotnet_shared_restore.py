@@ -63,7 +63,16 @@ def test_review_binds_two_solutions_one_shared_identity_and_conflicting_versions
     graph=compile_graph(root,target='app',workflow='ci',devtool_sha=PIN)
     build=next(j for j in graph['jobs'] if j['dotnet_command']=='build')
     assert build['dotnet_shared_restore']['review_sha256']==plan['review_sha256']
-    assert 'NUGET_PACKAGES:' in __import__('devtool.actions_graph_export',fromlist=['workflow_yaml']).workflow_yaml(graph)
+    generated = __import__('devtool.actions_graph_export', fromlist=['workflow_yaml']).workflow_yaml(graph)
+    # GitHub Actions cannot resolve runner.temp in the job-level env context.
+    # Configure NuGet after runner allocation, before provider setup/execution.
+    assert generated.count('      - name: Bind runner-local tool stores\n') == len(graph['jobs'])
+    assert generated.index('      - name: Bind runner-local tool stores') < generated.index('      - name: Pinned Python interpreter')
+    assert generated.count('NUGET_PACKAGES=%s') == len(graph['jobs'])
+    assert generated.count('PIP_CACHE_DIR=%s') == len(graph['jobs'])
+    assert generated.count('>> "$GITHUB_ENV"') == 2 * len(graph['jobs'])
+    assert 'NUGET_PACKAGES: ${{ runner.temp }}' not in generated
+    assert 'PIP_CACHE_DIR: ${{ runner.temp }}' not in generated
 
 
 def test_review_refuses_unshared_or_unreviewed_and_mismatched_source(tmp_path):
