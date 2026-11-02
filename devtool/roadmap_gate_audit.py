@@ -170,7 +170,13 @@ def audit(root: Path) -> dict[str, object]:
         source_gates['R39']['status'] = 'FAIL'
     if 'def run_workflow_specs(' not in scheduler or 'run_specs(' not in scheduler:
         source_gates['R39']['status'] = 'FAIL'
+    from .actions_runtime_pins import audit as audit_generator_actions, verify as verify_generator_actions
     workflows = audit_workflows(root)
+    generator_pins = audit_generator_actions()
+    try:
+        verify_generator_actions(generator_pins)
+    except ValueError as exc:
+        raise GateAuditError(str(exc)) from exc
     source_pass = workflows['status'] == 'PASS' and all(x['status'] == 'SOURCE_PRESENT' for x in source_gates.values())
     receipt: dict[str, object] = {
         'schema': SCHEMA,
@@ -180,6 +186,7 @@ def audit(root: Path) -> dict[str, object]:
                       'scope': 'read-only source inventory and first-party Action declarations only'},
         'source_gates': source_gates,
         'workflows': workflows,
+        'generated_action_source_pins': generator_pins,
         'historical_exact_source_evidence': deepcopy(list(HISTORICAL)),
         'independent_gates_this_source': dict(_OPEN),
         'qualification': {
@@ -214,6 +221,11 @@ def verify(receipt: dict[str, object], *, source: dict[str, str] | None = None) 
             # generic refusal: operators need the precise violation.
             raise GateAuditError('R39_R4_ACTION_RUNTIME_GAP:' + ';'.join(map(str, details[:12])))
         raise GateAuditError('R39_R4_ACTION_RUNTIME_GAP:invalid_workflow_receipt')
+    from .actions_runtime_pins import verify as verify_generator_actions
+    try:
+        verify_generator_actions(receipt.get('generated_action_source_pins'))
+    except ValueError as exc:
+        raise GateAuditError(str(exc)) from exc
     sg = receipt.get('source_gates')
     if not isinstance(sg, dict) or set(sg) != set(_SOURCE_REQUIREMENTS) or any(
             not isinstance(v, dict) or v.get('status') != 'SOURCE_PRESENT' for v in sg.values()):

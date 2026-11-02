@@ -21,15 +21,15 @@ from .toolchain_profiles import (select_profiles, validate_versions, cache_polic
 from .actions_adoption import _CHECKOUT_SHA, _SETUP_GO_SHA, _UPLOAD_SHA, _safe_slug, _sha
 from .config import load_wrapper_project_config
 
-# Official download-artifact v4 action pin; never float a tag in generated YAML.
-_DOWNLOAD_SHA = 'd3f86a106a0bac45b974a628896c90dbdf5c8093'
+# Official download-artifact v8 action pin; never float a tag in generated YAML.
+_DOWNLOAD_SHA = '9000827ccba6bdab643e8b6fd33ac0654aef8333'
 _SETUP_BUN_SHA = '0c5077e51419868618aeaa5fe8019c62421857d6' # oven-sh/setup-bun v2
-_SETUP_NODE_SHA = '49933ea5288caeca8642d1e84afbd3f7d6820020' # actions/setup-node v4.4.0
+_SETUP_NODE_SHA = '249970729cb0ef3589644e2896645e5dc5ba9c38' # actions/setup-node v6
 _SETUP_ANDROID_SHA = 'be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd' # android-actions/setup-android v4.0.4
-_SETUP_GRADLE_SHA = 'ed408507eac070d1f99cc633dbcf757c94c7933a'  # gradle/actions/setup-gradle v4
-_SETUP_JAVA_SHA = 'cf277c60eb25467037889841efdb72551f06f6c3'  # actions/setup-java v4
+_SETUP_GRADLE_SHA = '0723195856401067f7a2779048b490ace7a47d7c'  # gradle/actions/setup-gradle v5
+_SETUP_JAVA_SHA = 'b6effb05e454b25005698d916606bdc6ffcbf961'  # actions/setup-java v5
 _MSVC_ENV_SHA = '0b201ec74fa43914dc39ae48a89fd1d8cb592756' # ilammy/msvc-dev-cmd 1.13.0
-_SETUP_DOTNET_SHA = '67a3573c9a986a3f9c594539f4ab511d57bb3ce9'  # actions/setup-dotnet v4.3.1
+_SETUP_DOTNET_SHA = '26b0ec14cb23fa6904739307f278c14f94c95bf1'  # actions/setup-dotnet v5
 SCHEMA = 2
 MAX_NODES = 24
 MAX_TRANSFER_FILES = 64
@@ -493,13 +493,17 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '      PYTHONDONTWRITEBYTECODE: "1"\n'
                '      GOTOOLCHAIN: local\n'
                '      RUSTUP_AUTO_INSTALL: "0"\n'
-               '      NUGET_PACKAGES: ${{ runner.temp }}/devtool-nuget-store\n'
-               '      PIP_CACHE_DIR: ${{ runner.temp }}/devtool-python-wheel-store\n'
                '      CARGO_NET_OFFLINE: "true"\n'
                '    steps:\n'
                '      - name: Checkout consumer commit\n'
                f'        uses: actions/checkout@{_CHECKOUT_SHA}\n'
                '        with:\n          persist-credentials: false\n'
+               '      - name: Bind runner-local tool stores\n'
+               '        shell: bash\n'
+               '        run: |\n'
+               '          set -euo pipefail\n'
+               '          printf "NUGET_PACKAGES=%s\\n" "$RUNNER_TEMP/devtool-nuget-store" >> "$GITHUB_ENV"\n'
+               '          printf "PIP_CACHE_DIR=%s\\n" "$RUNNER_TEMP/devtool-python-wheel-store" >> "$GITHUB_ENV"\n'
                '      - name: Pinned Python interpreter\n'
                f'        uses: actions/setup-python@{SETUP_PYTHON_SHA}\n'
                f"        with:\n          python-version: '{job["toolchain_version"] if job["provider"]=="python-shell" else "3.12"}'\n"

@@ -63,7 +63,7 @@ def test_native_hosted_gradle_graph_and_immutable_action_pins(tmp_path):
     assert graph['jobs'][0]['outputs']==['app/build/outputs/apk/debug/app-debug.apk']
     yaml=workflow_yaml(graph)
     assert 'android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd' in yaml
-    assert 'gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a' in yaml
+    assert 'gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c' in yaml
     assert 'cmdline-tools-version: 15859902' in yaml
     assert 'platforms;android-35 build-tools;35.0.0 platform-tools' in yaml
     assert 'devtool.actions_graph_export run-node' in yaml

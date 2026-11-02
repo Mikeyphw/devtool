@@ -20,9 +20,9 @@ from .target_local_adoption import target_local_adoption_report
 
 _IDENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}\Z")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
-_CHECKOUT_SHA = '11bd71901bbe5b1630ceea73d27597364c9af683'  # actions/checkout 4.2.2
-_UPLOAD_SHA = 'ea165f8d65b6e75b540449e92b4886f43607fa02'  # actions/upload-artifact 4.x
-_SETUP_GO_SHA = 'd35c59abb061a4a6fb18e82ac0862c26744d6ab5'  # actions/setup-go v5.5.0
+_CHECKOUT_SHA = 'd23441a48e516b6c34aea4fa41551a30e30af803'  # actions/checkout v6
+_UPLOAD_SHA = 'cf430e030ddbb5b0abf93d22962f4752f3646cd9'  # actions/upload-artifact v7
+_SETUP_GO_SHA = '924ae3a1cded613372ab5595356fb5720e22ba16'  # actions/setup-go v6
 
 
 class AdoptionError(ValueError):

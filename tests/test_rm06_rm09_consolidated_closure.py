@@ -25,7 +25,15 @@ def test_windows_dotnet_bridge_is_actual_execution_path_and_other_providers_bloc
             host_profiles='windows-2022-x64',cache_locks=True)['jobs'][0]['cache_policy']['key']
     y=workflow_yaml(graph)
     assert 'shell: bash' in y and 'Scripts/python.exe' in y and 'python -m venv' in y
-    assert 'NUGET_PACKAGES: ${{ runner.temp }}/devtool-nuget-store' in y
+    # Runner-scoped stores are declared only after the Windows runner starts;
+    # job-level env cannot reference runner.temp during workflow validation.
+    assert y.count('      - name: Bind runner-local tool stores\n') == len(graph['jobs'])
+    assert y.index('      - name: Bind runner-local tool stores') < y.index('      - name: Pinned Python interpreter')
+    assert y.count('NUGET_PACKAGES=%s') == len(graph['jobs'])
+    assert y.count('PIP_CACHE_DIR=%s') == len(graph['jobs'])
+    assert y.count('>> "$GITHUB_ENV"') == 2 * len(graph['jobs'])
+    assert 'NUGET_PACKAGES: ${{ runner.temp }}' not in y
+    assert 'PIP_CACHE_DIR: ${{ runner.temp }}' not in y
     with pytest.raises(DotNetError,match='Windows-only'):
         inspect_dotnet_job(dot,['dotnet','build','All.sln','--no-restore'],{})
     other_parent=tmp_path/'other';other_parent.mkdir()

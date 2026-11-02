@@ -38,6 +38,7 @@ jobs:
           mkdir -p out/r39-consolidated
           timeout 180s python -m pytest -q \
             tests/test_r39_r4_roadmap_gate_audit.py \
+            tests/test_r39_r5_generated_action_runtime.py \
             tests/test_r39_r3_audit_attestation.py \
             tests/test_r39_r2_execution_parity.py \
             tests/test_r39_r1_execution_policy.py \
@@ -71,6 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m devtool.roadmap_gate_audit --json > out/r39-consolidated/source-gates.json
+          python -m devtool.actions_runtime_pins --json > out/r39-consolidated/generator-pins.json
           python -m devtool.workflow_parity --json > out/r39-consolidated/serial-parity.json
           python -m devtool.workflow_benchmark \
             --nodes 8 --repeats 2 --workers 2 --work-ms 2 \
@@ -84,10 +86,13 @@ jobs:
           import json, os
           from pathlib import Path
           from devtool.roadmap_gate_audit import verify
+          from devtool.actions_runtime_pins import verify as verify_generator_pins
           from devtool.workflow_parity import verify_matrix
           files = Path('out/r39-consolidated')
           gates = json.loads((files / 'source-gates.json').read_text())
           verify(gates)
+          generator_pins = json.loads((files / 'generator-pins.json').read_text())
+          verify_generator_pins(generator_pins)
           parity = json.loads((files / 'serial-parity.json').read_text())
           verify_matrix(parity)
           dag = json.loads((files / 'dag-synthetic.json').read_text())

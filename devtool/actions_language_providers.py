@@ -24,7 +24,7 @@ from .workflow_graph import graph_from_workflow, WorkflowGraphError
 
 SCHEMA_VERSION = 1
 IDENTITY = 'devtool.actions.language-providers'
-SETUP_PYTHON_SHA = 'a26af69be951a213d495a4c3e4e4022e16d87065'  # v5.6.0
+SETUP_PYTHON_SHA = 'ece7cb06caefa5fff74198d8649806c4678c61a1'  # actions/setup-python v6
 MAX_NODES = 32
 MAX_ARGV = 48
 _ALLOWED_ARG = re.compile(r'[A-Za-z0-9_./:+,=@%^-]{1,160}\Z')

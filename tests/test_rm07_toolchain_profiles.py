@@ -66,7 +66,7 @@ def test_cache_opt_in_go_pinned_and_untrusted_lock_failclosed(tmp_path):
     graph=compile_graph(root,target='app',workflow='ci',devtool_sha=PIN,cache_locks=True)
     assert graph['jobs'][0]['cache_policy']['enabled']
     assert not graph['jobs'][1]['cache_policy']['enabled']
-    assert 'actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830' in workflow_yaml(graph)
+    assert 'actions/cache@caa296126883cff596d87d8935842f9db880ef25' in workflow_yaml(graph)
     assert 'path: ~/.cache/go-build' in workflow_yaml(graph)
     assert 'cache: false' in workflow_yaml(graph)
     assert 'restore-keys:' not in workflow_yaml(graph)

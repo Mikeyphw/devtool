@@ -94,6 +94,72 @@ def test_gradle_semantic_job_is_reviewed(tmp_path):
     assert plan(root)['nodes'][0]['provider']['semantic_request']
 
 
+def _reviewed_modern_gradlew(tmp_path, script: str, *, executable: bool = True):
+    root = project(tmp_path, nested=False, variant='debug',
+                   tasks=[':app:assembleDebug'])
+    launcher = root / 'gradlew'
+    launcher.write_text(script)
+    launcher.chmod(0o755 if executable else 0o644)
+    subprocess.run(['git', '-C', str(root), 'add', 'gradlew'], check=True)
+    subprocess.run(['git', '-C', str(root), '-c', 'user.name=R39',
+                    '-c', 'user.email=r39@example.invalid',
+                    'commit', '-qm', 'launcher'], check=True)
+    return root
+
+
+MODERN_WRAPPER = ("""#!/bin/sh
+set -- \\
+        -jar "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" \\
+        "$@"
+exec "$JAVACMD" "$@"
+""")
+
+
+def test_official_gradle8_jar_launcher_accepted_without_running_gradle(tmp_path):
+    root = _reviewed_modern_gradlew(tmp_path, MODERN_WRAPPER)
+    result = plan(root)
+    assert result['nodes'][0]['provider']['operation'] == 'assemble'
+    assert result['nodes'][0]['provider']['wrapper_jar_sha256']
+    assert compile_graph(root, target='app', workflow='ci', devtool_sha=SHA)['jobs']
+
+
+@pytest.mark.parametrize('script,executable', [
+    ('#!/bin/sh\n# -jar "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" \\\n'
+     'exec "$JAVACMD" "$@"\n', True),
+    (MODERN_WRAPPER.replace('gradle-wrapper.jar', 'custom-wrapper.jar'), True),
+    (MODERN_WRAPPER.replace('exec "$JAVACMD" "$@"', 'echo "$JAVACMD" "$@"'), True),
+    (MODERN_WRAPPER, False),
+])
+def test_modern_gradle_launcher_bad_sources_refused(tmp_path, script, executable):
+    root = _reviewed_modern_gradlew(tmp_path, script, executable=executable)
+    with pytest.raises(ProviderError, match='executable Gradle wrapper contract'):
+        plan(root)
+
+
+def test_versioned_cinderbox_apk_is_owned_by_exact_root_project(tmp_path):
+    name = 'CinderboxCompanion-v0.1.1.apk'
+    output = 'app/build/outputs/apk/debug/' + name
+    root = project(tmp_path, nested=False, variant='debug',
+                   tasks=[':app:assembleDebug'], outputs=[output])
+    reviewed = plan(root)['nodes'][0]['provider']
+    assert reviewed['project_dir'] == ''
+    assert reviewed['operation'] == 'assemble'
+    assert reviewed['variant'] == 'debug'
+    assert compile_graph(root, target='app', workflow='ci', devtool_sha=SHA)['jobs'][0]['outputs'] == [output]
+
+
+@pytest.mark.parametrize('bad_name', [
+    '.hidden.apk', 'Cinderbox..v0.apk', 'Cinderbox-v0..1.apk',
+    '../escape.apk', 'app.debug/.apk', 'app.debug.apk.bak',
+])
+def test_versioned_apk_basename_stays_fail_closed(tmp_path, bad_name):
+    root = project(tmp_path, nested=False, variant='debug',
+                   tasks=[':app:assembleDebug'],
+                   outputs=['app/build/outputs/apk/debug/' + bad_name])
+    with pytest.raises(ProviderError, match='own exactly'):
+        plan(root)
+
+
 @pytest.mark.parametrize('kwargs,reason',[
     ({'project_dir_override':'../android'},'project_dir'),
     ({'project_dir_override':'outside'},'project_dir'),
