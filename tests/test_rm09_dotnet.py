@@ -93,7 +93,7 @@ def test_direct_native_provider_and_pinned_multi_job_setup(tmp_path):
     graph=compile_graph(r,target='app',workflow='ci',devtool_sha=PIN)
     assert len(graph['jobs'])==2 and graph['jobs'][1]['needs']==[graph['jobs'][0]['id']]
     yaml=workflow_yaml(graph)
-    assert 'setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9' in yaml
+    assert 'setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1' in yaml
     assert "dotnet-version: '8.0.416'" in yaml
     assert yaml.count('actions/setup-dotnet@')==2
     with pytest.raises(ProviderError,match='multi-job'):

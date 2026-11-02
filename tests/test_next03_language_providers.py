@@ -67,8 +67,8 @@ def test_export_readonly_write_verify_and_replay_refusal(tmp_path):
     wf=root/result['workflow_path']
     assert wf.is_file() and result['writes_performed']
     content=wf.read_text()
-    assert 'setup-python@a26af69be951a213d495a4c3e4e4022e16d87065' in content
-    assert 'setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5' in content
+    assert 'setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1' in content
+    assert 'setup-go@924ae3a1cded613372ab5595356fb5720e22ba16' in content
     assert 'invoke --target app ci' in content
     assert 'matrix:' in content and 'run-full-dag' not in content
     assert 'permissions:\n  contents: read' in content

@@ -17,7 +17,7 @@ import subprocess
 from typing import Any
 
 # Pinned known setup actions, not floating major version tags.
-CACHE_ACTION_SHA = '0057852bfaa89a56745cba8c7296529d2fc39830'  # actions/cache v4.3.0
+CACHE_ACTION_SHA = 'caa296126883cff596d87d8935842f9db880ef25'  # actions/cache v5
 MAX_CELLS = 2
 MAX_TOTAL_JOBS = 48
 MAX_LOCK_BYTES = 1_048_576
@@ -287,9 +287,9 @@ def capability_report(root: Path, *, probe: bool = True) -> dict[str, Any]:
             'host':{'kind':host.host_kind,'os':host.os_family,'architecture':host.architecture,
                     'substrate':host.current_substrate},
             'profiles':[PROFILES[key].describe() for key in sorted(PROFILES)],
-            'setup_action_pins':{'checkout':'11bd71901bbe5b1630ceea73d27597364c9af683',
-                                 'python':'a26af69be951a213d495a4c3e4e4022e16d87065',
-                                 'go':'d35c59abb061a4a6fb18e82ac0862c26744d6ab5',
+            'setup_action_pins':{'checkout':'d23441a48e516b6c34aea4fa41551a30e30af803',
+                                 'python':'ece7cb06caefa5fff74198d8649806c4678c61a1',
+                                 'go':'924ae3a1cded613372ab5595356fb5720e22ba16',
                                  'cache':CACHE_ACTION_SHA},
             'no_automatic_installation':True,'hosted_runner_observed':False,
             'remote_attested':False,'release_qualified':False}

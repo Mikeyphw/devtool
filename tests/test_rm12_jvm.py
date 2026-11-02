@@ -79,7 +79,7 @@ def test_project_dependency_graph_and_java_matrices(tmp_path,kind):
     assert all(j['cache_policy']['enabled'] for j in graph['jobs'])
     assert all(j['jvm_manager']==kind for j in graph['jobs'])
     yaml=workflow_yaml(graph)
-    assert 'actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3' in yaml
+    assert 'actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961' in yaml
     assert 'distribution: temurin' in yaml
     assert "java-version: \"21\"" in yaml
     assert len({j['matrix_cell'] for j in graph['jobs']})==4

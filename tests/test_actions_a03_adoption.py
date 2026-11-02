@@ -55,8 +55,8 @@ def test_a03_writes_pinned_workflow_and_wrapper_alias(tmp_path):
     assert out['overall'] == 'PASS_ACTIONS_A03_ADOPTION_WRITTEN'
     path = r / out['workflow_path']
     raw = path.read_bytes()
-    assert PIN.encode() in raw and b'uses: actions/checkout@11bd719' in raw
-    assert b'actions/upload-artifact@ea165' in raw
+    assert PIN.encode() in raw and b'uses: actions/checkout@d23441' in raw
+    assert b'actions/upload-artifact@cf430e' in raw
     assert b'workflow_dispatch:' in raw
     assert b'pull_request:' not in raw
     assert hashlib.sha256(raw).hexdigest() == out['workflow_sha256']

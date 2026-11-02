@@ -125,7 +125,7 @@ def test_nodes_compile_versions_report_artifact_handoff(tmp_path,monkeypatch):
     assert len({j['matrix_cell'] for j in graph['jobs']})==2
     assert all(j['toolchain_version'] in ('20','22') for j in graph['jobs'])
     yaml=workflow_yaml(graph)
-    assert 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' in yaml
+    assert 'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38' in yaml
     assert 'npm install --global npm@10.9.2' in yaml
     assert yaml.count('node-version:')==len(graph['jobs'])
     # The native runner probes the real executable even when run_specs is mocked.
@@ -336,7 +336,7 @@ def test_manager_workflow_actions_cache_lock_and_other_formats(tmp_path):
         assert all(j['cache_policy']['enabled'] and manager in j['cache_policy']['key'] for j in rows)
         assert all(j['cache_policy']['path'].endswith('/'+manager) for j in rows)
         doc=workflow_yaml(graph)
-        assert 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' in doc
+        assert 'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38' in doc
         if manager=='bun':
             assert 'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6' in doc
         elif manager in ('pnpm','yarn'):
