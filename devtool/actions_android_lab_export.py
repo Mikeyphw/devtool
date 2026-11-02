@@ -26,13 +26,13 @@ JAR_SHA = '2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046'
 DIST_SHA = 'f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6'
 APK = 'app/build/outputs/apk/debug/app-debug.apk'
 PACKAGE = 'org.devtool.r33.fixture'
-CHECKOUT = '11d5960a326750d5838078e36cf38b85af677262'
-PYTHON = 'a26af69be951a213d495a4c3e4e4022e16d87065'
-JAVA = 'cf277c60eb25467037889841efdb72551f06f6c3'
+CHECKOUT = 'd23441a48e516b6c34aea4fa41551a30e30af803'
+PYTHON = 'ece7cb06caefa5fff74198d8649806c4678c61a1'
+JAVA = 'b6effb05e454b25005698d916606bdc6ffcbf961'
 SDK = 'be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd'
-GRADLE = 'ed408507eac070d1f99cc633dbcf757c94c7933a'
-UPLOAD = 'ea165f8d65b6e75b540449e92b4886f43607fa02'
-DOWNLOAD = 'd3f86a106a0bac45b974a628896c90dbdf5c8093'
+GRADLE = '0723195856401067f7a2779048b490ace7a47d7c'
+UPLOAD = 'cf430e030ddbb5b0abf93d22962f4752f3646cd9'
+DOWNLOAD = '9000827ccba6bdab643e8b6fd33ac0654aef8333'
 
 
 class LabError(ValueError):
@@ -50,6 +50,24 @@ def sha(path: Path) -> str:
     return h.hexdigest()
 
 
+def _source_evidence_module():
+    """Load the source-bound R33 helper; never resolve a third-party `tools`."""
+    import importlib.util
+
+    # `tools/` is an implicit namespace package; regular installed `tools`
+    # packages may shadow it (e.g. on Termux). Source identity must be bound
+    # to this Devtool checkout, including on hosted worker processes.
+    helper = Path(__file__).resolve().parents[1] / 'tools' / 'r33_hosted_android_evidence.py'
+    if not helper.is_file() or helper.is_symlink():
+        raise LabError('R34 exact-source R33 helper is missing or symlinked')
+    spec = importlib.util.spec_from_file_location('devtool_r34_source_evidence', helper)
+    if spec is None or spec.loader is None:
+        raise LabError('R34 exact-source R33 helper could not be loaded')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def reviewed_graph(root: Path) -> dict:
     """Compile real RM-06 DAG using a source-only disposable reviewed fixture.
 
@@ -59,7 +77,7 @@ def reviewed_graph(root: Path) -> dict:
     source=root/FIXTURE
     if not source.is_dir() or source.is_symlink():
         raise LabError('R34 source fixture is missing or symlinked')
-    from tools.r33_hosted_android_evidence import ROOT_ALLOWED
+    ROOT_ALLOWED = _source_evidence_module().ROOT_ALLOWED
     names={str(p.relative_to(source)) for p in source.rglob('*') if p.is_file()}
     if names!=ROOT_ALLOWED or any(p.is_symlink() for p in source.rglob('*')):
         raise LabError('R34 fixture source inventory changed')
@@ -223,7 +241,7 @@ def register(fixture: Path, receipt: Path, out: Path, apk_out: Path) -> dict:
               'release_qualified':False,'device_qualified':False,**ctx}
     if any(type(data.get(k)) is not type(v) or data[k]!=v for k,v in expected.items()):
         raise LabError('R34 native job receipt/source/run mismatch')
-    from tools.r33_hosted_android_evidence import graph_plan
+    graph_plan = _source_evidence_module().graph_plan
     fixture_sha=git(fixture,'rev-parse','HEAD')
     graph=graph_plan(fixture,ctx['devtool_sha'])
     if (data.get('fixture_sha')!=fixture_sha or data.get('graph_sha256')!=graph['graph_sha256'] or

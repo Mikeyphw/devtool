@@ -24,6 +24,25 @@ def test_frozen_obligations_are_complete_and_no_unverified_promotion():
 
 
 def test_frozen_workflows_match_unmodified_source_snapshot():
+    # G00/G01 binds historical bytes from the 2026-10-13 capture, *not*
+    # the live workflow files (which are allowed to receive security updates).
+    index = json.loads((ROOT/'docs/actions/ACTIONS_G00_G01_EVIDENCE_INDEX.json').read_text())
+    captured = index['snapshot_source']
+    assert captured['head'] == 'e72335640aab0db58ae96c3e319a6bcec1e2ac19'
+    archive = ROOT/'docs/actions/frozen_source/e7233564'
+    for relative, expected in captured['workflow_sha256'].items():
+        historical = archive/relative
+        assert historical.is_file() and not historical.is_symlink()
+        assert hashlib.sha256(historical.read_bytes()).hexdigest() == expected
+        # The current workflow exists, but its digest is not historical proof.
+        assert (ROOT/relative).is_file()
+
+
+def test_frozen_snapshot_hashes_reject_tampering(tmp_path):
     index = json.loads((ROOT/'docs/actions/ACTIONS_G00_G01_EVIDENCE_INDEX.json').read_text())
     for relative, expected in index['snapshot_source']['workflow_sha256'].items():
-        assert hashlib.sha256((ROOT/relative).read_bytes()).hexdigest() == expected
+        original = (ROOT/'docs/actions/frozen_source/e7233564'/relative).read_bytes()
+        assert hashlib.sha256(original).hexdigest() == expected
+        tampered = tmp_path/Path(relative).name
+        tampered.write_bytes(original + b'\n# simulated history rewrite\n')
+        assert hashlib.sha256(tampered.read_bytes()).hexdigest() != expected

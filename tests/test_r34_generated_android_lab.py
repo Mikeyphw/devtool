@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import shutil
@@ -13,9 +14,20 @@ from devtool.actions_android_lab_export import (
     APK, FIXTURE, JAR_SHA, WORKFLOW, LabError, generate, register, reviewed_graph,
 )
 from devtool.artifact_registry import load_registry
-from tools.r33_hosted_android_evidence import graph_plan
-
 ROOT=Path(__file__).resolve().parents[1]
+# The repository's tools/ is an implicit namespace package. A regular Python
+# package named tools (common in Termux installations) can shadow it during
+# detached-worktree pytest collection. Resolve this helper by its exact file,
+# not by ambient module search order.
+EVIDENCE_FILE = ROOT / 'tools' / 'r33_hosted_android_evidence.py'
+EVIDENCE_SPEC = importlib.util.spec_from_file_location(
+    'devtool_local_r34_hosted_android_evidence', EVIDENCE_FILE
+)
+if EVIDENCE_SPEC is None or EVIDENCE_SPEC.loader is None:
+    raise ImportError(f'R34 source evidence helper unavailable: {EVIDENCE_FILE}')
+EVIDENCE_MODULE = importlib.util.module_from_spec(EVIDENCE_SPEC)
+EVIDENCE_SPEC.loader.exec_module(EVIDENCE_MODULE)
+graph_plan = EVIDENCE_MODULE.graph_plan
 
 
 def fake_fixture(tmp_path: Path) -> Path:
