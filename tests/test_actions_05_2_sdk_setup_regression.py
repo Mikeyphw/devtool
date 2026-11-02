@@ -29,8 +29,8 @@ def test_live_hud_and_template_remain_equivalent_at_android_setup_boundary():
         assert steps[1]['with']['java-version'] == '21'
         assert steps[2]['uses'] == 'android-actions/setup-android@v4'
         assert steps[2]['with'] == {'packages': 'platform-tools'}
-        assert any(s.get('uses') == 'gradle/actions/setup-gradle@v4' for s in steps)
-        assert any(s.get('uses') == 'actions/upload-artifact@v4' for s in steps)
+        assert any(s.get('uses') == 'gradle/actions/setup-gradle@v5' for s in steps)
+        assert any(s.get('uses') == 'actions/upload-artifact@v7' for s in steps)
     assert workflow['jobs'] == template['jobs']
 
 

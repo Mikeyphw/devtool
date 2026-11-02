@@ -179,7 +179,7 @@ def test_ov16_ci_provisions_toolchains_signing_and_uploads_evidence() -> None:
         "connectedDebugAndroidTest",
         "--final --output dist/release-qualification.json",
         "dist/release-qualification.final.json",
-        "actions/upload-artifact@v5",
+        "actions/upload-artifact@v7",
     ):
         assert token in workflow
 

@@ -63,7 +63,7 @@ jobs:
           DEVTOOL_G5_SYSTEMS: ${{ inputs.operating_systems }}
         run: python tools/actions_g5_runner.py --out dist/actions-g5/receipt.json
       - name: Upload source-bound test receipt
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: devtool-g5-${{ matrix.language }}-${{ matrix.os }}-attempt${{ github.run_attempt }}
           path: dist/actions-g5/receipt.json

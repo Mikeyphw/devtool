@@ -47,7 +47,7 @@ jobs:
       - run: rm -rf desktop/gtk-control-center/dist && desktop/gtk-control-center/package-deb.sh --verify
       - run: cp desktop/gtk-control-center/dist/devtool-control-center_*_all.deb dist/release/desktop-second.deb
       - run: tools/verify-identical.py dist/release/desktop-first.deb dist/release/desktop-second.deb
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: gtk-desktop-evidence
@@ -87,7 +87,7 @@ jobs:
           } >> "$GITHUB_ENV"
       - run: cd android/devtool-live-hud && ./gradlew --no-daemon lintRelease testReleaseUnitTest verifyReleaseApk
       - run: cp android/devtool-live-hud/app/build/outputs/apk/release/app-release.apk app-release-first.apk
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: android-release-evidence
@@ -112,7 +112,7 @@ jobs:
         with:
           api-level: 36
           script: cd android/devtool-live-hud && ./gradlew --no-daemon connectedDebugAndroidTest
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: android-device-evidence
@@ -137,7 +137,7 @@ jobs:
       - run: test -s dist/release/release-artifacts.json
       - run: test -s dist/release-qualification.final.json
       - run: test -d tests/snapshots/ui
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: source-release-evidence

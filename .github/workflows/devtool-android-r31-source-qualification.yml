@@ -13,11 +13,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
       - name: Install reviewed Python runtime
@@ -47,7 +47,7 @@ jobs:
           assert doc['release_qualified'] is False
           print('PASS_ANDROID_R31_HOSTED_SOURCE_AND_RECEIPT_CONTRACT_NON_RELEASE')
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: android-r31-source-contract-attempt${{ github.run_attempt }}

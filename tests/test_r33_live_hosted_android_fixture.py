@@ -4,19 +4,36 @@ These tests never execute Gradle and cannot substitute for GitHub evidence.
 """
 from __future__ import annotations
 import hashlib
+import importlib.util
 from pathlib import Path
 import shutil
 import subprocess
 
 import pytest
 
-from tools.r33_hosted_android_evidence import (
-    DISTRIBUTION_SHA256, FIXTURE_SUBDIR, JAR_SHA256, PACKAGE,
-    ROOT_ALLOWED, execute, graph_plan, prepare,
+ROOT = Path(__file__).resolve().parents[1]
+# The repository's ``tools`` directory is an implicit namespace package. A
+# separately installed regular package named ``tools`` can shadow it on Termux
+# during a detached-worktree pytest collection. Load exactly the tracked
+# repository tool, not an ambient package of the same name.
+EVIDENCE_FILE = ROOT / "tools" / "r33_hosted_android_evidence.py"
+EVIDENCE_SPEC = importlib.util.spec_from_file_location(
+    "devtool_local_r33_hosted_android_evidence", EVIDENCE_FILE
 )
+if EVIDENCE_SPEC is None or EVIDENCE_SPEC.loader is None:
+    raise ImportError(f"R33 source evidence tool unavailable: {EVIDENCE_FILE}")
+EVIDENCE_MODULE = importlib.util.module_from_spec(EVIDENCE_SPEC)
+EVIDENCE_SPEC.loader.exec_module(EVIDENCE_MODULE)
+DISTRIBUTION_SHA256 = EVIDENCE_MODULE.DISTRIBUTION_SHA256
+FIXTURE_SUBDIR = EVIDENCE_MODULE.FIXTURE_SUBDIR
+JAR_SHA256 = EVIDENCE_MODULE.JAR_SHA256
+PACKAGE = EVIDENCE_MODULE.PACKAGE
+ROOT_ALLOWED = EVIDENCE_MODULE.ROOT_ALLOWED
+execute = EVIDENCE_MODULE.execute
+graph_plan = EVIDENCE_MODULE.graph_plan
+prepare = EVIDENCE_MODULE.prepare
 
-ROOT=Path(__file__).resolve().parents[1]
-TEMPLATE=ROOT/FIXTURE_SUBDIR
+TEMPLATE = ROOT / FIXTURE_SUBDIR
 
 
 def fake_fixture(tmp_path: Path) -> Path:
@@ -76,9 +93,9 @@ def test_live_workflow_uses_two_hosted_jobs_and_non_release_immutability():
     assert 'workflow_dispatch:' in content
     assert '    needs: [lint]' in content
     assert 'gradle-8.11.1-wrapper.jar' in content
-    assert 'gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a' in content
-    assert 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' in content
-    assert 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' in content
+    assert 'gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c' in content
+    assert 'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9' in content
+    assert 'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333' in content
     assert 'secrets.' not in content
     assert 'assembleRelease' not in content
 

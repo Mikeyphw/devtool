@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout exact Devtool source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
       - name: Initialize bounded source/run evidence
@@ -32,7 +32,7 @@ jobs:
             'job':'lint','status':'NOT_QUALIFIED','release_qualified':False})+chr(10))
           PYR34BOOT
       - name: Python 3.13
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: '3.13'
       - name: Install native Devtool runtime
@@ -46,7 +46,7 @@ jobs:
           set -euo pipefail
           python3 -m devtool.actions_android_lab_export verify --repo "$GITHUB_WORKSPACE"
       - name: Reviewed Java SDK
-        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
         with:
           distribution: temurin
           java-version: "17"
@@ -56,7 +56,7 @@ jobs:
           cmdline-tools-version: 15859902
           packages: "platforms;android-35 build-tools;35.0.0 platform-tools"
       - name: Pinned Gradle
-        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c
         with:
           gradle-version: '8.11.1'
           cache-disabled: true
@@ -92,7 +92,7 @@ jobs:
           python3 -m devtool.actions_android_lab_export failure --job lint --out "$RUNNER_TEMP/r34-evidence/failure.json"
       - name: Upload source-bound node evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: devtool-r34-node-01-evidence-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/r34-evidence/
@@ -104,7 +104,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout exact Devtool source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
       - name: Initialize bounded source/run evidence
@@ -121,7 +121,7 @@ jobs:
             'job':'build','status':'NOT_QUALIFIED','release_qualified':False})+chr(10))
           PYR34BOOT
       - name: Python 3.13
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: '3.13'
       - name: Install native Devtool runtime
@@ -135,7 +135,7 @@ jobs:
           set -euo pipefail
           python3 -m devtool.actions_android_lab_export verify --repo "$GITHUB_WORKSPACE"
       - name: Reviewed Java SDK
-        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
         with:
           distribution: temurin
           java-version: "17"
@@ -145,7 +145,7 @@ jobs:
           cmdline-tools-version: 15859902
           packages: "platforms;android-35 build-tools;35.0.0 platform-tools"
       - name: Pinned Gradle
-        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c
         with:
           gradle-version: '8.11.1'
           cache-disabled: true
@@ -168,7 +168,7 @@ jobs:
           python3 tools/r33_hosted_android_evidence.py prepare --repo "$GITHUB_WORKSPACE" --fixture "$RUNNER_TEMP/r34-fixture" --jar "$RUNNER_TEMP/gradle-8.11.1-wrapper.jar" --out "$RUNNER_TEMP/r34-evidence/source.json"
           python3 tools/r33_hosted_android_evidence.py plan --repo "$GITHUB_WORKSPACE" --fixture "$RUNNER_TEMP/r34-fixture" --out "$RUNNER_TEMP/r34-evidence/plan.json"
       - name: Download exact upstream lint evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: devtool-r34-node-01-evidence-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/r34-upstream
@@ -184,7 +184,7 @@ jobs:
           python3 -m devtool.actions_android_lab_export register --fixture "$RUNNER_TEMP/r34-fixture" --receipt "$RUNNER_TEMP/r34-evidence/result.json" --out "$RUNNER_TEMP/r34-evidence/registry-evidence.json" --apk-out "$RUNNER_TEMP/r34-published/app-debug.apk"
       - name: Upload standalone debug APK for exact-run remote collection
         if: success()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: devtool-r34-debug-apk-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/r34-published/app-debug.apk
@@ -199,7 +199,7 @@ jobs:
           python3 -m devtool.actions_android_lab_export failure --job build --out "$RUNNER_TEMP/r34-evidence/failure.json"
       - name: Upload source-bound node evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: devtool-r34-node-02-evidence-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/r34-evidence/

@@ -170,7 +170,7 @@ def test_workflow_source_is_reusable_unqualified_and_excludes_signer():
     t=p.read_text()
     assert 'workflow_call:' in t and 'workflow_dispatch:' in t
     assert 'windows-latest' in t and 'ubuntu-latest' in t
-    assert 'actions/upload-artifact@v5' in t
+    assert 'actions/upload-artifact@v7' in t
     assert 'DEVTOOL_RELEASE_KEYSTORE_B64' not in t
     assert 'secrets.' not in t
     assert 'github.run_attempt' in t and 'github.sha' not in t # Runner gets GitHub SHA via environment

@@ -42,15 +42,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
       - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
       - name: Validate requested Gradle task
         shell: bash
         env:
@@ -240,7 +240,7 @@ jobs:
         with:
           subject-path: ${{ steps.package.outputs.package }}
       - name: Upload exactly selected Android output
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: devtool-android-${{ inputs.variant }}-${{ inputs.format }}
           path: |

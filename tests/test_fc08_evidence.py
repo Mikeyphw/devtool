@@ -115,6 +115,6 @@ def test_host_probe_macos_claim_is_only_local_observation(monkeypatch):
 def test_manual_hosted_workflow_not_release_gate():
     workflow=(ROOT/'.github/workflows/devtool-fc08-host-evidence.yml').read_text()
     assert 'workflow_dispatch:' in workflow
-    assert 'upload-artifact@v4' in workflow
+    assert 'upload-artifact@v7' in workflow
     assert 'push:' not in workflow
     assert 'not qualification' in workflow

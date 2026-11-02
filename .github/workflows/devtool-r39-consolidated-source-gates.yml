@@ -1,0 +1,111 @@
+name: Devtool R39 Consolidated Source Gates (non-release)
+
+# These checks never qualify real consumer, device, signing or release operations.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: devtool-r39-source-gates-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  evidence:
+    name: R38-R39 source contracts and bounded evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Exact source checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -e '.[textual]' pytest pexpect 'cryptography>=43,<47'
+      - name: Validate R38/R39 scheduler and source contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/r39-consolidated
+          timeout 180s python -m pytest -q \
+            tests/test_r39_r4_roadmap_gate_audit.py \
+            tests/test_r39_r3_audit_attestation.py \
+            tests/test_r39_r2_execution_parity.py \
+            tests/test_r39_r1_execution_policy.py \
+            tests/test_r38_r1_tracked_write_audit.py \
+            tests/test_r38_r2_scratch_cache.py \
+            tests/test_r38_r3_cancellation_latch.py \
+            tests/test_r38_r4_dag_benchmark.py
+      - name: Validate NEXT/R35/R36 source contracts independently
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 180s python -m pytest -q \
+            tests/test_next02_evidence_kernel.py \
+            tests/test_next03_language_providers.py \
+            tests/test_next06_repository_extraction.py \
+            tests/test_r35_verified_import.py \
+            tests/test_r36_verified_import.py
+      - name: Validate hosted workflow migrations and compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 180s python -m pytest -q \
+            tests/test_actions_05_2_sdk_setup_regression.py \
+            tests/test_actions_10_unsigned_candidate.py \
+            tests/test_actions_g05_polyglot_ci.py \
+            tests/test_fc08_evidence.py \
+            tests/test_ov15_ov16_release_final_seal.py \
+            tests/test_r33_live_hosted_android_fixture.py
+      - name: Capture exact-source bounded evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m devtool.roadmap_gate_audit --json > out/r39-consolidated/source-gates.json
+          python -m devtool.workflow_parity --json > out/r39-consolidated/serial-parity.json
+          python -m devtool.workflow_benchmark \
+            --nodes 8 --repeats 2 --workers 2 --work-ms 2 \
+            --shape fanout_join --json > out/r39-consolidated/dag-synthetic.json
+      - name: Verify source identity and no false qualification
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from devtool.roadmap_gate_audit import verify
+          from devtool.workflow_parity import verify_matrix
+          files = Path('out/r39-consolidated')
+          gates = json.loads((files / 'source-gates.json').read_text())
+          verify(gates)
+          parity = json.loads((files / 'serial-parity.json').read_text())
+          verify_matrix(parity)
+          dag = json.loads((files / 'dag-synthetic.json').read_text())
+          for receipt in (gates, parity, dag):
+              assert receipt['source']['commit'] == os.environ['SOURCE_SHA']
+              assert receipt['source']['tree']
+          assert not any(gates['qualification'][k] for k in (
+              'device_attested', 'release_attested', 'signing_attested',
+              'legacy_retirement_authorized', 'full_current_sha_ci_attested'))
+          assert dag['qualification']['release'] is False
+          assert parity['qualification']['legacy_retirement_authorized'] is False
+          print('R39_CONSOLIDATED_SOURCE_GATES_PASS; independent gates remain OPEN')
+          PY
+      - name: Upload exact-source non-release evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: devtool-r39-consolidated-source-gates
+          path: out/r39-consolidated/
+          if-no-files-found: error
+          retention-days: 14

@@ -112,7 +112,7 @@ def test_dedicated_workflow_excludes_keys_and_keeps_protected_lane():
     assert 'workflow_dispatch:' in unsigned and 'contents: read' in unsigned
     assert 'devtoolAssembleUnsignedReleaseCandidate' in unsigned
     assert 'DEVTOOL_RELEASE_KEYSTORE_B64' not in unsigned
-    assert 'actions/upload-artifact@v4' in unsigned
+    assert 'actions/upload-artifact@v7' in unsigned
     assert 'GITHUB_REF_PROTECTED' in protected
     assert 'DEVTOOL_RELEASE_KEYSTORE_B64' in protected
     assert 'Release signing is required.' in gradle
