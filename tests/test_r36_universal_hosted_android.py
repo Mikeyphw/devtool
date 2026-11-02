@@ -94,6 +94,30 @@ def test_gradle_semantic_job_is_reviewed(tmp_path):
     assert plan(root)['nodes'][0]['provider']['semantic_request']
 
 
+def test_versioned_cinderbox_apk_is_owned_by_exact_root_project(tmp_path):
+    name = 'CinderboxCompanion-v0.1.1.apk'
+    output = 'app/build/outputs/apk/debug/' + name
+    root = project(tmp_path, nested=False, variant='debug',
+                   tasks=[':app:assembleDebug'], outputs=[output])
+    reviewed = plan(root)['nodes'][0]['provider']
+    assert reviewed['project_dir'] == ''
+    assert reviewed['operation'] == 'assemble'
+    assert reviewed['variant'] == 'debug'
+    assert compile_graph(root, target='app', workflow='ci', devtool_sha=SHA)['jobs'][0]['outputs'] == [output]
+
+
+@pytest.mark.parametrize('bad_name', [
+    '.hidden.apk', 'Cinderbox..v0.apk', 'Cinderbox-v0..1.apk',
+    '../escape.apk', 'app.debug/.apk', 'app.debug.apk.bak',
+])
+def test_versioned_apk_basename_stays_fail_closed(tmp_path, bad_name):
+    root = project(tmp_path, nested=False, variant='debug',
+                   tasks=[':app:assembleDebug'],
+                   outputs=['app/build/outputs/apk/debug/' + bad_name])
+    with pytest.raises(ProviderError, match='own exactly'):
+        plan(root)
+
+
 @pytest.mark.parametrize('kwargs,reason',[
     ({'project_dir_override':'../android'},'project_dir'),
     ({'project_dir_override':'outside'},'project_dir'),

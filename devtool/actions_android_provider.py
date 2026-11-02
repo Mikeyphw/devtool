@@ -132,7 +132,7 @@ class AndroidGradleProvider:
                 raise AndroidProviderError('Android APK output must belong to Debug build type')
             folder = 'apk' if ext == 'apk' else 'bundle'
             expected_prefix = prefix + module_dir + '/build/outputs/' + folder + '/' + subdir + '/'
-            if len(outs) != 1 or not outs[0].startswith(expected_prefix) or not re.fullmatch(r'[A-Za-z0-9_-]+\.' + ext, outs[0][len(expected_prefix):]):
+            if len(outs) != 1 or not outs[0].startswith(expected_prefix) or not re.fullmatch(r'[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.' + ext, outs[0][len(expected_prefix):]):
                 raise AndroidProviderError('Android debug build must own exactly one declared APK/AAB path')
         elif outs:
             raise AndroidProviderError('Android source/unit checks may not assert unverified build outputs')
