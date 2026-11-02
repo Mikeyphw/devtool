@@ -104,7 +104,17 @@ class AndroidGradleProvider:
                 raise AndroidProviderError('Android CI requires tracked Gradle settings')
         except (ProjectReviewError, OSError, UnicodeError) as exc:
             raise AndroidProviderError('Android CI source review refused: '+str(exc)[:180]) from None
-        if b'GradleWrapperMain' not in wrapper or len(jar) < 16 or not (project/'gradlew').stat().st_mode & 0o111:
+        # The official Gradle POSIX launcher has two reviewed generations:
+        # older wrappers invoke GradleWrapperMain directly; Gradle 8+ uses
+        # `-jar "$APP_HOME/gradle/wrapper/gradle-wrapper.jar"` and then the
+        # canonical `exec "$JAVACMD" "$@"` tail. Reject quoted comments,
+        # alternate JAR paths and launchers missing the real exec line.
+        legacy_launcher = b'org.gradle.wrapper.GradleWrapperMain' in wrapper
+        modern_launcher = bool(
+            re.search(rb'(?m)^[ \t]*-jar[ \t]+"\$APP_HOME/gradle/wrapper/gradle-wrapper[.]jar"[ \t]*\\[ \t]*$', wrapper)
+            and re.search(rb'(?m)^[ \t]*exec[ \t]+"\$JAVACMD"[ \t]+"\$@"[ \t]*$', wrapper)
+        )
+        if not (legacy_launcher or modern_launcher) or len(jar) < 16 or not (project/'gradlew').stat().st_mode & 0o111:
             raise AndroidProviderError('Android CI missing an executable Gradle wrapper contract')
         jar_pin = meta.get('ci_android_wrapper_jar_sha256')
         if (not isinstance(jar_pin,str) or not re.fullmatch(r'[a-f0-9]{64}',jar_pin)
