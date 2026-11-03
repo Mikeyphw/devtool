@@ -23,6 +23,12 @@ _NAME = re.compile(r'[a-zA-Z0-9_.-]{1,100}\Z')
 _VERSION = re.compile(r'(?:8|9|10)\.0\.[0-9]{1,4}\Z')
 _TFM = re.compile(r'net(?:6|8|9|10)\.0(?:-windows(?:[0-9.]+)?)?\Z')
 _RIDS = {'linux-x64','linux-arm64','win-x64','win-arm64','osx-x64','osx-arm64'}
+# .NET 6 ended support on 2024-11-12. This is only a compatibility pin.
+_LEGACY_NET6_RUNTIME = '6.0.36'
+_DOTNET_ARG_ALIASES = {'-c': '--configuration', '-f': '--framework',
+                       '-r': '--runtime', '-o': '--output'}
+_DOTNET_VALUE_SWITCHES = {'--configuration', '--framework', '--runtime',
+                          '--output', '--logger', '--results-directory', '--collect'}
 _SOLUTION = re.compile(r'^Project\([^\n]+\)\s*=\s*"[^"]+",\s*"([^"]+\.csproj)"',re.M|re.I)
 
 
@@ -268,7 +274,28 @@ def solution_graph(root: Path, *, selected: str = '') -> dict:
             'source_bound':True,'execution_performed':False,'release_qualified':False}
 
 
+
+def normalize_dotnet_argv(argv: list[str]) -> list[str]:
+    """Canonicalize only reviewed direct dotnet switch aliases; never use a shell."""
+    if (not isinstance(argv, list) or len(argv) > 36
+            or any(not isinstance(item, str) for item in argv)):
+        raise DotNetError('RM-09 unbounded .NET arguments')
+    if len(argv) < 3:
+        return list(argv)
+    result = list(argv[:3])
+    index = 3
+    while index < len(argv):
+        switch = _DOTNET_ARG_ALIASES.get(argv[index], argv[index])
+        result.append(switch)
+        index += 1
+        if switch in _DOTNET_VALUE_SWITCHES and index < len(argv):
+            result.append(argv[index])
+            index += 1
+    return result
+
+
 def inspect_dotnet_job(root: Path, argv: list[str], metadata: dict, *, host_os: str = 'linux') -> dict:
+    argv=normalize_dotnet_argv(argv)
     if len(argv)<3 or argv[0]!='dotnet' or argv[1] not in ('restore','build','test','pack','publish'):
         raise DotNetError('RM-09 requires direct dotnet restore/build/test/pack/publish')
     if any(not isinstance(x,str) or len(x)>160 or '\\' in x or '$' in x or (';' in x and x!='trx;LogFileName=results.trx') for x in argv):
@@ -361,11 +388,51 @@ def inspect_dotnet_job(root: Path, argv: list[str], metadata: dict, *, host_os: 
             'coverage':coverage,'framework':opts.get('--framework',''),'runtime':opts.get('--runtime',''),
              'legacy_tfms':graph['legacy_tfms'],'eol_opt_in':bool(graph['legacy_tfms'] and eol_opt_in),
              'required_runtime_families':['6.0'] if graph['legacy_tfms'] else [],
+             'legacy_runtime_version':_LEGACY_NET6_RUNTIME if graph['legacy_tfms'] else '',
+             'canonical_argv':argv,
             'publish_output':opts.get('--output',''), 'host_os':host_os,
             'shared_restore':shared,
             'cache_enabled':False,'report_adapter':'trx','output_role':'local-bytes-only',
             'release_qualified':False}
 
+
+
+
+def verify_dotnet_host(root: Path, *, sdk_version: str,
+                       legacy_runtime_version: str = '', windows_desktop: bool = False) -> dict:
+    """Attest actual, exact installed SDK/runtime; no installation or trust claim."""
+    if not _VERSION.fullmatch(sdk_version):
+        raise DotNetError('DN02 unreviewed .NET host SDK version')
+    if legacy_runtime_version not in ('', _LEGACY_NET6_RUNTIME):
+        raise DotNetError('DN02 unreviewed legacy .NET runtime version')
+    try:
+        sdk = subprocess.run(['dotnet', '--version'], cwd=root, capture_output=True,
+                             text=True, timeout=15, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        raise DotNetError('DN02 pinned .NET SDK unavailable on native host') from None
+    if sdk.returncode != 0 or sdk.stdout.strip() != sdk_version:
+        raise DotNetError('DN02 .NET SDK differs from reviewed global.json pin')
+    verified = []
+    if legacy_runtime_version:
+        try:
+            listed = subprocess.run(['dotnet', '--list-runtimes'], cwd=root,
+                                    capture_output=True, text=True, timeout=15, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            raise DotNetError('DN02 .NET 6 host runtime inventory unavailable') from None
+        if listed.returncode != 0:
+            raise DotNetError('DN02 cannot verify installed .NET runtimes')
+        families = ['Microsoft.NETCore.App']
+        if windows_desktop:
+            families.append('Microsoft.WindowsDesktop.App')
+        for family in families:
+            pattern = re.compile(re.escape(family) + ' ' +
+                                 re.escape(legacy_runtime_version) + r' \[[^\r\n]{1,300}\]\Z')
+            if not any(pattern.fullmatch(line.strip()) for line in listed.stdout.splitlines()):
+                raise DotNetError('DN02 missing exact legacy runtime: ' + family + ' ' + legacy_runtime_version)
+            verified.append({'family': family, 'version': legacy_runtime_version})
+    return {'kind': 'devtool.dn02-dotnet-host', 'sdk_version': sdk_version,
+            'verified_runtimes': verified, 'installed_versions_checked': True,
+            'authenticated_host': False, 'release_qualified': False}
 
 
 def review_shared_restore(root: Path, graph: dict, selected: str, requested,

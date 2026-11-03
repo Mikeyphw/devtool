@@ -223,6 +223,9 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                          'dotnet_coverage':row['provider'].get('coverage',False),
                          'dotnet_graph':row['provider'].get('graph'),
                          'dotnet_shared_restore':row['provider'].get('shared_restore'),
+                         'dotnet_canonical_argv':row['provider'].get('canonical_argv',[]),
+                         'dotnet_legacy_runtime':row['provider'].get('legacy_runtime_version',''),
+                         'dotnet_legacy_windows_desktop':bool(row['provider'].get('graph',{}).get('windows_only',False)),
                          'coverage_report':row['auto_coverage'] or (row['provider']['provider']=='python-shell' and row['command'][2:]==['coverage','xml','-o','dist/coverage.xml']),
                          'needs':[],'handoffs':[]})
     owners: dict[tuple[str,str],str] = {}
@@ -351,6 +354,14 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                       '        with:\n'
                       f"          dotnet-version: '{job['toolchain_version']}'\n"
                       '          cache: false\n') if job['provider']=='dotnet' else ''
+        # setup-dotnet installs SDKs, not a standalone runtime. The exact legacy
+        # SDK below includes .NET runtime 6.0.36. Host verification is mandatory.
+        dotnet_legacy_setup=(f'      - name: Legacy .NET 6 runtime compatibility (EOL)\n'
+                             f'        uses: actions/setup-dotnet@{_SETUP_DOTNET_SHA}\n'
+                             '        with:\n'
+                             "          dotnet-version: '6.0.428'\n"
+                             '          cache: false\n') if (job['provider']=='dotnet' and
+                             job.get('dotnet_legacy_runtime')=='6.0.36') else ''
         node_setup=(f'      - name: Pinned Node runtime\n'
                     f'        uses: actions/setup-node@{_SETUP_NODE_SHA}\n'
                     '        with:\n'
@@ -507,7 +518,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '      - name: Pinned Python interpreter\n'
                f'        uses: actions/setup-python@{SETUP_PYTHON_SHA}\n'
                f"        with:\n          python-version: '{job["toolchain_version"] if job["provider"]=="python-shell" else "3.12"}'\n"
-               f'{setup_go}{android_setup}{dotnet_setup}{node_setup}{bun_setup}{node_manager_setup}{rust_setup}{jvm_setup}{shell_setup}{cpp_setup}{cache_step}{py_verify}'
+               f'{setup_go}{android_setup}{dotnet_setup}{dotnet_legacy_setup}{node_setup}{bun_setup}{node_manager_setup}{rust_setup}{jvm_setup}{shell_setup}{cpp_setup}{cache_step}{py_verify}'
                '      - name: Acquire immutable Devtool runtime\n'
                '        shell: bash\n        run: |\n'
                '          set -euo pipefail\n'
@@ -685,6 +696,22 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     if not specs:
         raise ProviderError('RM-06 native job resolver returned no executable specs')
     node_receipts=[]
+    if selected['provider']=='dotnet':
+        from .actions_rm09_dotnet import normalize_dotnet_argv, verify_dotnet_host, DotNetError
+        if (len(specs)!=1 or
+                normalize_dotnet_argv(specs[0].argv)!=selected['dotnet_canonical_argv']):
+            raise ProviderError('DN02 native .NET argv diverges from reviewed canonical command')
+        if selected['dotnet_legacy_runtime']:
+            try:
+                host_receipt=verify_dotnet_host(
+                    root, sdk_version=selected['toolchain_version'],
+                    legacy_runtime_version=selected['dotnet_legacy_runtime'],
+                    windows_desktop=selected['dotnet_legacy_windows_desktop'])
+            except DotNetError as exc:
+                raise ProviderError(str(exc)) from None
+            host_receipt.update({'source_commit':source,'graph_sha256':graph_sha,
+                                 'node':selected['node'],'run_id':run,'attempt':attempt})
+            node_receipts.append(host_receipt)
     if selected['provider']=='android-gradle':
         review=selected['android_review']
         tasks=list(review.get('tasks') or [review['task']])
