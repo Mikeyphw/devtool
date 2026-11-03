@@ -437,16 +437,27 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
                 raise
             raise ProviderError(str(exc)[:320]) from None
         if job.env:
-            if declaration['provider'] != 'go' or set(job.env)-{'GOOS','GOARCH','CGO_ENABLED'}:
-                raise ProviderError('Only reviewed Go cross-target environment variables are admitted')
-            goos=job.env.get('GOOS','linux'); goarch=job.env.get('GOARCH','amd64')
-            cgo=job.env.get('CGO_ENABLED','0')
-            if (goos,goarch) not in {('linux','amd64'),('linux','arm64'),('windows','amd64'),
-                                     ('windows','arm64'),('darwin','amd64'),('darwin','arm64')} or cgo not in ('0','1'):
-                raise ProviderError('Unsupported Go cross-target/CGO environment')
-            if cgo=='1' and (goos,goarch)!=('linux','amd64'):
-                raise ProviderError('CGO requires independently qualified cross-compiler')
-            declaration['distribution_target']={'goos':goos,'goarch':goarch,'cgo_enabled':cgo=='1'}
+            if declaration['provider']=='dotnet':
+                # No arbitrary MSBuild/NuGet/DOTNET_ROOT or network-affecting env.
+                reviewed_env={'DOTNET_CLI_TELEMETRY_OPTOUT':'1',
+                              'DOTNET_NOLOGO':'1',
+                              'DOTNET_SKIP_FIRST_TIME_EXPERIENCE':'1',
+                              'NUGET_XMLDOC_MODE':'skip'}
+                if any(reviewed_env.get(k)!=v for k,v in job.env.items()):
+                    raise ProviderError('DN02 refuses unreviewed .NET job environment')
+            elif declaration['provider']=='go':
+                if set(job.env)-{'GOOS','GOARCH','CGO_ENABLED'}:
+                    raise ProviderError('Only reviewed Go cross-target environment variables are admitted')
+                goos=job.env.get('GOOS','linux'); goarch=job.env.get('GOARCH','amd64')
+                cgo=job.env.get('CGO_ENABLED','0')
+                if (goos,goarch) not in {('linux','amd64'),('linux','arm64'),('windows','amd64'),
+                                         ('windows','arm64'),('darwin','amd64'),('darwin','arm64')} or cgo not in ('0','1'):
+                    raise ProviderError('Unsupported Go cross-target/CGO environment')
+                if cgo=='1' and (goos,goarch)!=('linux','amd64'):
+                    raise ProviderError('CGO requires independently qualified cross-compiler')
+                declaration['distribution_target']={'goos':goos,'goarch':goarch,'cgo_enabled':cgo=='1'}
+            else:
+                raise ProviderError('Only reviewed Go/.NET job environment variables are admitted')
         if job.root not in ('', '.', str(root), str(root.resolve())):
             # R36: only the independently reviewed Android provider may use a
             # nested Gradle project. The exact cwd is verified again at run-node.

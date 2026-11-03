@@ -1,0 +1,153 @@
+name: Devtool DN02 real hosted .NET 6 acceptance (non-release)
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [feat/dn02-dotnet-host-policy]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dn02-hosted-net6-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  hosted-net6:
+    name: .NET 10 SDK + exact .NET 6 runtime / real locked xUnit TRX
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      EXPECTED_DEVTOOL_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      PINNED_CONSUMER_SHA: 549d6cd0d08894dfac4950e362e437eb06010729
+      PYTHONDONTWRITEBYTECODE: '1'
+      DOTNET_NOLOGO: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+    steps:
+      - name: Checkout exact Devtool PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.EXPECTED_DEVTOOL_SHA }}
+          persist-credentials: false
+
+      - name: Bind isolated runner-local NuGet and evidence directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'NUGET_PACKAGES=%s\n' "$RUNNER_TEMP/dn02-nuget" >> "$GITHUB_ENV"
+          printf 'DN02_CONSUMER=%s\n' "$RUNNER_TEMP/dn02-consumer" >> "$GITHUB_ENV"
+          printf 'DN02_EVIDENCE=%s\n' "$RUNNER_TEMP/dn02-acceptance" >> "$GITHUB_ENV"
+          printf 'DN02_SDK_DIR=%s\n' "$RUNNER_TEMP/dn02-sdk-context" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/dn02-nuget" "$RUNNER_TEMP/dn02-acceptance" \
+            "$RUNNER_TEMP/dn02-sdk-context"
+          # Do not modify the tracked consumer global.json: latestFeature may
+          # select a newer runner SDK. Pin this *execution context* exactly.
+          python3 - <<'PYCODE'
+          import json, os
+          from pathlib import Path
+          destination = Path(os.environ['RUNNER_TEMP']) / 'dn02-sdk-context' / 'global.json'
+          with destination.open('x', encoding='utf-8') as f:
+              json.dump({'sdk': {'version':'10.0.100', 'rollForward':'disable',
+                                 'allowPrerelease':False}}, f, sort_keys=True)
+              f.write('\n')
+          PYCODE
+
+      - name: Fetch exact audited Mike_SVMods test source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_DEVTOOL_SHA"
+          git clone --no-checkout --filter=blob:none \
+            https://github.com/Mikeyphw/Mike_SVMods.git "$DN02_CONSUMER"
+          git -C "$DN02_CONSUMER" checkout --detach "$PINNED_CONSUMER_SHA"
+          test "$(git -C "$DN02_CONSUMER" rev-parse HEAD)" = "$PINNED_CONSUMER_SHA"
+
+      - name: Install reviewed .NET 10 build SDK
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          dotnet-version: '10.0.100'
+          cache: false
+
+      - name: Install reviewed EOL .NET 6 SDK providing runtime 6.0.36
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          dotnet-version: '6.0.428'
+          cache: false
+
+      - name: Verify actual host and immutable test inputs before restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/dn02_hosted_acceptance.py preflight \
+            --devtool "$GITHUB_WORKSPACE" --consumer "$DN02_CONSUMER" \
+            --devtool-sha "$EXPECTED_DEVTOOL_SHA" \
+            --consumer-sha "$PINNED_CONSUMER_SHA" --evidence "$DN02_EVIDENCE"
+
+      - name: Restore both independently locked net6 test projects
+        shell: bash
+        working-directory: ${{ runner.temp }}/dn02-sdk-context
+        run: |
+          set -euo pipefail
+          dotnet restore "$DN02_CONSUMER/Tests/RoosterControl.PureTests/RoosterControl.PureTests.csproj" \
+            --locked-mode --verbosity minimal 2>&1 | tee "$DN02_EVIDENCE/restore-rooster.log"
+          dotnet restore "$DN02_CONSUMER/Tests/EggsInWild.AnimalNotes.Tests/EggsInWild.AnimalNotes.Tests.csproj" \
+            --locked-mode --verbosity minimal 2>&1 | tee "$DN02_EVIDENCE/restore-animalnotes.log"
+
+      - name: Run actual RoosterControl net6 xUnit tests
+        shell: bash
+        working-directory: ${{ runner.temp }}/dn02-sdk-context
+        run: |
+          set -euo pipefail
+          mkdir -p "$DN02_EVIDENCE/rooster"
+          test ! -e "$DN02_EVIDENCE/rooster/results.trx"
+          dotnet test "$DN02_CONSUMER/Tests/RoosterControl.PureTests/RoosterControl.PureTests.csproj" \
+            --configuration Release --no-restore \
+            --logger 'trx;LogFileName=results.trx' \
+            --results-directory "$DN02_EVIDENCE/rooster" \
+            2>&1 | tee "$DN02_EVIDENCE/test-rooster.log"
+
+      - name: Run actual EggsInWild net6 xUnit tests
+        shell: bash
+        working-directory: ${{ runner.temp }}/dn02-sdk-context
+        run: |
+          set -euo pipefail
+          mkdir -p "$DN02_EVIDENCE/animalnotes"
+          test ! -e "$DN02_EVIDENCE/animalnotes/results.trx"
+          dotnet test "$DN02_CONSUMER/Tests/EggsInWild.AnimalNotes.Tests/EggsInWild.AnimalNotes.Tests.csproj" \
+            --configuration Release --no-restore \
+            --logger 'trx;LogFileName=results.trx' \
+            --results-directory "$DN02_EVIDENCE/animalnotes" \
+            2>&1 | tee "$DN02_EVIDENCE/test-animalnotes.log"
+
+      - name: Fail-closed TRX and source/host/run evidence verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/dn02_hosted_acceptance.py verify \
+            --devtool "$GITHUB_WORKSPACE" --consumer "$DN02_CONSUMER" \
+            --devtool-sha "$EXPECTED_DEVTOOL_SHA" \
+            --consumer-sha "$PINNED_CONSUMER_SHA" --evidence "$DN02_EVIDENCE"
+
+      - name: Seal available evidence digests even on failure
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dn02-acceptance"
+          cd "$RUNNER_TEMP/dn02-acceptance"
+          printf '%s\n' "$EXPECTED_DEVTOOL_SHA" > devtool-sha.txt
+          printf '%s\n' "$PINNED_CONSUMER_SHA" > consumer-sha.txt
+          printf '%s/%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > github-run.txt
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > SHA256SUMS
+
+      - name: Upload source-bound non-release acceptance receipts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dn02-hosted-net6-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dn02-acceptance/
+          if-no-files-found: error
+          retention-days: 14
