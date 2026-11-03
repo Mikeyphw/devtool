@@ -108,6 +108,25 @@ def _check_context(env: dict[str, str]) -> dict:
     }
 
 
+def sdk_context(env: dict[str, str]) -> tuple[Path, str]:
+    """Require an isolated, exact SDK selection context owned by this run."""
+    temp = env.get('RUNNER_TEMP', '')
+    declared = env.get('DN02_SDK_DIR', '')
+    if not temp or not declared:
+        raise AcceptanceError('Missing runner-local SDK context')
+    expected = Path(temp).resolve() / 'dn02-sdk-context'
+    context = Path(declared)
+    if context.is_symlink() or context.resolve() != expected:
+        raise AcceptanceError('SDK context is not the reviewed runner-local directory')
+    pin = context / 'global.json'
+    if pin.is_symlink() or not pin.is_file():
+        raise AcceptanceError('Missing or symlinked exact SDK pin')
+    if _json(pin) != {'sdk': {'version': SDK, 'rollForward': 'disable',
+                             'allowPrerelease': False}}:
+        raise AcceptanceError('SDK selection context is not exact/roll-forward disabled')
+    return context, _sha256(pin)
+
+
 def inspect_inputs(devtool: Path, consumer: Path, devtool_sha: str,
                    consumer_sha: str, env: dict[str, str]) -> dict:
     if not (SHA.fullmatch(devtool_sha) and SHA.fullmatch(consumer_sha)):
@@ -136,11 +155,12 @@ def inspect_inputs(devtool: Path, consumer: Path, devtool_sha: str,
             not isinstance(lock.get('dependencies', {}).get('net6.0'), dict) or
             len(lock['dependencies']['net6.0']) < 1):
             raise AcceptanceError('Test project has no valid net6 locked dependencies: ' + name)
+    context_dir, sdk_pin_digest = sdk_context(env)
     if str(devtool) not in sys.path:
         sys.path.insert(0, str(devtool))
     from devtool.actions_rm09_dotnet import verify_dotnet_host
     try:
-        host = verify_dotnet_host(consumer / '.github/r05-sdk10',
+        host = verify_dotnet_host(context_dir,
                                  sdk_version=SDK, legacy_runtime_version=RUNTIME)
     except ValueError as exc:
         raise AcceptanceError('Real hosted .NET verification failed: ' + str(exc)) from exc
@@ -149,7 +169,7 @@ def inspect_inputs(devtool: Path, consumer: Path, devtool_sha: str,
     return {
         'schema_version': 1, 'kind': 'devtool.dn02-hosted-net6-preflight',
         'devtool_sha': devtool_sha, 'consumer_sha': consumer_sha,
-        'host': host, 'source_sha256': checks,
+        'host': host, 'source_sha256': checks, 'sdk_context_sha256': sdk_pin_digest,
         'github': context, 'sdk_version': SDK, 'legacy_runtime_version': RUNTIME,
         'release_qualified': False, 'game_dependent_tests': 'NOT_QUALIFIED',
     }

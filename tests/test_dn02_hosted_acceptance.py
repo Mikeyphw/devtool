@@ -64,3 +64,41 @@ def test_dn02_workflow_is_pinned_and_not_release():
     assert '--locked-mode' in workflow and '--no-restore' in workflow
     assert 'tools/dn02_hosted_acceptance.py verify' in workflow
     assert 'scripts/verify_dotnet_trx.py' in SOURCE.read_text()
+
+
+def test_dn02_sdk_selection_isolated_and_exact(tmp_path):
+    import json
+    root = tmp_path / 'runner'
+    context = root / 'dn02-sdk-context'
+    context.mkdir(parents=True)
+    pin = context / 'global.json'
+    expected = {'sdk': {'version': '10.0.100', 'rollForward': 'disable',
+                        'allowPrerelease': False}}
+    pin.write_text(json.dumps(expected))
+    env = {'RUNNER_TEMP': str(root), 'DN02_SDK_DIR': str(context)}
+    selected, digest = accept.sdk_context(env)
+    assert selected == context
+    assert len(digest) == 64
+    for invalid in [
+        {'sdk': {'version': '10.0.100', 'rollForward': 'latestFeature',
+                 'allowPrerelease': False}},
+        {'sdk': {'version': '10.0.101', 'rollForward': 'disable',
+                 'allowPrerelease': False}},
+        {'sdk': {'version': '10.0.100', 'rollForward': 'disable'}},
+    ]:
+        pin.write_text(json.dumps(invalid))
+        with pytest.raises(accept.AcceptanceError, match='SDK selection context'):
+            accept.sdk_context(env)
+    pin.write_text(json.dumps(expected))
+    with pytest.raises(accept.AcceptanceError, match='reviewed runner-local'):
+        accept.sdk_context({**env, 'DN02_SDK_DIR': str(tmp_path)})
+
+
+def test_dn02_workflow_runs_restore_and_tests_in_exact_sdk_context():
+    workflow = (Path(__file__).parents[1] / '.github' / 'workflows' /
+                'devtool-dn02-hosted-net6-acceptance.yml').read_text()
+    assert workflow.count('working-directory: ${{ runner.temp }}/dn02-sdk-context') == 3
+    assert '"$DN02_CONSUMER/Tests/RoosterControl.PureTests/RoosterControl.PureTests.csproj"' in workflow
+    assert '"$DN02_CONSUMER/Tests/EggsInWild.AnimalNotes.Tests/EggsInWild.AnimalNotes.Tests.csproj"' in workflow
+    assert "'rollForward':'disable'" in workflow
+    assert 'DN02_SDK_DIR=%s' in workflow

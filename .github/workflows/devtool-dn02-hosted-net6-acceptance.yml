@@ -40,7 +40,20 @@ jobs:
           printf 'NUGET_PACKAGES=%s\n' "$RUNNER_TEMP/dn02-nuget" >> "$GITHUB_ENV"
           printf 'DN02_CONSUMER=%s\n' "$RUNNER_TEMP/dn02-consumer" >> "$GITHUB_ENV"
           printf 'DN02_EVIDENCE=%s\n' "$RUNNER_TEMP/dn02-acceptance" >> "$GITHUB_ENV"
-          mkdir -p "$RUNNER_TEMP/dn02-nuget" "$RUNNER_TEMP/dn02-acceptance"
+          printf 'DN02_SDK_DIR=%s\n' "$RUNNER_TEMP/dn02-sdk-context" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/dn02-nuget" "$RUNNER_TEMP/dn02-acceptance" \
+            "$RUNNER_TEMP/dn02-sdk-context"
+          # Do not modify the tracked consumer global.json: latestFeature may
+          # select a newer runner SDK. Pin this *execution context* exactly.
+          python3 - <<'PYCODE'
+          import json, os
+          from pathlib import Path
+          destination = Path(os.environ['RUNNER_TEMP']) / 'dn02-sdk-context' / 'global.json'
+          with destination.open('x', encoding='utf-8') as f:
+              json.dump({'sdk': {'version':'10.0.100', 'rollForward':'disable',
+                                 'allowPrerelease':False}}, f, sort_keys=True)
+              f.write('\n')
+          PYCODE
 
       - name: Fetch exact audited Mike_SVMods test source
         shell: bash
@@ -75,22 +88,22 @@ jobs:
 
       - name: Restore both independently locked net6 test projects
         shell: bash
-        working-directory: ${{ runner.temp }}/dn02-consumer/.github/r05-sdk10
+        working-directory: ${{ runner.temp }}/dn02-sdk-context
         run: |
           set -euo pipefail
-          dotnet restore ../../Tests/RoosterControl.PureTests/RoosterControl.PureTests.csproj \
+          dotnet restore "$DN02_CONSUMER/Tests/RoosterControl.PureTests/RoosterControl.PureTests.csproj" \
             --locked-mode --verbosity minimal 2>&1 | tee "$DN02_EVIDENCE/restore-rooster.log"
-          dotnet restore ../../Tests/EggsInWild.AnimalNotes.Tests/EggsInWild.AnimalNotes.Tests.csproj \
+          dotnet restore "$DN02_CONSUMER/Tests/EggsInWild.AnimalNotes.Tests/EggsInWild.AnimalNotes.Tests.csproj" \
             --locked-mode --verbosity minimal 2>&1 | tee "$DN02_EVIDENCE/restore-animalnotes.log"
 
       - name: Run actual RoosterControl net6 xUnit tests
         shell: bash
-        working-directory: ${{ runner.temp }}/dn02-consumer/.github/r05-sdk10
+        working-directory: ${{ runner.temp }}/dn02-sdk-context
         run: |
           set -euo pipefail
           mkdir -p "$DN02_EVIDENCE/rooster"
           test ! -e "$DN02_EVIDENCE/rooster/results.trx"
-          dotnet test ../../Tests/RoosterControl.PureTests/RoosterControl.PureTests.csproj \
+          dotnet test "$DN02_CONSUMER/Tests/RoosterControl.PureTests/RoosterControl.PureTests.csproj" \
             --configuration Release --no-restore \
             --logger 'trx;LogFileName=results.trx' \
             --results-directory "$DN02_EVIDENCE/rooster" \
@@ -98,12 +111,12 @@ jobs:
 
       - name: Run actual EggsInWild net6 xUnit tests
         shell: bash
-        working-directory: ${{ runner.temp }}/dn02-consumer/.github/r05-sdk10
+        working-directory: ${{ runner.temp }}/dn02-sdk-context
         run: |
           set -euo pipefail
           mkdir -p "$DN02_EVIDENCE/animalnotes"
           test ! -e "$DN02_EVIDENCE/animalnotes/results.trx"
-          dotnet test ../../Tests/EggsInWild.AnimalNotes.Tests/EggsInWild.AnimalNotes.Tests.csproj \
+          dotnet test "$DN02_CONSUMER/Tests/EggsInWild.AnimalNotes.Tests/EggsInWild.AnimalNotes.Tests.csproj" \
             --configuration Release --no-restore \
             --logger 'trx;LogFileName=results.trx' \
             --results-directory "$DN02_EVIDENCE/animalnotes" \
