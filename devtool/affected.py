@@ -253,7 +253,14 @@ def _target_match_reasons(config: ProjectConfig, target_name: str, path: str) ->
     repo = config.repo_root.resolve()
     reasons: list[AffectedReason] = []
     root = _target_root(repo, target)
-    if root is not None and (not root or path == root or path.startswith(root + "/")):
+    ownership = target.affected_ownership
+    if ownership not in {"root-and-inputs", "inputs-only"}:
+        raise AffectedSelectionError(
+            f"Invalid affected ownership for target {target_name}: {ownership!r}"
+        )
+    # Preserve legacy root ownership by default; opt-in targets own
+    # only reviewed inputs, independent of their execution root.
+    if ownership == "root-and-inputs" and root is not None and (not root or path == root or path.startswith(root + "/")):
         reasons.append(AffectedReason("target-root", path, f"path is inside target root {root or '.'}", source=root or "."))
 
     for raw in target.inputs:
@@ -262,14 +269,15 @@ def _target_match_reasons(config: ProjectConfig, target_name: str, path: str) ->
             reasons.append(AffectedReason("target-input", path, f"matches target input {raw}", source=raw))
 
     for job_name in _direct_job_names(target):
-        job = config.jobs.get(job_name)
+        # Workspace-wide and target-local EXO job inputs contribute ownership.
+        job = target.jobs.get(job_name) or config.jobs.get(job_name)
         if job is None:
             continue
-        job_root = _repo_relative_root(repo, job.root) if job.root else ""
+        job_root = _repo_relative_root(repo, job.root) if job.root else (root if job.metadata.get("scope") == "target" else "")
         for raw in job.inputs:
             pattern = _pattern_from_base(repo, job_root, raw)
             if pattern and _matches_pattern(path, pattern):
-                reasons.append(AffectedReason("job-input", path, f"matches input {raw} for job {job_name}", source=job_name))
+                reasons.append(AffectedReason("job-input", path, f"matches input {raw} for job {job_name}", source=(str(job.metadata.get("local_name") or job_name) if job.metadata.get("scope") == "target" else job_name)))
     return reasons
 
 
