@@ -1,0 +1,67 @@
+name: Devtool DN03 .NET native exporter source qualification
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: devtool-dn03-source-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  dn03-export-contract:
+    name: Native .NET DAG export and negative source tests (non-release)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout reviewed Devtool commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Pinned Python interpreter
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+          check-latest: false
+      - name: Install Devtool source and test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -e . pytest
+      - name: DN03 source and .NET compatibility tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python -m pytest -q \
+            tests/test_dn03_dotnet_export.py \
+            tests/test_dn01_dotnet_compat.py \
+            tests/test_dn02_dotnet_hosts.py \
+            tests/test_dn02_hosted_acceptance.py \
+            tests/test_rm09_dotnet.py \
+            tests/test_fc06_dotnet_shared_restore.py \
+            tests/test_rm06_rm09_consolidated_closure.py
+          git diff --exit-code
+      - name: Record source-only validation identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dn03-source"
+          printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/dn03-source/source-sha.txt"
+          printf '%s/%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/dn03-source/run.txt"
+          sha256sum devtool/actions_dn03_dotnet.py > "$RUNNER_TEMP/dn03-source/module.sha256"
+          sha256sum tests/test_dn03_dotnet_export.py > "$RUNNER_TEMP/dn03-source/tests.sha256"
+      - name: Upload non-release source receipt
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dn03-source-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dn03-source/
+          if-no-files-found: warn
+          retention-days: 14
