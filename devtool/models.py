@@ -202,6 +202,8 @@ class TargetConfig:
     jobs: dict[str, JobConfig] = field(default_factory=dict)
     inputs: tuple[str, ...] = ()
     outputs: tuple[str, ...] = ()
+    # SFDT-02: change ownership is separate from the working directory.
+    affected_ownership: str = "root-and-inputs"
     metadata: dict[str, Any] = field(default_factory=dict)
     # Fields explicitly present in the target TOML table.  This preserves the
     # semantic difference between an absent setting and an explicit empty

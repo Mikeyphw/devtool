@@ -41,6 +41,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           python -m pytest -q \
             tests/test_dn03_dotnet_export.py \
+            tests/test_dn03_r2_runtime_native.py \
             tests/test_dn01_dotnet_compat.py \
             tests/test_dn02_dotnet_hosts.py \
             tests/test_dn02_hosted_acceptance.py \
@@ -55,8 +56,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/dn03-source"
           printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/dn03-source/source-sha.txt"
           printf '%s/%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/dn03-source/run.txt"
-          sha256sum devtool/actions_dn03_dotnet.py > "$RUNNER_TEMP/dn03-source/module.sha256"
-          sha256sum tests/test_dn03_dotnet_export.py > "$RUNNER_TEMP/dn03-source/tests.sha256"
+          sha256sum devtool/actions_dn03_dotnet.py devtool/dn03_runtime_only.py > "$RUNNER_TEMP/dn03-source/modules.sha256"
+          sha256sum tests/test_dn03_dotnet_export.py tests/test_dn03_r2_runtime_native.py > "$RUNNER_TEMP/dn03-source/tests.sha256"
       - name: Upload non-release source receipt
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

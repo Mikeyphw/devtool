@@ -51,6 +51,28 @@ build = ["target:protocol#build", "runner:node#build"]
 
 a change below the protocol target selects `protocol` directly and `web` through reverse dependency propagation. Group filtering is applied as a candidate scope after dependency propagation, so `devtool validate --group frontend --affected` can still select `web` when the changed owner is `protocol` outside that group.
 
+## Explicit ownership for repository-root executors (SFDT-02)
+
+A target normally owns its execution `root` and all `inputs` (default
+`affected_ownership = "root-and-inputs"`), preserving existing behavior.
+For Gradle monorepos whose execution root must stay `.`, use:
+
+```toml
+[targets.phone]
+runner = "android"
+root = "."
+affected_ownership = "inputs-only"
+inputs = ["app/**", "core/**", "build-logic/**", "settings.gradle.kts"]
+```
+
+`inputs-only` requires nonempty explicit inputs. It disables implicit
+root ownership while retaining target inputs, referenced global/target-local
+job inputs, reverse target dependencies and the conservative fallback for
+unknown paths. Shared files, renames and deletions need reviewed inputs.
+This mode affects **change selection only**, not execution roots, job
+scheduling, Git commands or environment affinity. Compare `--affected
+--explain` against full CI before allowing actual skipped jobs.
+
 ## Git sources
 
 Without a base revision, Devtool unions:

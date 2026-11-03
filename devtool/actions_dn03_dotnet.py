@@ -17,6 +17,7 @@ import sys
 from typing import Any
 
 from .actions_graph_export import compile_graph, workflow_yaml
+from .dn03_runtime_only import SHA512 as RUNTIME_ARCHIVE_SHA512
 from .actions_language_providers import ProviderError
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -57,6 +58,36 @@ def _path(root: Path, value: str) -> Path:
     if here.exists() and not here.is_file():
         raise DN03Error("DN03 output is not a regular file")
     return here
+
+
+def _isolated_sdk_step() -> str:
+    """Keep only the reviewed SDK in a dedicated install root."""
+    return (
+        "      - name: DN03 bind isolated exact .NET SDK installation\n"
+        "        shell: bash\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        "          mkdir -p \"$RUNNER_TEMP/dn03-dotnet\"\n"
+        "          printf 'DOTNET_INSTALL_DIR=%s\\n' \"$RUNNER_TEMP/dn03-dotnet\" >> \"$GITHUB_ENV\"\n"
+    )
+
+
+def _runtime_only_step(jid: str) -> str:
+    if not SLUG.fullmatch(jid):
+        raise DN03Error('DN03 unreviewed legacy runtime node')
+    return (
+        "      - name: DN03 install SHA-512-pinned .NET 6 runtime only\n"
+        "        shell: bash\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        f"          mkdir -p \"$RUNNER_TEMP/dn03-host/{jid}\"\n"
+        "          \"$RUNNER_TEMP/devtool-venv/bin/python\" -m devtool.dn03_runtime_only install "
+        "--download "
+        "--archive \"$RUNNER_TEMP/dn03-runtime-6.0.36-linux-x64.tar.gz\" "
+        "--dotnet-root \"$DOTNET_INSTALL_DIR\" "
+        f"--receipt \"$RUNNER_TEMP/dn03-host/{jid}/runtime.json\"\n"
+        "          dotnet --list-runtimes | grep -F 'Microsoft.NETCore.App 6.0.36 ['\n"
+    )
 
 
 def _host_step(job: dict[str, Any], devtool_sha: str, graph_sha: str) -> str:
@@ -109,6 +140,15 @@ def _host_step(job: dict[str, Any], devtool_sha: str, graph_sha: str) -> str:
         "                   'runtime_inventory_checked':True,\n"
         "                   'hosted_authenticated':False,\n"
         "                   'release_qualified':False}\n"
+        "          if e['DN03_EXPECTED_RUNTIME']:\n"
+        "              from hashlib import sha256\n"
+        "              runtime = pathlib.Path(e['RUNNER_TEMP'])/'dn03-host'/e['DN03_NODE']/'runtime.json'\n"
+        "              raw = runtime.read_bytes()\n"
+        "              installed = json.loads(raw)\n"
+        f"              assert installed.get('archive_sha512') == '{RUNTIME_ARCHIVE_SHA512}'\n"
+        "              assert installed.get('runtime') == e['DN03_EXPECTED_RUNTIME']\n"
+        "              assert installed.get('sdk_installed_by_this_provisioner') is False\n"
+        "              value['runtime_receipt_sha256'] = sha256(raw).hexdigest()\n"
         "          out = pathlib.Path(e['RUNNER_TEMP'])/'dn03-host'/e['DN03_NODE']/'host.json'\n"
         "          with out.open('x', encoding='utf-8') as f:\n"
         "              json.dump(value, f, sort_keys=True, indent=2)\n"
@@ -126,7 +166,7 @@ def _upload_step(jid: str) -> str:
         f"        uses: actions/upload-artifact@{UPLOADER}\n"
         "        with:\n"
         f"          name: dn03-host-{jid}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}\n"
-        f"          path: ${{{{ runner.temp }}}}/dn03-host/{jid}/host.json\n"
+        f"          path: ${{{{ runner.temp }}}}/dn03-host/{jid}/\n"
         "          if-no-files-found: error\n"
         "          retention-days: 14\n"
     )
@@ -157,11 +197,28 @@ def _harden(yaml: str, jobs: list[dict[str, Any]], pin: str, graph_sha: str) -> 
         else:
             if "      - name: Legacy .NET 6 runtime compatibility (EOL)\n" in original:
                 raise DN03Error("DN03 unexpected EOL SDK provisioner")
+        # For EOL jobs replace the inherited 6.0.428 *SDK* setup with an
+        # independently Microsoft-SHA512-pinned runtime-only install. The
+        # module is sourced from immutable Devtool after source acquisition.
+        if job.get('dotnet_legacy_runtime') == '6.0.36':
+            original, count = re.subn(
+                r"      - name: Legacy \.NET 6 runtime compatibility \(EOL\)\n"
+                r"        uses: actions/setup-dotnet@[0-9a-f]{40}\n"
+                r"        with:\n          dotnet-version: '6\.0\.428'\n"
+                r"          cache: false\n",
+                '', original, count=1)
+            if count != 1:
+                raise DN03Error('DN03 legacy SDK setup differs from reviewed source')
         original = original.replace(
-            "      - name: Acquire immutable Devtool runtime\n",
-            _host_step(job, pin, graph_sha) + "      - name: Acquire immutable Devtool runtime\n",
-            1,
-        )
+            "      - name: Pinned .NET SDK\n",
+            _isolated_sdk_step() + "      - name: Pinned .NET SDK\n", 1)
+        original = original.replace(
+            "      - name: Verify dependencies and run native target-local node\n",
+            (_runtime_only_step(job['id']) if job.get('dotnet_legacy_runtime') else '') +
+            _host_step(job, pin, graph_sha) +
+            "      - name: Verify dependencies and run native target-local node\n", 1)
+        if original.count('DN03 bind isolated exact .NET SDK installation') != 1 or original.count('DN03 verify .NET host') != 1:
+            raise DN03Error('DN03 failed to inject isolated host verification')
         original = original.rstrip("\n") + "\n" + _upload_step(job['id'])
         out.append(original)
     return "".join(out)
@@ -207,7 +264,9 @@ def compile_dn03(root: Path, *, target: str, workflow: str,
         "native_nodes": [j["node"] for j in jobs],
         "host_profile": "ubuntu-24.04-x64",
         "workflow_sha256": sha256(hardened.encode("utf-8")).hexdigest(),
-        "generator": "DN03 hardening of the existing RM-06 native DAG exporter",
+        "generator": "DN03-R2 isolated SDK, runtime-only and RM-06 native DAG exporter",
+        "runtime_archive_sha512": RUNTIME_ARCHIVE_SHA512,
+        "runtime_only_legacy": any(j.get("dotnet_legacy_runtime") for j in jobs),
         "actual_host_checked": False, "remote_authenticated": False,
         "release_qualified": False,
     }

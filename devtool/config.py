@@ -1728,6 +1728,15 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
                     raise SystemExit(f"[targets.{name}] {field}[{index}] must be a non-empty string")
                 items.append(item.strip())
             return tuple(items)
+        affected_ownership = raw_value.get("affected_ownership", "root-and-inputs")
+        if not isinstance(affected_ownership, str) or affected_ownership not in {"root-and-inputs", "inputs-only"}:
+            raise SystemExit(
+                f"[targets.{name}] affected_ownership must be root-and-inputs or inputs-only"
+            )
+        if affected_ownership == "inputs-only" and not target_paths("inputs"):
+            raise SystemExit(
+                f"[targets.{name}] inputs-only ownership requires explicit non-empty inputs"
+            )
         options: dict[str, Any] = {}
         for option_name in RUNNER_OPTION_SECTIONS:
             if option_name not in raw_value:
@@ -1761,6 +1770,7 @@ def _load_named_targets(repo_root: Path, section: Any, base_env: dict[str, str])
             variants=_load_target_variants(raw_value, target_name=name),
             inputs=target_paths("inputs"),
             outputs=target_paths("outputs"),
+            affected_ownership=affected_ownership,
             metadata=dict(metadata_raw) if isinstance(metadata_raw, dict) else {},
             declared_fields=frozenset(str(key) for key in raw_value),
         )
@@ -2784,6 +2794,7 @@ def resolve_config_dict(config: ProjectConfig) -> dict[str, Any]:
                 "variants": target.variants,
                 "inputs": list(target.inputs),
                 "outputs": list(target.outputs),
+                "affected_ownership": target.affected_ownership,
                 "metadata": target.metadata,
                 "jobs": {
                     local_name: job_as_dict(job)

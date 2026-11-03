@@ -1,0 +1,174 @@
+name: DN03-R2 R06d real hosted native .NET DAG (non-release)
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [feat/dn03-r2-runtime-only-native]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dn03-r06d-native-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  actual-native-dotnet:
+    name: SHA-512 runtime-only and five-node native Devtool DAG
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      EXPECTED_DEVTOOL_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      PINNED_CONSUMER_SHA: 549d6cd0d08894dfac4950e362e437eb06010729
+      PYTHONDONTWRITEBYTECODE: '1'
+      DOTNET_NOLOGO: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+
+    steps:
+      - name: Checkout exact DN03 candidate source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.EXPECTED_DEVTOOL_SHA }}
+          persist-credentials: false
+
+      - name: Bind isolated SDK, NuGet and evidence stores
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_DEVTOOL_SHA"
+          for variable in \
+            "DOTNET_INSTALL_DIR=$RUNNER_TEMP/dn03-r06d-dotnet" \
+            "NUGET_PACKAGES=$RUNNER_TEMP/dn03-r06d-nuget" \
+            "DN03_CONSUMER=$RUNNER_TEMP/dn03-r06d-consumer" \
+            "DN03_EVIDENCE=$RUNNER_TEMP/dn03-r06d-evidence" \
+            "DN03_SDK_DIR=$RUNNER_TEMP/dn03-r06d-sdk"; do
+            printf '%s\n' "$variable" >> "$GITHUB_ENV"
+          done
+          mkdir -p "$RUNNER_TEMP/dn03-r06d-dotnet" "$RUNNER_TEMP/dn03-r06d-nuget" \
+            "$RUNNER_TEMP/dn03-r06d-evidence/native" "$RUNNER_TEMP/dn03-r06d-sdk"
+          printf '{"sdk":{"version":"10.0.100","rollForward":"disable","allowPrerelease":false}}\n' \
+            > "$RUNNER_TEMP/dn03-r06d-sdk/global.json"
+
+      - name: Checkout immutable real Mike_SVMods native DAG
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --no-checkout --filter=blob:none \
+            https://github.com/Mikeyphw/Mike_SVMods.git "$DN03_CONSUMER"
+          git -C "$DN03_CONSUMER" checkout --detach "$PINNED_CONSUMER_SHA"
+          test "$(git -C "$DN03_CONSUMER" rev-parse HEAD)" = "$PINNED_CONSUMER_SHA"
+
+      - name: Install pinned Python 3.13 for Devtool runtime
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+          check-latest: false
+
+      - name: Install exact .NET SDK 10.0.100 into isolated root
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          dotnet-version: '10.0.100'
+          cache: false
+
+      - name: Install SHA-512 verified Microsoft .NET 6.0.36 runtime only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m devtool.dn03_runtime_only install --download \
+            --archive "$RUNNER_TEMP/dn03-r06d-runtime-6.0.36.tar.gz" \
+            --dotnet-root "$DOTNET_INSTALL_DIR" \
+            --receipt "$DN03_EVIDENCE/runtime.json"
+          test "$(cd "$DN03_SDK_DIR" && dotnet --version)" = '10.0.100'
+          dotnet --list-runtimes | grep -F 'Microsoft.NETCore.App 6.0.36 ['
+          test ! -d "$DOTNET_INSTALL_DIR/sdk/6.0.428"
+
+      - name: Install exact Git checkout as Devtool Python runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/dn03-venv"
+          "$RUNNER_TEMP/dn03-venv/bin/python" -m pip install --disable-pip-version-check .
+          "$RUNNER_TEMP/dn03-venv/bin/python" -m devtool --help > /dev/null
+          "$RUNNER_TEMP/dn03-venv/bin/python" - <<'PY'
+          import devtool
+          from devtool.actions_rm09_dotnet import verify_dotnet_host
+          from devtool.dn03_runtime_only import SHA512
+          assert len(SHA512) == 128
+          print('DN03_R06D_VENV_PROVIDER_IMPORT_PASS')
+          PY
+
+      - name: Verify source, exact SDK, and runtime receipt before native execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/dn03-venv/bin/python" tools/dn03_r06d_acceptance.py preflight \
+            --devtool "$GITHUB_WORKSPACE" --consumer "$DN03_CONSUMER" \
+            --sdk-dir "$DN03_SDK_DIR" \
+            --runtime-receipt "$DN03_EVIDENCE/runtime.json" \
+            --evidence "$DN03_EVIDENCE"
+
+      - name: Inspect actual five-node native Devtool DAG
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUNTIME="$RUNNER_TEMP/dn03-venv/bin/python"
+          "$RUNTIME" -m devtool --repo "$DN03_CONSUMER" \
+            plan ci-hosted-dotnet --target svmods --json \
+            > "$DN03_EVIDENCE/native/plan.json"
+          "$RUNTIME" -m devtool --repo "$DN03_CONSUMER" \
+            preflight --target svmods --workflow ci-hosted-dotnet --json \
+            > "$DN03_EVIDENCE/native/preflight.json"
+
+      - name: Execute real locked restores and xUnit under native Devtool DAG
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/dn03-venv/bin/python" -m devtool \
+            --repo "$DN03_CONSUMER" \
+            --machine-file "$DN03_EVIDENCE/native/invoke.json" \
+            invoke --target svmods ci-hosted-dotnet
+
+      - name: Independently validate consumer native nodes and two real TRXs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$DN03_CONSUMER/scripts/verify_r06b_native_dotnet.py" \
+            --repo "$DN03_CONSUMER" \
+            --evidence "$DN03_EVIDENCE/native" \
+            --consumer-sha "$PINNED_CONSUMER_SHA" \
+            --devtool-sha "$EXPECTED_DEVTOOL_SHA" \
+            --receipt "$DN03_EVIDENCE/native/receipt.json"
+
+      - name: Bind actual native receipt to immutable host and source identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/dn03-venv/bin/python" tools/dn03_r06d_acceptance.py verify \
+            --devtool "$GITHUB_WORKSPACE" --consumer "$DN03_CONSUMER" \
+            --sdk-dir "$DN03_SDK_DIR" \
+            --runtime-receipt "$DN03_EVIDENCE/runtime.json" \
+            --evidence "$DN03_EVIDENCE"
+
+      - name: Seal available evidence digests on success or failure
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dn03-r06d-evidence"
+          cd "$RUNNER_TEMP/dn03-r06d-evidence"
+          printf '%s\n' "$EXPECTED_DEVTOOL_SHA" > devtool-sha.txt
+          printf '%s\n' "$PINNED_CONSUMER_SHA" > consumer-sha.txt
+          printf '%s/%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > github-run.txt
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > SHA256SUMS
+
+      - name: Upload native DAG and runtime integrity evidence (not release)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dn03-r06d-native-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dn03-r06d-evidence/
+          if-no-files-found: error
+          retention-days: 14
