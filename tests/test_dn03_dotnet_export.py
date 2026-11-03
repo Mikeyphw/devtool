@@ -46,14 +46,18 @@ def fixture(monkeypatch, *, legacy=True):
         }
     def workflow_yaml(graph):
         legacy_setup = ('      - name: Legacy .NET 6 runtime compatibility (EOL)\n'
-                        '        uses: actions/setup-dotnet@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n') if legacy else ''
+                        '        uses: actions/setup-dotnet@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
+                        '        with:\n          dotnet-version: \'6.0.428\'\n'
+                        '          cache: false\n') if legacy else ''
         return ('name: original\non:\n  workflow_dispatch:\njobs:\n' +
                 ''.join('  '+j['id']+':\n    runs-on: ubuntu-24.04\n    steps:\n'
                 '      - name: Pinned .NET SDK\n'
                 '        uses: actions/setup-dotnet@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
                 + legacy_setup +
                 '      - name: Acquire immutable Devtool runtime\n'
-                '        run: echo acquired\n' for j in graph['jobs']))
+                '        run: echo acquired\n' +
+                '      - name: Verify dependencies and run native target-local node\n'
+                '        run: echo native\n' for j in graph['jobs']))
     monkeypatch.setattr(dn03, 'compile_graph', compile_graph)
     monkeypatch.setattr(dn03, 'workflow_yaml', workflow_yaml)
 
@@ -65,7 +69,9 @@ def test_dn03_hardens_existing_native_dag_and_keeps_sha(monkeypatch, tmp_path):
     assert workflow.count('DN03 verify .NET host') == 2
     assert workflow.count('DN03 preserve local host review') == 2
     assert workflow.count('Acquire immutable Devtool runtime') == 2
-    assert workflow.count('Legacy .NET 6 runtime compatibility') == 2
+    assert workflow.count('DN03 install SHA-512-pinned .NET 6 runtime only') == 2
+    assert workflow.count('DN03 bind isolated exact .NET SDK installation') == 2
+    assert '6.0.428' not in workflow
     assert receipt['graph_sha256'] == GRAPH_SHA
     assert receipt['workflow_sha256'] == sha256(workflow.encode()).hexdigest()
     assert receipt['native_nodes'] == ['ci:restore','ci:build']
@@ -76,7 +82,7 @@ def test_dn03_hardens_existing_native_dag_and_keeps_sha(monkeypatch, tmp_path):
     import yaml
     tree = yaml.safe_load(workflow)
     assert len(tree['jobs']) == 2
-    assert all(len(row['steps']) == 5 for row in tree['jobs'].values())
+    assert all(len(row['steps']) == 7 for row in tree['jobs'].values())
     for row in tree['jobs'].values():
         script = next(x['run'] for x in row['steps'] if x.get('name','').startswith('DN03 verify'))
         assert subprocess.run(['bash','-n'],input=script,text=True,capture_output=True).returncode == 0
@@ -87,6 +93,7 @@ def test_dn03_modern_only_does_not_inject_eol_provisioner(monkeypatch,tmp_path):
     workflow, _ = dn03.compile_dn03(repo(tmp_path),target='app',workflow='ci',devtool_sha=PIN)
     assert workflow.count('DN03 verify .NET host') == 2
     assert 'Legacy .NET 6 runtime compatibility' not in workflow
+    assert 'DN03 install SHA-512-pinned .NET 6 runtime only' not in workflow
     assert 'DN03_EXPECTED_RUNTIME: \'\'' in workflow
 
 
