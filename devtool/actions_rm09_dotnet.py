@@ -21,7 +21,7 @@ class DotNetError(ValueError):
 MAX_SOURCE = 2_000_000
 _NAME = re.compile(r'[a-zA-Z0-9_.-]{1,100}\Z')
 _VERSION = re.compile(r'(?:8|9|10)\.0\.[0-9]{1,4}\Z')
-_TFM = re.compile(r'net(?:8|9|10)\.0(?:-windows(?:[0-9.]+)?)?\Z')
+_TFM = re.compile(r'net(?:6|8|9|10)\.0(?:-windows(?:[0-9.]+)?)?\Z')
 _RIDS = {'linux-x64','linux-arm64','win-x64','win-arm64','osx-x64','osx-arm64'}
 _SOLUTION = re.compile(r'^Project\([^\n]+\)\s*=\s*"[^"]+",\s*"([^"]+\.csproj)"',re.M|re.I)
 
@@ -62,7 +62,7 @@ def _tracked(root: Path):
         if not raw:continue
         try:name=raw.decode('utf8')
         except UnicodeDecodeError:continue
-        if name.endswith(('.csproj','.sln','.slnx','global.json','packages.lock.json')) or name.lower().endswith('nuget.config'):
+        if name.endswith(('.csproj','.sln','.slnx','global.json','packages.lock.json','Directory.Build.props')) or name.lower().endswith('nuget.config'):
             _source(root,name)
             paths.append(name)
     if len(paths)>128:raise DotNetError('RM-09 project inventory exceeds cap')
@@ -70,17 +70,64 @@ def _tracked(root: Path):
 
 
 def _related(parent: str, path: str) -> str:
-    # Reject MSBuild property interpolation, absolute/windows paths and escapes.
-    if not path or any(x in path for x in ('$','%','\\',':','*','?')):
+    """Normalize literal Windows/Unix relative paths, never expressions or escapes."""
+    if (not isinstance(path, str) or not path or len(path) > 220
+            or path.startswith(('/', '\\'))
+            or any(x in path for x in ('$', '%', ':', '*', '?'))):
         raise DotNetError('RM-09 unreviewed MSBuild path expression')
-    base=PurePosixPath(parent).parent
-    parts=[]
-    for part in [*base.parts,*PurePosixPath(path).parts]:
-        if part=='..':
-            if not parts:raise DotNetError('RM-09 project reference escapes repository')
+    normalized = path.replace('\\', '/')
+    if not re.fullmatch(r'[A-Za-z0-9_.+/-]+', normalized) or '//' in normalized:
+        raise DotNetError('RM-09 unreviewed MSBuild path expression')
+    base = PurePosixPath(parent).parent
+    parts = []
+    for part in [*base.parts, *PurePosixPath(normalized).parts]:
+        if part == '..':
+            if not parts:
+                raise DotNetError('RM-09 project reference escapes repository')
             parts.pop()
-        elif part not in ('','.'):parts.append(part)
+        elif part not in ('', '.'):
+            parts.append(part)
     return '/'.join(parts)
+
+
+_STATIC_BUILD_FIELDS = frozenset({
+    'TargetFramework', 'TargetFrameworks', 'RuntimeIdentifier',
+    'RuntimeIdentifiers', 'UseWPF', 'UseWindowsForms', 'PackageId', 'Version',
+})
+
+
+def _directory_build_props(root: Path, project: str, tracked: set[str]) -> tuple[dict[str, str], str]:
+    """Read nearest tracked static Directory.Build.props; do not evaluate MSBuild."""
+    directory = PurePosixPath(project).parent
+    for parent in (directory, *directory.parents):
+        name = str(parent / 'Directory.Build.props')
+        candidate = root / name
+        if not candidate.exists() and not candidate.is_symlink():
+            continue
+        if name not in tracked:
+            raise DotNetError('RM-09 requires tracked Directory.Build.props: ' + name)
+        xml = _xml(_source(root, name), name)
+        if xml.tag != 'Project' or xml.attrib:
+            raise DotNetError('RM-09 requires static Directory.Build.props root: ' + name)
+        values: dict[str, str] = {}
+        for group in xml:
+            if group.tag != 'PropertyGroup' or group.attrib:
+                raise DotNetError('RM-09 rejects dynamic Directory.Build.props groups: ' + name)
+            for node in group:
+                if (node.attrib or len(node)
+                        or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', node.tag)):
+                    raise DotNetError('RM-09 rejects imported/conditional Directory.Build.props: ' + name)
+                value = (node.text or '').strip()
+                if any(token in value for token in ('$', '%', '@(')):
+                    raise DotNetError('RM-09 rejects evaluated Directory.Build.props: ' + name)
+                if node.tag in _STATIC_BUILD_FIELDS:
+                    if node.tag in values:
+                        raise DotNetError('RM-09 duplicate static property: ' + node.tag)
+                    values[node.tag] = value
+        if values.get('TargetFramework') and values.get('TargetFrameworks'):
+            raise DotNetError('RM-09 ambiguous Directory.Build.props framework declarations')
+        return values, name
+    return {}, ''
 
 
 def solution_graph(root: Path, *, selected: str = '') -> dict:
@@ -91,7 +138,11 @@ def solution_graph(root: Path, *, selected: str = '') -> dict:
     if not projects or len(projects)>48 or len(solutions)>16:
         raise DotNetError('RM-09 requires bounded tracked .NET projects/solutions')
     props={};edges={};sources={}
+    tracked=set(all_names)
     for name in projects:
+        inherited,props_path=_directory_build_props(root,name,tracked)
+        if props_path:
+            sources[props_path]=sha256(_source(root,props_path)).hexdigest()
         xml=_xml(_source(root,name),name)
         refs=[];tfms=[];rids=[];flags=[];pack_identity={}
         for node in xml.iter():
@@ -112,8 +163,20 @@ def solution_graph(root: Path, *, selected: str = '') -> dict:
                 elif tag.startswith('TargetFramework'):tfms+=val.split(';')
                 elif tag.startswith('RuntimeIdentifier'):rids+=val.split(';')
                 else: flags.append((tag,val.lower()))
+        if not tfms:
+            declared=inherited.get('TargetFrameworks') or inherited.get('TargetFramework','')
+            tfms=declared.split(';') if declared else []
+        if not rids:
+            declared=inherited.get('RuntimeIdentifiers') or inherited.get('RuntimeIdentifier','')
+            rids=declared.split(';') if declared else []
+        for key in ('UseWPF','UseWindowsForms'):
+            if not any(k==key for k,_ in flags) and key in inherited:
+                flags.append((key,inherited[key].lower()))
+        for key in ('PackageId','Version'):
+            if key not in pack_identity and key in inherited:
+                pack_identity[key]=inherited[key]
         if not tfms or any(not _TFM.fullmatch(x) for x in tfms):
-            raise DotNetError('RM-09 project requires reviewed net8/net9/net10 target framework')
+            raise DotNetError('RM-09 project requires reviewed net6/net8/net9/net10 target framework')
         if rids and any(r not in _RIDS for r in rids):raise DotNetError('RM-09 unknown runtime identifier')
         if len(set(refs))!=len(refs):raise DotNetError('RM-09 duplicate project reference')
         windows=any('-windows' in x for x in tfms) or any(k in ('UseWPF','UseWindowsForms') and v=='true' for k,v in flags)
@@ -157,9 +220,29 @@ def solution_graph(root: Path, *, selected: str = '') -> dict:
     if not isinstance(version,str) or not _VERSION.fullmatch(version) or sdk.get('allowPrerelease',False) is True:
         raise DotNetError('RM-09 requires fixed reviewed .NET SDK version without prerelease')
     sources[global_json]=sha256(_source(root,global_json)).hexdigest()
+    membership={}
+    for name in solutions:
+        raw=_source(root,name)
+        if name.endswith('.sln'):
+            refs=_SOLUTION.findall(raw.decode('utf8'))
+        else:
+            refs=[e.attrib.get('Path','') for e in _xml(raw,name).iter() if e.tag.rsplit('}',1)[-1]=='Project']
+        membership[name]=sorted(_related(name,x) for x in refs)
+    selected_roots=membership.get(selected,[selected]) if selected else projects
+    scoped=set()
+    def add_dependencies(project):
+        if project in scoped:return
+        scoped.add(project)
+        for dep in edges[project]:add_dependencies(dep)
+    for project in selected_roots:add_dependencies(project)
+    expected_locks=set()
+    for project in scoped:
+        folder=project.rsplit('/',1)[0] if '/' in project else ''
+        expected_locks.add((folder+'/' if folder else '')+'packages.lock.json')
     locks=[]
     for name in all_names:
         if name.endswith('packages.lock.json'):
+            if name not in expected_locks:continue
             try:lock=json.loads(_source(root,name))
             except ValueError:raise DotNetError('RM-09 malformed NuGet lock') from None
             if not isinstance(lock,dict) or not isinstance(lock.get('dependencies'),dict):
@@ -171,23 +254,17 @@ def solution_graph(root: Path, *, selected: str = '') -> dict:
             if any(x.tag.rsplit('}',1)[-1] in ('packageSourceCredentials','apikeys','packageSources') for x in config.iter() if x is not config):
                 raise DotNetError('RM-09 NuGet.Config source/credentials require separate qualification')
             sources[name]=sha256(raw).hexdigest()
-    if not locks:raise DotNetError('RM-09 requires tracked NuGet lockfiles for restore')
-    # For all projects, an own lockfile is mandatory to ensure restore does not
-    # silently pick an unreviewed transitive version.
-    for name in projects:
-        folder=name.rsplit('/',1)[0] if '/' in name else ''
-        own=(folder+'/' if folder else '')+'packages.lock.json'
-        if own not in locks:raise DotNetError('RM-09 missing project NuGet lock: '+name)
-    membership={}
-    for name in solutions:
-        raw=_source(root,name)
-        if name.endswith('.sln'):
-            refs=_SOLUTION.findall(raw.decode('utf8'))
-        else:refs=[e.attrib.get('Path','') for e in _xml(raw,name).iter() if e.tag.rsplit('}',1)[-1]=='Project']
-        membership[name]=sorted(_related(name,x.replace('\\','/')) for x in refs)
+    if set(locks)!=expected_locks:
+        missing=sorted(expected_locks-set(locks))
+        raise DotNetError('RM-09 missing selected project NuGet lock: '+', '.join(missing))
+    legacy_tfms=sorted({tfm for project in scoped for tfm in props[project]['tfms']
+                        if tfm.startswith('net6.0')})
     return {'kind':'devtool.dotnet.solution-graph','sdk_version':version,'sources':sources,
             'projects':props,'solutions':membership,'edges':edges,'topological_projects':order,
-            'selected':selected,'windows_only':(any(props[p]['windows_only'] for p in membership.get(selected,[selected])) if selected else False),
+            'selected':selected,'selected_projects':sorted(scoped),
+             'selected_topological_projects':[p for p in order if p in scoped],
+             'selected_lockfiles':sorted(expected_locks),'legacy_tfms':legacy_tfms,
+             'windows_only':(any(props[p]['windows_only'] for p in scoped) if selected else False),
             'source_bound':True,'execution_performed':False,'release_qualified':False}
 
 
@@ -236,7 +313,12 @@ def inspect_dotnet_job(root: Path, argv: list[str], metadata: dict, *, host_os: 
         not re.fullmatch(r'dist(?:/[A-Za-z0-9_-]{1,64})?',opts.get('--results-directory',''))):
         raise DotNetError('RM-09 test requires fixed TRX logger and dist results directory')
     graph=solution_graph(root,selected=selected)
-    members=graph['solutions'].get(selected,[selected])
+    members=graph['selected_projects']
+    eol_opt_in=metadata.get('ci_dotnet_allow_eol',False)
+    if type(eol_opt_in) is not bool:
+        raise DotNetError('RM-09 .NET EOL opt-in must be boolean')
+    if graph['legacy_tfms'] and not eol_opt_in:
+        raise DotNetError('RM-09 .NET 6 is end-of-support; set ci_dotnet_allow_eol=true')
     if graph['windows_only'] and host_os!='windows':
         raise DotNetError('RM-09 Windows-only APIs/workloads cannot run on reviewed Linux host')
     if host_os not in ('windows','linux'):
@@ -277,6 +359,8 @@ def inspect_dotnet_job(root: Path, argv: list[str], metadata: dict, *, host_os: 
             'matrix_versions':[graph['sdk_version']], 'version_source':'global.json',
             'graph':graph,'command':command,'selected':selected,'lockfiles':list(graph['sources']),
             'coverage':coverage,'framework':opts.get('--framework',''),'runtime':opts.get('--runtime',''),
+             'legacy_tfms':graph['legacy_tfms'],'eol_opt_in':bool(graph['legacy_tfms'] and eol_opt_in),
+             'required_runtime_families':['6.0'] if graph['legacy_tfms'] else [],
             'publish_output':opts.get('--output',''), 'host_os':host_os,
             'shared_restore':shared,
             'cache_enabled':False,'report_adapter':'trx','output_role':'local-bytes-only',
