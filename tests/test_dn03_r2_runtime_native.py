@@ -180,3 +180,23 @@ def test_dn03_r2_generated_native_job_runtime_only_after_source(monkeypatch, tmp
             if 'run' in step:
                 p=subprocess.run(['bash','-n'],input=step['run'],capture_output=True,text=True)
                 assert p.returncode==0,(step['name'],p.stderr)
+
+
+def test_dn03_r06d_acceptance_uses_installed_devtool_interpreter():
+    """Regression for hosted 41724269345 / 41724243983 import failure."""
+    path = Path(__file__).parents[1] / '.github/workflows/devtool-dn03-r06d-hosted-native.yml'
+    workflow = yaml.safe_load(path.read_text(encoding='utf-8'))
+    steps = workflow['jobs']['actual-native-dotnet']['steps']
+    names = {step['name']: step for step in steps}
+    interpreter = '"$RUNNER_TEMP/dn03-venv/bin/python"'
+    bootstrap = names['Install exact Git checkout as Devtool Python runtime']['run']
+    assert interpreter in bootstrap
+    assert 'from devtool.actions_rm09_dotnet import verify_dotnet_host' in bootstrap
+    for name, mode in (
+        ('Verify source, exact SDK, and runtime receipt before native execution', 'preflight'),
+        ('Bind actual native receipt to immutable host and source identities', 'verify'),
+    ):
+        command = names[name]['run']
+        assert f'{interpreter} tools/dn03_r06d_acceptance.py {mode}' in command
+        assert f'python3 tools/dn03_r06d_acceptance.py {mode}' not in command
+    assert names['Install exact Git checkout as Devtool Python runtime']['run'].find('pip install') < bootstrap.find('DN03_R06D_VENV_PROVIDER_IMPORT_PASS')

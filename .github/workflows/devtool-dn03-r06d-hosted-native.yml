@@ -92,12 +92,19 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/dn03-venv"
           "$RUNNER_TEMP/dn03-venv/bin/python" -m pip install --disable-pip-version-check .
           "$RUNNER_TEMP/dn03-venv/bin/python" -m devtool --help > /dev/null
+          "$RUNNER_TEMP/dn03-venv/bin/python" - <<'PY'
+          import devtool
+          from devtool.actions_rm09_dotnet import verify_dotnet_host
+          from devtool.dn03_runtime_only import SHA512
+          assert len(SHA512) == 128
+          print('DN03_R06D_VENV_PROVIDER_IMPORT_PASS')
+          PY
 
       - name: Verify source, exact SDK, and runtime receipt before native execution
         shell: bash
         run: |
           set -euo pipefail
-          python3 tools/dn03_r06d_acceptance.py preflight \
+          "$RUNNER_TEMP/dn03-venv/bin/python" tools/dn03_r06d_acceptance.py preflight \
             --devtool "$GITHUB_WORKSPACE" --consumer "$DN03_CONSUMER" \
             --sdk-dir "$DN03_SDK_DIR" \
             --runtime-receipt "$DN03_EVIDENCE/runtime.json" \
@@ -139,7 +146,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 tools/dn03_r06d_acceptance.py verify \
+          "$RUNNER_TEMP/dn03-venv/bin/python" tools/dn03_r06d_acceptance.py verify \
             --devtool "$GITHUB_WORKSPACE" --consumer "$DN03_CONSUMER" \
             --sdk-dir "$DN03_SDK_DIR" \
             --runtime-receipt "$DN03_EVIDENCE/runtime.json" \

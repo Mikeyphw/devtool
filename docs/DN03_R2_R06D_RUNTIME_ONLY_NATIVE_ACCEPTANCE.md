@@ -39,3 +39,18 @@ git push -u origin feat/dn03-r2-runtime-only-native
 ```
 
 The PR and push events run both the **DN03 source qualification** and **R06d hosted native acceptance**. A real pass requires the hosted workflow to execute all five jobs, verify both TRX files, and upload the `dn03-r06d-native-...` artifact. **Don't merge based on the Python suite alone.**
+
+## R06d hosted Python interpreter hotfix (PR #5 follow-up)
+
+The first two R06d hosted runs (41724243983 and 41724269345) successfully
+installed the exact SDK, SHA-512-verified runtime and a source-pinned Devtool
+virtual environment, but failed before native DAG execution with
+`ModuleNotFoundError: No module named 'devtool'`. The acceptance script was
+invoked using system `python3` rather than the Devtool virtual environment.
+
+Both the preflight and final verification now explicitly invoke
+`$RUNNER_TEMP/dn03-venv/bin/python`, with an import smoke test after the
+source-pinned installation. Runtime/archive/source/graph checks are unchanged;
+this correction does not waive any gates. A new regression test enforces
+the interpreter boundary. Real R06d acceptance remains pending until the
+corrected GitHub workflow completes successfully.
