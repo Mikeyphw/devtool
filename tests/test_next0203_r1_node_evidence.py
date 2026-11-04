@@ -154,5 +154,14 @@ def test_actual_export_yaml_requires_node_receipt_if_job_successful(tmp_path,mon
     root,graph=compile_fixture(tmp_path)
     yaml=workflow_yaml(graph)
     assert 'node-evidence.json' in yaml
-    assert 'if test "${{ job.status }}" = "success"; then' in yaml
+    # SFDT05 replaced the legacy inline successful-job assertion with a
+    # source/run-bound attempt receipt. Missing typed evidence must fail closed.
+    assert 'id: sfdt_native' in yaml
+    assert 'if: always()' in yaml
+    assert 'SFDT_NATIVE_OUTCOME: ${{ steps.sfdt_native.outcome }}' in yaml
+    assert 'SFDT_JOB_STATUS: ${{ job.status }}' in yaml
+    assert 'attempt-evidence.json' in yaml
+    assert 'typed_node_evidence_present=evidence_present' in yaml
+    assert 'status="OBSERVED_SUCCESS" if complete else "UNQUALIFIED"' in yaml
+    assert 'if native=="success" and not complete: sys.exit(7)' in yaml
     assert 'Upload review evidence' in yaml
