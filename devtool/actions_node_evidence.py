@@ -14,6 +14,7 @@ import stat
 from typing import Any, Mapping
 
 from .evidence_kernel import DOMAINS, EvidenceError, validate_evidence
+from .actions_junit_evidence import scan_junit_bundle
 
 SCHEMA = 1
 KIND = 'devtool.actions.node-typed-evidence'
@@ -60,7 +61,7 @@ def _outputs(staging: Path, graph: Mapping[str, Any], job: Mapping[str, Any],
 
 def build_node_evidence(graph: Mapping[str, Any], job: Mapping[str, Any], *,
                         source: str, source_tree: str, run_id: int, attempt: int, staging: Path,
-                        repository: str = 'local/unverified') -> dict[str, Any]:
+                        repository: str = 'local/unverified', junit_root: Path | None = None) -> dict[str, Any]:
     """Project a successfully completed native node; absence is never a PASS.
 
     Tests are NOT_RUN unless the existing normalized-report owner separately
@@ -83,7 +84,13 @@ def build_node_evidence(graph: Mapping[str, Any], job: Mapping[str, Any], *,
              for domain in DOMAINS}
     gates['source'] = {'state': 'PASS', 'reason': 'local Git HEAD matched runner source', 'authority': 'native_git_checkout'}
     gates['build'] = {'state': 'PASS', 'reason': 'native target-local command exited successfully', 'authority': 'native_job_runner'}
-    gates['test'] = {'state': 'NOT_RUN', 'reason': 'no parsed test report supplied for this node', 'authority': ''}
+    junit_dir = job.get('junit_report_dir', '')
+    if junit_dir and junit_root is None:
+        raise NodeEvidenceError('SFDT08 required JUnit source directory not provided')
+    junit = scan_junit_bundle(junit_root, junit_dir) if junit_dir else None
+    gates['test'] = ({'state':'PASS','reason':'JUnit testcase bytes independently parsed after native execution',
+                      'authority':'local_verified_junit_bytes'} if junit else
+                     {'state': 'NOT_RUN', 'reason': 'no parsed test report supplied for this node', 'authority': ''})
     gates['artifact_integrity'] = ({'state': 'PASS', 'reason': 'staged output bytes rehashed against native handoff', 'authority': 'local_handoff_digest'}
                                    if job['outputs'] else
                                    {'state': 'NOT_RUN', 'reason': 'no declared outputs', 'authority': ''})
@@ -97,8 +104,8 @@ def build_node_evidence(graph: Mapping[str, Any], job: Mapping[str, Any], *,
        'host': {'os': _assert_ident(job['profile_id'], 'profile'), 'arch': '',
                 'toolchain': _assert_ident(job['provider'], 'provider'), 'provisioned': False, 'authority': ''},
        'artifacts': _outputs(staging, graph, job, source, run_id, attempt),
-       'tests': {'format': 'none', 'total': 0, 'failed': 0, 'skipped': 0,
-                 'report_sha256': '', 'required': False},
+       'tests': (junit['tests'] if junit else {'format': 'none', 'total': 0, 'failed': 0, 'skipped': 0,
+                 'report_sha256': '', 'required': False}),
        'gates': gates}
     try:
         normalized = validate_evidence(identity, expected={
@@ -118,7 +125,7 @@ def build_node_evidence(graph: Mapping[str, Any], job: Mapping[str, Any], *,
 
 def verify_node_evidence(record: Any, graph: Mapping[str, Any], job: Mapping[str, Any], *,
                          source: str, source_tree: str, run_id: int, attempt: int,
-                         staging: Path | None = None) -> dict[str, Any]:
+                         staging: Path | None = None, junit_root: Path | None = None) -> dict[str, Any]:
     """Exact correlation; reported local PASS never upgrades trust authority."""
     if not isinstance(record, dict) or set(record) != {
         'schema_version','kind','source_commit','graph_sha256',
@@ -151,12 +158,23 @@ def verify_node_evidence(record: Any, graph: Mapping[str, Any], job: Mapping[str
     except EvidenceError as exc:
         raise NodeEvidenceError('Typed evidence identity mismatch: ' + str(exc)[:150]) from None
     canonical = check['evidence']
-    if (canonical['tests'] != {'format': 'none', 'total': 0, 'failed': 0,
-                               'skipped': 0, 'report_sha256': '', 'required': False}
-            or canonical['gates']['test']['state'] != 'NOT_RUN'):
-        raise NodeEvidenceError('Missing independent test-report evidence cannot PASS')
+    junit_dir = job.get('junit_report_dir', '')
+    if junit_dir:
+        if junit_root is None:
+            raise NodeEvidenceError('SFDT08 JUnit proof requires original report bytes')
+        proof = scan_junit_bundle(junit_root, junit_dir)
+        if (canonical['tests'] != proof['tests'] or
+                canonical['gates']['test'] != {'state':'PASS',
+                  'reason':'JUnit testcase bytes independently parsed after native execution',
+                  'authority':'local_verified_junit_bytes'}):
+            raise NodeEvidenceError('SFDT08 JUnit result/byte/identity mismatch')
+    else:
+        if (canonical['tests'] != {'format': 'none', 'total': 0, 'failed': 0,
+                                   'skipped': 0, 'report_sha256': '', 'required': False}
+                or canonical['gates']['test']['state'] != 'NOT_RUN'):
+            raise NodeEvidenceError('Missing independent test-report evidence cannot PASS')
     required_states = {'source': 'PASS', 'build': 'PASS',
-                       'test': 'NOT_RUN',
+                       'test': 'PASS' if junit_dir else 'NOT_RUN',
                        'artifact_integrity': 'PASS' if job['outputs'] else 'NOT_RUN'}
     for domain in DOMAINS:
         required = required_states.get(domain, 'UNKNOWN')
@@ -176,9 +194,14 @@ def verify_node_evidence(record: Any, graph: Mapping[str, Any], job: Mapping[str
         expected = _outputs(staging, graph, job, source, run_id, attempt)
         if expected != arts:
             raise NodeEvidenceError('Frozen output bytes differ from typed node evidence')
+    effective = dict(check['effective_gates'])
+    if junit_dir:
+        effective['test'] = {'state':'PASS',
+            'reason':'local native JUnit testcase bytes re-parsed and hash-matched',
+            'authority':'local_verified_junit_bytes'}
     return {'schema_version': SCHEMA, 'kind': 'devtool.actions.node-evidence-verification',
             'identity_matched': True, 'structure_valid': True,
-            'trusted_producer_verified': False, 'effective_gates': check['effective_gates'],
+            'trusted_producer_verified': False, 'effective_gates': effective,
             'remote_authenticated': False, 'release_qualified': False}
 
 
