@@ -146,6 +146,17 @@ def verify_native_node(
             verified.get("release_qualified") is not False):
         raise R3Refused("native typed verifier yielded unexpected trust claim")
 
+    test_node = job.get('dotnet_command') == 'test'
+    trx_verified = verified.get('verified_trx')
+    if test_node != isinstance(trx_verified, dict):
+        raise R3Refused('native .NET test node is missing independently verified TRX evidence')
+    if test_node and (trx_verified.get('remote_authenticated') is not False or
+            trx_verified.get('release_qualified') is not False or
+            trx_verified.get('tests', {}).get('format') != 'trx' or
+            trx_verified.get('tests', {}).get('total', 0) <= 0 or
+            trx_verified.get('tests', {}).get('report_sha256') != trx_verified.get('sha256')):
+        raise R3Refused('native .NET TRX evidence identity or trust boundary invalid')
+
     host_dir = _safe_child(_safe_child(temp_path, "dn03-host"), job_id)
     host_file = host_dir / "host.json"
     host = _read_json(host_file, max_bytes=32768)
@@ -178,7 +189,8 @@ def verify_native_node(
         "host_receipt_sha256": sha256(host_file.read_bytes()).hexdigest(),
         "native_output_bytes_rechecked": True,
         "native_job_qualified": True,
-        "test_reports_independently_verified": False,
+        "test_reports_independently_verified": test_node,
+        **({"test_report": trx_verified} if test_node else {}),
         "remote_authenticated": False,
         "release_qualified": False,
     }
