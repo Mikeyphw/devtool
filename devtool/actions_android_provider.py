@@ -61,12 +61,18 @@ class AndroidGradleProvider:
         cap_variant = variant[0].upper() + variant[1:]
         variants = ('assemble' + cap_variant, 'bundle' + cap_variant,
                     'lint' + cap_variant, 'test' + cap_variant + 'UnitTest')
+        allow_release_jvm = meta.get('ci_android_unsigned_release_jvm_test',False)
+        if type(allow_release_jvm) is not bool:
+            raise AndroidProviderError('SFDT08 unsigned Release JVM opt-in must be a boolean')
+        if allow_release_jvm and (variant != 'debug' or tail != [':app:testReleaseUnitTest'] or
+                                  meta.get('ci_android_host_profile') != 'studyflow-ubuntu24'):
+            raise AndroidProviderError('SFDT08 only reviewed unsigned phone Release JVM test is eligible')
         tasks = []
         module = ''
         operations = []
         for task in tail:
             match = re.fullmatch(r':([A-Za-z][A-Za-z0-9_-]*(?::[A-Za-z][A-Za-z0-9_-]*){0,5}):([A-Za-z][A-Za-z0-9]*)', task)
-            if match is None or match.group(2) not in variants:
+            if match is None or match.group(2) not in (variants + (("testReleaseUnitTest",) if allow_release_jvm else ())):
                 raise AndroidProviderError('Android CI requires reviewed debug tasks; rejects extra or unreviewed tasks and release/device/signing')
             if module and module != match.group(1):
                 raise AndroidProviderError('Android CI multi-task group must use one module')
@@ -140,6 +146,10 @@ class AndroidGradleProvider:
             raise AndroidProviderError('Android CI refuses alternate Gradle distribution origins')
         if host_profile == 'studyflow-ubuntu24' and distribution.group(1) != '9.7.1':
             raise AndroidProviderError('SFDT05 StudyFlow host requires Gradle wrapper 9.7.1')
+        if allow_release_jvm:
+            source_bytes = _trusted(root, module_build).decode('utf-8')
+            if not re.search(r'testBuildType\s*=\s*"release"',source_bytes):
+                raise AndroidProviderError('SFDT08 phone Release JVM testBuildType is not reviewed')
         outs = list(job.outputs or [])
         build_operation = next((v for v in operations if v in ('assemble', 'bundle')), None)
         if build_operation:
