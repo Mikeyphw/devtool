@@ -84,13 +84,28 @@ def build_node_evidence(graph: Mapping[str, Any], job: Mapping[str, Any], *,
              for domain in DOMAINS}
     gates['source'] = {'state': 'PASS', 'reason': 'local Git HEAD matched runner source', 'authority': 'native_git_checkout'}
     gates['build'] = {'state': 'PASS', 'reason': 'native target-local command exited successfully', 'authority': 'native_job_runner'}
+    from .actions_trx_evidence import verified_native_trx, TrxEvidenceError
     junit_dir = job.get('junit_report_dir', '')
+    if junit_dir and job.get('provider') == 'dotnet' and job.get('dotnet_command') == 'test':
+        raise NodeEvidenceError('JUnit and TRX report proof are mutually exclusive')
     if junit_dir and junit_root is None:
         raise NodeEvidenceError('SFDT08 required JUnit source directory not provided')
     junit = scan_junit_bundle(junit_root, junit_dir) if junit_dir else None
-    gates['test'] = ({'state':'PASS','reason':'JUnit testcase bytes independently parsed after native execution',
-                      'authority':'local_verified_junit_bytes'} if junit else
-                     {'state': 'NOT_RUN', 'reason': 'no parsed test report supplied for this node', 'authority': ''})
+    typed_artifacts = _outputs(staging, graph, job, source, run_id, attempt)
+    try:
+        trx_summary = verified_native_trx(staging, graph, job, source=source,
+                                          run_id=run_id, attempt=attempt,
+                                          artifacts=typed_artifacts)
+    except TrxEvidenceError as exc:
+        raise NodeEvidenceError('Native typed TRX verification refused: ' + str(exc)) from exc
+    if junit is not None and trx_summary is not None:
+        raise NodeEvidenceError('Cannot claim JUnit and TRX proof for the same node')
+    gates['test'] = (
+        {'state': 'PASS', 'reason': 'RM-09 TRX independently parsed and staged bytes rehashed',
+         'authority': 'local_staged_trx_reparsed'} if trx_summary is not None else
+        {'state': 'PASS', 'reason': 'JUnit testcase bytes independently parsed after native execution',
+         'authority': 'local_verified_junit_bytes'} if junit else
+        {'state': 'NOT_RUN', 'reason': 'no parsed test report supplied for this node', 'authority': ''})
     gates['artifact_integrity'] = ({'state': 'PASS', 'reason': 'staged output bytes rehashed against native handoff', 'authority': 'local_handoff_digest'}
                                    if job['outputs'] else
                                    {'state': 'NOT_RUN', 'reason': 'no declared outputs', 'authority': ''})
@@ -103,9 +118,11 @@ def build_node_evidence(graph: Mapping[str, Any], job: Mapping[str, Any], *,
                      'attempt': attempt, 'exo_run_id': ''},
        'host': {'os': _assert_ident(job['profile_id'], 'profile'), 'arch': '',
                 'toolchain': _assert_ident(job['provider'], 'provider'), 'provisioned': False, 'authority': ''},
-       'artifacts': _outputs(staging, graph, job, source, run_id, attempt),
-       'tests': (junit['tests'] if junit else {'format': 'none', 'total': 0, 'failed': 0, 'skipped': 0,
-                 'report_sha256': '', 'required': False}),
+       'artifacts': typed_artifacts,
+       'tests': (trx_summary['tests'] if trx_summary is not None else
+                 junit['tests'] if junit else
+                 {'format': 'none', 'total': 0, 'failed': 0, 'skipped': 0,
+                  'report_sha256': '', 'required': False}),
        'gates': gates}
     try:
         normalized = validate_evidence(identity, expected={
@@ -158,7 +175,19 @@ def verify_node_evidence(record: Any, graph: Mapping[str, Any], job: Mapping[str
     except EvidenceError as exc:
         raise NodeEvidenceError('Typed evidence identity mismatch: ' + str(exc)[:150]) from None
     canonical = check['evidence']
+    from .actions_trx_evidence import verified_native_trx, TrxEvidenceError
     junit_dir = job.get('junit_report_dir', '')
+    dotnet_test = job.get('provider') == 'dotnet' and job.get('dotnet_command') == 'test'
+    if junit_dir and dotnet_test:
+        raise NodeEvidenceError('JUnit and TRX report proof are mutually exclusive')
+    if dotnet_test and staging is None:
+        raise NodeEvidenceError('Native .NET test report verification requires staging')
+    try:
+        trx_summary = (verified_native_trx(staging, graph, job, source=source,
+                         run_id=run_id, attempt=attempt,
+                         artifacts=canonical['artifacts']) if staging is not None else None)
+    except TrxEvidenceError as exc:
+        raise NodeEvidenceError('Reparsed native TRX was refused: ' + str(exc)) from exc
     if junit_dir:
         if junit_root is None:
             raise NodeEvidenceError('SFDT08 JUnit proof requires original report bytes')
@@ -168,13 +197,20 @@ def verify_node_evidence(record: Any, graph: Mapping[str, Any], job: Mapping[str
                   'reason':'JUnit testcase bytes independently parsed after native execution',
                   'authority':'local_verified_junit_bytes'}):
             raise NodeEvidenceError('SFDT08 JUnit result/byte/identity mismatch')
+    elif trx_summary is not None:
+        if canonical['tests'] != trx_summary['tests']:
+            raise NodeEvidenceError('Typed test report digest/counts differ from staged TRX bytes')
+        if canonical['gates']['test'] != {
+                'state': 'PASS', 'reason': 'RM-09 TRX independently parsed and staged bytes rehashed',
+                'authority': 'local_staged_trx_reparsed'}:
+            raise NodeEvidenceError('Typed test gate differs from reviewed TRX authority')
     else:
         if (canonical['tests'] != {'format': 'none', 'total': 0, 'failed': 0,
                                    'skipped': 0, 'report_sha256': '', 'required': False}
                 or canonical['gates']['test']['state'] != 'NOT_RUN'):
             raise NodeEvidenceError('Missing independent test-report evidence cannot PASS')
     required_states = {'source': 'PASS', 'build': 'PASS',
-                       'test': 'PASS' if junit_dir else 'NOT_RUN',
+                       'test': 'PASS' if junit_dir or trx_summary is not None else 'NOT_RUN',
                        'artifact_integrity': 'PASS' if job['outputs'] else 'NOT_RUN'}
     for domain in DOMAINS:
         required = required_states.get(domain, 'UNKNOWN')
@@ -202,7 +238,8 @@ def verify_node_evidence(record: Any, graph: Mapping[str, Any], job: Mapping[str
     return {'schema_version': SCHEMA, 'kind': 'devtool.actions.node-evidence-verification',
             'identity_matched': True, 'structure_valid': True,
             'trusted_producer_verified': False, 'effective_gates': effective,
-            'remote_authenticated': False, 'release_qualified': False}
+            'remote_authenticated': False, 'release_qualified': False,
+            'verified_trx': trx_summary}
 
 
 def write_node_evidence(staging: Path, job_id: str, record: Mapping[str, Any]) -> Path:

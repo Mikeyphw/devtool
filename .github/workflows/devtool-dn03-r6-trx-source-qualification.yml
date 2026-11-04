@@ -1,0 +1,66 @@
+name: Devtool DN03-R6 typed TRX source qualification
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trx-contract:
+    name: Native TRX parsing, digest and cross-node regression (non-release)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout immutable reviewed Devtool candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Pinned Python 3.13
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+          check-latest: false
+      - name: Install checked-out source and pytest
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -m pip install --disable-pip-version-check -e . pytest
+      - name: Verify TRX and prior native source contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pytest -q \
+            tests/test_dn03_r6_typed_trx.py \
+            tests/test_dn03_r6_sfdt08_integration.py \
+            tests/test_sfdt08_typed_junit.py \
+            tests/test_next0203_r1_node_evidence.py \
+            tests/test_dn03_r3_verified_export.py \
+            tests/test_dn03_r4_cross_node.py \
+            tests/test_dn03_r5_scoped_monorepo.py \
+            tests/test_dn03_r2_runtime_native.py \
+            tests/test_dn03_dotnet_export.py \
+            tests/test_rm09_dotnet.py
+          git diff --exit-code
+      - name: Record source-only evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dn03-r6-source"
+          printf '%s/%s/%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/dn03-r6-source/source-run.txt"
+          sha256sum devtool/actions_trx_evidence.py devtool/actions_node_evidence.py devtool/actions_dn03_r3_verify.py devtool/actions_dn03_r4_verify.py > "$RUNNER_TEMP/dn03-r6-source/modules.sha256"
+          sha256sum tests/test_dn03_r6_typed_trx.py tests/test_dn03_r6_sfdt08_integration.py tests/test_sfdt08_typed_junit.py > "$RUNNER_TEMP/dn03-r6-source/tests.sha256"
+      - name: Upload non-release source evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dn03-r6-trx-source-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dn03-r6-source/
+          if-no-files-found: warn
+          retention-days: 14

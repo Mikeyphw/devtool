@@ -116,7 +116,7 @@ def test_argv_bounded_and_rid_policy(tmp_path):
 
 def trx(root,path,name,outcome='Passed',uid='1',total='1'):
     (root/path).parent.mkdir(parents=True,exist_ok=True)
-    (root/path).write_text(f'<TestRun><Results><UnitTestResult testId="{uid}" testName="{name}" outcome="{outcome}" /></Results><ResultSummary><Counters total="{total}" /></ResultSummary></TestRun>')
+    (root/path).write_text(f'<TestRun><Results><UnitTestResult testId="{uid}" executionId="exec-{uid}" testName="{name}" outcome="{outcome}" /></Results><ResultSummary><Counters total="{total}" /></ResultSummary></TestRun>')
 
 
 def test_trx_merge_positive_failure_duplicate_and_bad_counts(tmp_path):

@@ -192,6 +192,16 @@ def verify_workflow(root: Path, *, target: str, workflow: str,
         _same(result, {"identity_matched": True, "structure_valid": True,
                        "remote_authenticated": False, "release_qualified": False},
               "native verification " + jid)
+        test_node = job.get('dotnet_command') == 'test'
+        trx_verified = result.get('verified_trx')
+        if test_node != isinstance(trx_verified, dict):
+            raise R4Refused('native .NET test report missing from independently reparsed R4 bytes')
+        if test_node and (trx_verified.get('remote_authenticated') is not False or
+                trx_verified.get('release_qualified') is not False or
+                trx_verified.get('tests', {}).get('format') != 'trx' or
+                trx_verified.get('tests', {}).get('total', 0) <= 0 or
+                trx_verified.get('tests', {}).get('report_sha256') != trx_verified.get('sha256')):
+            raise R4Refused('R4 reparsed TRX digest/count/trust claim invalid')
         source_identity = (native.get("typed_evidence") or {}).get("source", {})
         if (not isinstance(source_identity, dict) or
                 source_identity.get("repository") != repository):
@@ -218,14 +228,16 @@ def verify_workflow(root: Path, *, target: str, workflow: str,
             "host_receipt_sha256": sha256(host_bytes).hexdigest(),
             "native_output_bytes_rechecked": True,
             "native_job_qualified": True,
-            "test_reports_independently_verified": False,
+            "test_reports_independently_verified": test_node,
+            **({"test_report": trx_verified} if test_node else {}),
             "remote_authenticated": False, "release_qualified": False,
         }, "R3 verification " + jid)
         checked.append({"job_id": jid, "native_node": job["node"],
                         "native_evidence_sha256": sha256(native_bytes).hexdigest(),
                         "r3_verification_sha256": sha256(local_bytes).hexdigest(),
                         "host_sha256": sha256(host_bytes).hexdigest(),
-                        "declared_outputs_verified": owns_outputs})
+                        "declared_outputs_verified": owns_outputs,
+                        "verified_trx": trx_verified if test_node else None})
 
     payload = {
         "schema_version": 1, "kind": "devtool.dn03-r4-cross-node-review",
@@ -236,7 +248,13 @@ def verify_workflow(root: Path, *, target: str, workflow: str,
         "nodes": checked, "native_dag_passed": True,
         "declared_output_nodes_verified": sum(1 for item in checked if item["declared_outputs_verified"]),
         "all_declared_outputs_verified": True,
-        "test_reports_independently_verified": False,
+        "test_reports_independently_verified": (
+            bool([j for j in jobs if j.get('dotnet_command') == 'test']) and
+            all(x['verified_trx'] is not None for x in checked
+                if next(j for j in jobs if j['id'] == x['job_id']).get('dotnet_command') == 'test')),
+        "verified_test_node_count": sum(x['verified_trx'] is not None for x in checked),
+        "verified_test_case_count": sum(x['verified_trx']['passed']
+                                        for x in checked if x['verified_trx'] is not None),
         "remote_authenticated": False, "release_qualified": False,
     }
     if write:
