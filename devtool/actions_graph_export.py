@@ -234,6 +234,9 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
             key=(job['matrix_cell'],output)
             if key in owners:
                 raise ProviderError('RM-06 multiple DAG nodes produce one output: '+output)
+            if any(cell == job['matrix_cell'] and (output.startswith(other + '/') or other.startswith(output + '/'))
+                   for cell, other in owners):
+                raise ProviderError('SFDT05 overlapping output ownership: ' + output)
             owners[key]=job['node']
     for job in jobs:
         profile=job['matrix_cell'];deps=list(job['depends_on'])
@@ -318,6 +321,108 @@ def _artifact_name(namespace: str, jid: str) -> str:
     return f'{namespace}-{jid}-bytes'
 
 
+
+
+def _sfdt05_android_setup(job: dict[str, Any]) -> str:
+    """Emit reviewed Ubuntu Android toolchain checks; never execute Gradle here.
+
+    A static package declaration is not a host qualification: each actual
+    package directory must be present before the native node runs. SDK/NDK
+    installation is delegated to the pinned setup-android action.
+    """
+    review = job.get('android_review') or {}
+    java = review['java_version']
+    sdk = list(review['sdk_packages'])
+    ndk = review.get('ndk_version', '')
+    if ndk and f'ndk;{ndk}' not in sdk:
+        raise ProviderError('SFDT05 Android NDK source/profile mismatch')
+    if java not in ('17', '21'):
+        raise ProviderError('SFDT05 unsupported Android JDK profile')
+    code = [
+        '      - name: Pinned hosted Android Java SDK',
+        f'        uses: actions/setup-java@{_SETUP_JAVA_SHA}',
+        '        with:',
+        '          distribution: temurin',
+        f'          java-version: "{java}"',
+        '          check-latest: false',
+        '      - name: Pinned hosted Android SDK tooling',
+        f'        uses: android-actions/setup-android@{_SETUP_ANDROID_SHA}',
+        '        with:',
+        '          cmdline-tools-version: 15859902',
+        f'          packages: "{" ".join(sdk)}"',
+        '      - name: Verify reviewed hosted Android SDK/NDK before execution',
+        '        shell: bash',
+        '        run: |',
+        '          set -euo pipefail',
+        '          test "${RUNNER_OS:-}" = Linux',
+        '          test "${RUNNER_ARCH:-}" = X64',
+        '          test -n "${ANDROID_HOME:-}"',
+        f'          java -version 2>&1 | grep -E "version [^0-9]*{java}([.]|[^0-9])"',
+    ]
+    for package in sdk:
+        if package == 'platform-tools':
+            rel = 'platform-tools'
+        elif package.startswith('platforms;android-'):
+            rel = 'platforms/' + package.split(';', 1)[1]
+        elif package.startswith('build-tools;'):
+            rel = 'build-tools/' + package.split(';', 1)[1]
+        elif package.startswith('ndk;'):
+            rel = 'ndk/' + package.split(';', 1)[1]
+        else:
+            raise ProviderError('SFDT05 unreviewed Android SDK package')
+        if any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/' for c in rel):
+            raise ProviderError('SFDT05 unreviewed Android SDK path')
+        code.append(f'          test -d "$ANDROID_HOME/{rel}"')
+    code.extend([
+        '      - name: Set up reviewed Gradle execution',
+        f'        uses: gradle/actions/setup-gradle@{_SETUP_GRADLE_SHA}',
+        '        with:',
+        '          cache-disabled: true',
+    ])
+    return '\n'.join(code) + '\n'
+
+
+
+def _sfdt05_attempt_yaml(job_id: str, runtime_pin: str, graph_digest: str) -> str:
+    """Independent, fail-closed execution-attempt receipt; never grants CI trust.
+
+    Uses runner OS Python rather than Devtool's venv so setup failures still
+    produce evidence. Cancellation can stop all runner steps; GitHub status
+    remains the authority when this receipt is absent.
+    """
+    program = [
+        'import hashlib, json, os, pathlib, subprocess, sys',
+        'out=pathlib.Path(os.environ["RUNNER_TEMP"])/"rm06-evidence"/' + repr(job_id),
+        'out.mkdir(parents=True,exist_ok=True)',
+        'expected=os.environ.get("GITHUB_SHA","")',
+        'p=subprocess.run(["git","rev-parse","HEAD"],capture_output=True,text=True,check=False)',
+        'source_ok=p.returncode==0 and p.stdout.strip()==expected',
+        'native=os.environ.get("SFDT_NATIVE_OUTCOME","")',
+        'job_status=os.environ.get("SFDT_JOB_STATUS","")',
+        'node=out/"node-evidence.json"',
+        'evidence_present=node.is_file() and not node.is_symlink() and 0<node.stat().st_size<=131072',
+        'complete=source_ok and native=="success" and job_status=="success" and evidence_present',
+        'data=dict(schema_version=1,kind="devtool.actions.hosted-node-attempt",',
+        '  source_commit=expected,source_checkout_matched=source_ok,',
+        '  runtime_sha=' + repr(runtime_pin) + ',graph_sha256=' + repr(graph_digest) + ',',
+        '  run_id=os.environ.get("GITHUB_RUN_ID",""),',
+        '  attempt=os.environ.get("GITHUB_RUN_ATTEMPT",""),',
+        '  job_id=' + repr(job_id) + ',native_step_outcome=native,job_status=job_status,',
+        '  typed_node_evidence_present=evidence_present,',
+        '  status="OBSERVED_SUCCESS" if complete else "UNQUALIFIED",',
+        '  authenticated_remote=False,release_qualified=False)',
+        'blob=json.dumps(data,sort_keys=True,separators=(",",":"),ensure_ascii=True).encode()',
+        'data["receipt_sha256"]=hashlib.sha256(blob).hexdigest()',
+        'with (out/"attempt-evidence.json").open("x",encoding="utf-8") as handle:',
+        '  json.dump(data,handle,sort_keys=True,indent=2)',
+        '  handle.write("\\n")',
+        'if not complete: print("SFDT05_ATTEMPT_UNQUALIFIED: inspect failed/absent native node evidence",file=sys.stderr)',
+        'if native=="success" and not complete: sys.exit(7)',
+    ]
+    return ("          python3 -B - <<'SFDT05_ATTEMPT'\n" +
+            ''.join('          ' + s + '\n' for s in program) +
+            '          SFDT05_ATTEMPT\n')
+
 def workflow_yaml(graph: dict[str, Any]) -> str:
     namespace=f"devtool-{graph['target']}-{graph['workflow']}-multi"
     target, workflow, pin, digest=graph['target'],graph['workflow'],graph['runtime_sha'],graph['graph_sha256']
@@ -338,17 +443,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
         setup_go=(f'      - name: Pinned Go toolchain\n'
                   f'        uses: actions/setup-go@{_SETUP_GO_SHA}\n'
                   f'        with:\n          {go_selector}\n          cache: false\n') if job['provider']=='go' else ''
-        android_setup=(
-            f'      - name: Pinned hosted Android Java SDK\n'
-            f'        uses: actions/setup-java@{_SETUP_JAVA_SHA}\n'
-            f'        with:\n          distribution: temurin\n          java-version: \"{job["android_review"]["java_version"]}\"\n'
-            f'      - name: Pinned hosted Android SDK tooling\n'
-            f'        uses: android-actions/setup-android@{_SETUP_ANDROID_SHA}\n'
-            f'        with:\n          cmdline-tools-version: 15859902\n'
-            f'          packages: \"{" ".join(job["android_review"]["sdk_packages"])}\"\n'
-            f'      - name: Set up reviewed Gradle execution\n'
-            f'        uses: gradle/actions/setup-gradle@{_SETUP_GRADLE_SHA}\n'
-            ) if job['provider']=='android-gradle' else ''
+        android_setup=_sfdt05_android_setup(job) if job['provider']=='android-gradle' else ''
         dotnet_setup=(f'      - name: Pinned .NET SDK\n'
                       f'        uses: actions/setup-dotnet@{_SETUP_DOTNET_SHA}\n'
                       '        with:\n'
@@ -530,6 +625,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                f'          {venv_python} -m pip install --disable-pip-version-check "$RUNNER_TEMP/devtool-source"\n'
                f'{downloads}{py_requirements}'
                '      - name: Verify dependencies and run native target-local node\n'
+                '        id: sfdt_native\n'
                '        shell: bash\n        run: |\n'
                '          set -euo pipefail\n'
                f'          {venv_python} -m devtool.actions_graph_export run-node '
@@ -540,15 +636,14 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                + ' --inputs "$RUNNER_TEMP/rm06-inputs" --outputs "$RUNNER_TEMP/rm06-output"\n'
                f'{upload}'
                '      - name: Record local run attempt (not authentication)\n'
-               '        if: always()\n        shell: bash\n        run: |\n'
+               '        if: always()\n        shell: bash\n'
+                '        env:\n          SFDT_NATIVE_OUTCOME: ${{ steps.sfdt_native.outcome }}\n          SFDT_JOB_STATUS: ${{ job.status }}\n'
+                '        run: |\n'
                '          set -euo pipefail\n'
                f'          mkdir -p "$RUNNER_TEMP/rm06-evidence/{jid}"\n'
-               # Successful hosted nodes must have a typed native evidence receipt.
-               # Failure/missing evidence never inherits PASS from the text breadcrumb.
-               '          if test "${{ job.status }}" = "success"; then\n'
-               f'            test -s "$RUNNER_TEMP/rm06-evidence/{jid}/node-evidence.json"\n'
-               '          fi\n'
+               # SFDT05 attempt recorder writes UNQUALIFIED on missing evidence.
                f'          printf "%s\\n" "$GITHUB_SHA/$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT/{jid}" > "$RUNNER_TEMP/rm06-evidence/{jid}/source-run.txt"\n'
+               f'{_sfdt05_attempt_yaml(jid,pin,digest)}'
                '      - name: Upload review evidence\n'
                '        if: always()\n'
                f'        uses: actions/upload-artifact@{_UPLOAD_SHA}\n'
@@ -667,6 +762,11 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     selected=next((item for item in graph['jobs'] if item['id']==job_id),None)
     if selected is None:
         raise ProviderError('RM-06 unknown compiled GitHub node')
+    if selected['provider'] == 'android-gradle' and (
+            os.environ.get('GITHUB_ACTIONS') != 'true' or
+            os.environ.get('RUNNER_OS') != 'Linux' or
+            os.environ.get('RUNNER_ARCH') != 'X64'):
+        raise ProviderError('SFDT05 Android Gradle nodes execute only on a real Linux GitHub-hosted runner')
     if os.environ.get('GITHUB_ACTIONS') == 'true':
         expected={'ubuntu-24.04-x64':'Linux','macos-15-intel':'macOS','windows-2022-x64':'Windows'}[selected['profile_id']]
         if os.environ.get('RUNNER_OS')!=expected or os.environ.get('RUNNER_ARCH')!='X64':

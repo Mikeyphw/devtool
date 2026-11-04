@@ -85,10 +85,21 @@ class AndroidGradleProvider:
         sdk = meta.get('ci_android_sdk_packages')
         if (not isinstance(sdk, list) or not 2 <= len(sdk) <= 6 or
                 len(set(map(str,sdk))) != len(sdk) or
-                any(not isinstance(x,str) or not re.fullmatch(r'(?:platform-tools|platforms;android-(?:3[3-9]|[4-5][0-9])|build-tools;[0-9]{2}\.[0-9]\.[0-9])',x) for x in sdk) or
+                any(not isinstance(x,str) or not re.fullmatch(r'(?:platform-tools|platforms;android-(?:3[3-9]|[4-5][0-9])|build-tools;[0-9]{2}\.[0-9]\.[0-9]|ndk;29\.0\.14206865)',x) for x in sdk) or
                 not any(x.startswith('platforms;') for x in sdk) or
                 not any(x.startswith('build-tools;') for x in sdk)):
             raise AndroidProviderError('Android CI requires bounded reviewed platform/build-tools SDK package pins')
+        ndk_version = meta.get('ci_android_ndk_version', '')
+        if ndk_version and (ndk_version != '29.0.14206865' or
+                            'ndk;' + ndk_version not in sdk):
+            raise AndroidProviderError('SFDT05 hosted Android NDK must be exact, reviewed and installed')
+        host_profile = meta.get('ci_android_host_profile', '')
+        if host_profile not in ('', 'studyflow-ubuntu24'):
+            raise AndroidProviderError('SFDT05 unknown Android host affinity/profile')
+        if host_profile == 'studyflow-ubuntu24' and (
+                java != '21' or ndk_version != '29.0.14206865' or
+                'platforms;android-36' not in sdk or 'build-tools;36.0.0' not in sdk):
+            raise AndroidProviderError('SFDT05 StudyFlow host requires JDK21, SDK36, build-tools36 and NDK29')
         module_dir = module.replace(':', '/')
         try:
             wrapper = _trusted(root, prefix + 'gradlew')
@@ -127,6 +138,8 @@ class AndroidGradleProvider:
             raise AndroidProviderError('Android CI requires an official HTTPS Gradle distribution and distributionSha256Sum')
         if any(s in properties for s in ('distributionUrl=http\\:', 'distributionUrl=file\\:', 'distributionUrl=ftp\\:')):
             raise AndroidProviderError('Android CI refuses alternate Gradle distribution origins')
+        if host_profile == 'studyflow-ubuntu24' and distribution.group(1) != '9.7.1':
+            raise AndroidProviderError('SFDT05 StudyFlow host requires Gradle wrapper 9.7.1')
         outs = list(job.outputs or [])
         build_operation = next((v for v in operations if v in ('assemble', 'bundle')), None)
         if build_operation:
@@ -157,7 +170,7 @@ class AndroidGradleProvider:
             'provider':self.provider_id, 'api_version':self.api_version,
             'toolchain':'android-gradle', 'version':java,'matrix_versions':[java],
             'version_source':'ci_android_java_version',
-            'java_version':java, 'sdk_packages':sdk,
+            'java_version':java, 'sdk_packages':sdk, 'ndk_version':ndk_version, 'host_profile':host_profile,
             'task':tasks[-1], 'tasks':tasks, 'operation':build_operation or operations[-1],
             'operations':operations, 'project_dir':project_dir, 'variant':variant,
             'wrapper_distribution_sha256':checksum.group(1),
