@@ -45,6 +45,7 @@ jobs:
             tests/test_dn03_r2_runtime_native.py \
             tests/test_dn03_dotnet_export.py \
             tests/test_rm09_dotnet.py \
+            tests/test_dn03_r5_scoped_monorepo.py \
             tests/test_next0203_r1_node_evidence.py
           git diff --exit-code
       - name: Save reviewed source-only receipt

@@ -136,9 +136,40 @@ def _directory_build_props(root: Path, project: str, tracked: set[str]) -> tuple
     return {}, ''
 
 
-def solution_graph(root: Path, *, selected: str = '') -> dict:
+def solution_graph(root: Path, *, selected: str = '', scoped: bool = False) -> dict:
     """Inspect tracked static project references and .sln/.slnx membership."""
     root=root.resolve();all_names=_tracked(root)
+    # DN03-R5: opt-in monorepo analysis of ONE tracked .csproj and all
+    # transitive tracked ProjectReferences. The real checkout stays intact;
+    # GITHUB_SHA and consumer Git tree still bind the complete repository.
+    if type(scoped) is not bool:
+        raise DotNetError('RM-09 project-only scope must be a boolean')
+    if scoped:
+        tracked = set(all_names)
+        if not isinstance(selected, str) or not selected.endswith('.csproj') or selected not in tracked:
+            raise DotNetError('RM-09 scoped mode requires one tracked .csproj')
+        pending = [selected]
+        relevant = set()
+        while pending:
+            name = pending.pop()
+            if name in relevant: continue
+            if name not in tracked or not name.endswith('.csproj'):
+                raise DotNetError('RM-09 scoped dependency escapes tracked projects')
+            relevant.add(name)
+            xml = _xml(_source(root,name),name)
+            for node in xml.iter():
+                if node.tag.rsplit('}',1)[-1] == 'ProjectReference':
+                    dep = _related(name,node.attrib.get('Include',''))
+                    if dep not in tracked or not dep.endswith('.csproj') or dep == name:
+                        raise DotNetError('RM-09 untracked/unsafe scoped ProjectReference')
+                    pending.append(dep)
+        # Retain NuGet lock/credentials review. Non-selected projects/solutions
+        # must not cause accidental admission or unrelated monorepo failures.
+        all_names = [name for name in all_names if (
+            name in relevant or name == 'global.json' or
+            name.endswith('packages.lock.json') or
+            name.endswith('Directory.Build.props') or
+            name.lower().endswith('nuget.config'))]
     projects=[name for name in all_names if name.endswith('.csproj')]
     solutions=[name for name in all_names if name.endswith(('.sln','.slnx'))]
     if not projects or len(projects)>48 or len(solutions)>16:
@@ -339,7 +370,11 @@ def inspect_dotnet_job(root: Path, argv: list[str], metadata: dict, *, host_os: 
     if command=='test' and (opts.get('--logger')!='trx;LogFileName=results.trx' or
         not re.fullmatch(r'dist(?:/[A-Za-z0-9_-]{1,64})?',opts.get('--results-directory',''))):
         raise DotNetError('RM-09 test requires fixed TRX logger and dist results directory')
-    graph=solution_graph(root,selected=selected)
+    selected_only=metadata.get('ci_dotnet_selected_project_only',False)
+    if type(selected_only) is not bool:
+        raise DotNetError('RM-09 selected-project scope opt-in must be boolean')
+    graph=(solution_graph(root,selected=selected,scoped=True) if selected_only
+           else solution_graph(root,selected=selected))
     members=graph['selected_projects']
     eol_opt_in=metadata.get('ci_dotnet_allow_eol',False)
     if type(eol_opt_in) is not bool:
@@ -391,7 +426,7 @@ def inspect_dotnet_job(root: Path, argv: list[str], metadata: dict, *, host_os: 
              'legacy_runtime_version':_LEGACY_NET6_RUNTIME if graph['legacy_tfms'] else '',
              'canonical_argv':argv,
             'publish_output':opts.get('--output',''), 'host_os':host_os,
-            'shared_restore':shared,
+            'shared_restore':shared, 'selected_project_only':selected_only,
             'cache_enabled':False,'report_adapter':'trx','output_role':'local-bytes-only',
             'release_qualified':False}
 
