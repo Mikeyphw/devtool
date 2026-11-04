@@ -37,6 +37,8 @@ jobs:
           set -euo pipefail
           python3 -m pytest -q \
             tests/test_dn03_r6_typed_trx.py \
+            tests/test_dn03_r6_sfdt08_integration.py \
+            tests/test_sfdt08_typed_junit.py \
             tests/test_next0203_r1_node_evidence.py \
             tests/test_dn03_r3_verified_export.py \
             tests/test_dn03_r4_cross_node.py \
@@ -53,7 +55,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/dn03-r6-source"
           printf '%s/%s/%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/dn03-r6-source/source-run.txt"
           sha256sum devtool/actions_trx_evidence.py devtool/actions_node_evidence.py devtool/actions_dn03_r3_verify.py devtool/actions_dn03_r4_verify.py > "$RUNNER_TEMP/dn03-r6-source/modules.sha256"
-          sha256sum tests/test_dn03_r6_typed_trx.py > "$RUNNER_TEMP/dn03-r6-source/tests.sha256"
+          sha256sum tests/test_dn03_r6_typed_trx.py tests/test_dn03_r6_sfdt08_integration.py tests/test_sfdt08_typed_junit.py > "$RUNNER_TEMP/dn03-r6-source/tests.sha256"
       - name: Upload non-release source evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

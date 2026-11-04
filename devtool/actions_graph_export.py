@@ -124,6 +124,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
         raise ProviderError('RM-06 bounded multi-job export accepts 1..24 nodes; use single-job fallback')
     cfg = load_wrapper_project_config(str(root.resolve()), None)
     native_jobs = cfg.targets[plan['target']].jobs
+    from .actions_junit_evidence import reviewed_junit_directory
     # RM-07 must re-admit every selected host. The RM-06 provider plan is
     # Ubuntu-based and cannot be used as evidence for the other matrix cells.
     from .workflow_graph import graph_from_workflow
@@ -168,6 +169,8 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                          'runner':profile.hosted_runner,'arch':profile.arch,
                          'timeout_minutes':profile.timeout_minutes, 'cache_policy':cache,
                          'outputs':sorted(outs),'inputs':list(native_jobs[row['job']].inputs),
+                          'junit_report_dir':reviewed_junit_directory(
+                              native_jobs[row['job']].metadata or {},row['provider']['provider']),
                          'provider':row['provider']['provider'],
                          'cpp_compiler':matrix_compiler if cpp_only else row['provider'].get('compiler',''),
                          'cpp_version':matrix_version if cpp_only else row['provider'].get('compiler_version',''),
@@ -771,6 +774,9 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
         expected={'ubuntu-24.04-x64':'Linux','macos-15-intel':'macOS','windows-2022-x64':'Windows'}[selected['profile_id']]
         if os.environ.get('RUNNER_OS')!=expected or os.environ.get('RUNNER_ARCH')!='X64':
             raise ProviderError('RM-07 selected hosted profile does not match runner OS/architecture')
+    if selected.get('junit_report_dir'):
+        from .actions_junit_evidence import require_fresh_junit_directory
+        require_fresh_junit_directory(root,selected['junit_report_dir'])
     consume_handoffs(root,inputs,graph,selected,source,run,attempt)
     if selected['dotnet_coverage']:
         dist=root/'dist'
@@ -1280,10 +1286,14 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
     node_evidence = build_node_evidence(graph,selected,source=source,
                                        source_tree=_git(root, 'rev-parse', 'HEAD^{tree}'),run_id=int(run),
                                        attempt=attempt,staging=outputs,
-                                       repository=os.environ.get('GITHUB_REPOSITORY','local/unverified'))
+                                       repository=os.environ.get('GITHUB_REPOSITORY','local/unverified'),
+                                       junit_root=root)
     verify_node_evidence(node_evidence,graph,selected,source=source,
                          source_tree=_git(root, 'rev-parse', 'HEAD^{tree}'),run_id=int(run),
-                         attempt=attempt,staging=outputs)
+                         attempt=attempt,staging=outputs,junit_root=root)
+    from .actions_junit_evidence import scan_junit_bundle
+    junit_local = (scan_junit_bundle(root,selected['junit_report_dir'])
+                   if selected.get('junit_report_dir') else None)
     # Only the real exported workflow workspace/output staging owns hosted
     # evidence. GitHub's independent pytest runner may call run_node with
     # synthetic temporary repositories; it must never publish those as CI nodes.
@@ -1294,7 +1304,7 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
             and outputs.resolve() == Path(hosted_temp).resolve() / 'rm06-output'):
         write_node_evidence(outputs,job_id,node_evidence)
     return {'status':'LOCAL_JOB_SUCCEEDED', 'node':selected['node'], 'job_id':job_id,
-            'typed_node_evidence':node_evidence,
+            'typed_node_evidence':node_evidence,'local_junit_verification':junit_local,
             'graph_sha256':graph_sha, 'workflow_sha256':hashlib.sha256(workflow_yaml(graph).encode()).hexdigest(), 'github_source':source,'run_id':run,'attempt':attempt,
             'wheel_smoke':smoke,'coverage':coverage,'repeat_build':repeat_build,'node_receipts':node_receipts,'shell_receipts':shell_receipts,'cpp_receipts':cpp_receipts,'jvm_receipts':jvm_receipts,'rust_receipts':rust_receipts,'rust_test_evidence':rust_test_evidence,'uploaded_artifacts_authenticated':False,'release_qualified':False}
 
