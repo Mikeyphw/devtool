@@ -4,6 +4,10 @@ from hashlib import sha256
 from io import BytesIO
 import json
 import unittest
+from unittest.mock import patch
+import subprocess
+
+from devtool.actions_dn03_r8_provenance import _github_json
 from zipfile import ZipFile, ZIP_DEFLATED
 
 from devtool.actions_dn03_r8_provenance import R8Refused, verify
@@ -91,6 +95,48 @@ def fixture():
     }
     by_id={a['id']:records[a['name']] for a in api_artifacts}
     return api,by_id,receipt,seal_receipt
+
+
+
+class R8ApiRouteTests(unittest.TestCase):
+    def test_exact_live_routes_are_admitted(self):
+        base=f'/repos/{REPO}/actions/runs/{RUN}'
+        allowed=(base, base+'/jobs?per_page=100',
+                 base+'/artifacts?per_page=100')
+        with patch('devtool.actions_dn03_r8_provenance.subprocess.run',
+                   return_value=subprocess.CompletedProcess([],0,b'{}',b'')) as call:
+            for route in allowed:
+                self.assertEqual(_github_json(route), {})
+            self.assertEqual(call.call_count,3)
+            self.assertEqual([x.args[0][-1] for x in call.call_args_list],list(allowed))
+
+    def test_unreviewed_routes_and_query_parameters_are_rejected(self):
+        base=f'/repos/{REPO}/actions/runs/{RUN}'
+        invalid=(
+            base+'?per_page=100',
+            base+'/jobs', base+'/artifacts',
+            base+'/jobs?per_page=101', base+'/jobs?per_page=100&foo=bar',
+            base+'/artifacts?per_page=10',
+            base+'/jobs?per_page=100#fragment',
+            base+'/jobs/3?per_page=100',
+            base.replace('/actions/runs/','/actions/workflows/'),
+            base+'/%2e%2e/jobs?per_page=100',
+            base+'/jobs?per_page=100\nX-Injected: true',
+            'https://api.github.com'+base,
+        )
+        with patch('devtool.actions_dn03_r8_provenance.subprocess.run') as call:
+            for route in invalid:
+                with self.subTest(route=route):
+                    with self.assertRaisesRegex(R8Refused, 'unsafe GitHub API route'):
+                        _github_json(route)
+            call.assert_not_called()
+
+    def test_live_route_api_failure_remains_fail_closed(self):
+        base=f'/repos/{REPO}/actions/runs/{RUN}'
+        with patch('devtool.actions_dn03_r8_provenance.subprocess.run',
+                   return_value=subprocess.CompletedProcess([],1,b'',b'not authorized')):
+            with self.assertRaisesRegex(R8Refused, 'authenticated GitHub API request failed'):
+                _github_json(base+'/jobs?per_page=100')
 
 
 class R8Tests(unittest.TestCase):

@@ -46,7 +46,15 @@ def _sha(data: bytes) -> str:
 
 
 def _github_json(route: str) -> dict:
-    _must(route.startswith('/repos/') and '?' not in route, 'unsafe GitHub API route')
+    # Admit only the three routes used by this verifier. The jobs and artifacts
+    # endpoints require explicit pagination; denying '?' makes real hosted R8
+    # verification fail despite the offline dependency-injected tests passing.
+    allowed = re.fullmatch(
+        r'/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[1-9][0-9]*'
+        r'(?:/(?:jobs|artifacts)\?per_page=100)?',
+        route,
+    )
+    _must(allowed is not None, 'unsafe GitHub API route')
     proc = subprocess.run(['gh', 'api', '--method', 'GET', '-H',
                            'Accept: application/vnd.github+json', route],
                           capture_output=True, timeout=35)
