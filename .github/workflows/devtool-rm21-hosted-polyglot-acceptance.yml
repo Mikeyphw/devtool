@@ -1,0 +1,278 @@
+name: Devtool RM21 hosted native Node and JVM acceptance
+
+on:
+  pull_request:
+    paths:
+      - 'devtool/actions_rm21_hosted_native.py'
+      - 'tests/test_rm21_*.py'
+      - 'tests/fixtures/rm21/**'
+      - '.github/workflows/devtool-rm21-hosted-polyglot-acceptance.yml'
+  workflow_dispatch:
+    inputs:
+      external_repository:
+        description: 'Optional DISTINCT public consumer owner/name (blank runs only first-party fixtures)'
+        required: false
+        type: string
+        default: ''
+      external_sha:
+        description: 'Exact 40-char consumer Git SHA (mandatory if external_repository is set)'
+        required: false
+        type: string
+        default: ''
+      external_lane:
+        description: 'External native lane'
+        required: false
+        type: choice
+        options: [node-build, jvm-jar]
+        default: node-build
+      node_project:
+        description: 'Nested Node project directory (repo-relative)'
+        required: false
+        type: string
+        default: web
+      jvm_module:
+        description: 'Selected JVM-only mixed Gradle module'
+        required: false
+        type: string
+        default: ':desktop'
+
+permissions:
+  contents: read
+
+jobs:
+  hosted-fixture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact Devtool workflow source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Test dependencies (source qualification only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install 'setuptools>=75,<82' wheel 'coverage>=7,<9' 'cryptography>=43,<47'
+          python -m pip install -e '.[textual]' pytest pexpect
+      - name: Pure source, archive, and hostile provider regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/rm21
+          python -m pytest -q --junitxml=out/rm21/junit.xml \
+            tests/test_rm21_hosted_native.py \
+            tests/test_rm21_provider_contract.py \
+            tests/test_rm17_generic_polyglot.py \
+            tests/test_rm17_native_integration.py \
+            tests/test_rm15_polyglot_native.py
+      - name: Node 22 runtime
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          check-latest: false
+      - name: Reviewed npm exact manager pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global npm@10.9.4 --ignore-scripts --no-audit --no-fund
+          test "$(npm --version)" = '10.9.4'
+      - name: JDK 21 native compiler
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Gradle 9.1.0 (download on GitHub runner only)
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: '9.1.0'
+      - name: Materialize separate source-committed fixture consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          fixture="$RUNNER_TEMP/rm21-consumer"
+          python tests/fixtures/rm21/prepare.py --dest "$fixture" > out/rm21/consumer-sha.txt
+          sha="$(cat out/rm21/consumer-sha.txt)"
+          test "$(git -C "$fixture" rev-parse HEAD)" = "$sha"
+          printf '%s\n' "$GITHUB_SHA" > out/rm21/devtool-sha.txt
+          echo "RM21_FIXTURE_ROOT=$fixture" >> "$GITHUB_ENV"
+          echo "RM21_FIXTURE_SHA=$sha" >> "$GITHUB_ENV"
+      - name: REAL hosted npm build and RM11 output/manifest receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m devtool.actions_rm21_hosted_native node-build \
+            --root "$RM21_FIXTURE_ROOT" \
+            --consumer-sha "$RM21_FIXTURE_SHA" \
+            --devtool-sha "$GITHUB_SHA" \
+            --node-project web \
+            --receipt out/rm21/node-build.json
+          mkdir -p out/rm21/node-bytes
+          cp "$RM21_FIXTURE_ROOT/web/dist/app.js" "$RM21_FIXTURE_ROOT/web/dist/manifest.json" out/rm21/node-bytes/
+      - name: REAL hosted Gradle JVM-only jar and RM12 output receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m devtool.actions_rm21_hosted_native jvm-jar \
+            --root "$RM21_FIXTURE_ROOT" \
+            --consumer-sha "$RM21_FIXTURE_SHA" \
+            --devtool-sha "$GITHUB_SHA" \
+            --jvm-module ':desktop' \
+            --receipt out/rm21/jvm-jar.json
+          mkdir -p out/rm21/jvm-bytes
+          cp "$RM21_FIXTURE_ROOT"/desktop/build/libs/*.jar out/rm21/jvm-bytes/
+      - name: Verify copied output bytes, source identity and fail-closed evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          out=pathlib.Path('out/rm21')
+          root=pathlib.Path(os.environ['RM21_FIXTURE_ROOT'])
+          sha=os.environ['RM21_FIXTURE_SHA']
+          for lane,folder,project in [
+              ('node-build','node-bytes',root/'web/dist'),
+              ('jvm-jar','jvm-bytes',root/'desktop/build/libs')]:
+              receipt=json.loads((out/(lane+'.json')).read_text())
+              assert receipt['result']=='PASS' and receipt['consumer_commit']==sha
+              assert receipt['devtool_sha']==os.environ['GITHUB_SHA']
+              assert receipt['native_execution_completed'] and receipt['source_pinned']
+              assert not receipt['release_qualified']
+              assert not receipt['independent_consumer_qualified']
+              for entry in receipt['outputs']:
+                  name=pathlib.Path(entry['path']).name
+                  actual=(out/folder/name).read_bytes()
+                  source=(project/name).read_bytes()
+                  assert actual==source
+                  assert hashlib.sha256(actual).hexdigest()==entry['sha256']
+          print('RM21_HOSTED_FIXTURE_OUTPUT_BYTES_VERIFIED')
+          PY
+          (cd out/rm21 && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+      - name: Upload non-release evidence (including exact output bytes)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rm21-hosted-fixture-acceptance
+          path: out/rm21/
+          if-no-files-found: warn
+          retention-days: 14
+
+  independent-consumer:
+    # An explicit exact SHA and repository are mandatory. PR fixtures MUST NOT
+    # silently convert into independent consumer qualification.
+    if: github.event_name == 'workflow_dispatch' && inputs.external_repository != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    steps:
+      - name: Validate external source and lane inputs BEFORE any checkout
+        shell: bash
+        env:
+          CONSUMER_REPO: ${{ inputs.external_repository }}
+          CONSUMER_SHA: ${{ inputs.external_sha }}
+          CONSUMER_LANE: ${{ inputs.external_lane }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os,re
+          repo=os.environ['CONSUMER_REPO']
+          sha=os.environ['CONSUMER_SHA']
+          lane=os.environ['CONSUMER_LANE']
+          assert re.fullmatch(r'[A-Za-z0-9_.-]{1,60}/[A-Za-z0-9_.-]{1,100}',repo)
+          assert repo.lower()!='mikeyphw/devtool'
+          assert re.fullmatch(r'[0-9a-f]{40}',sha)
+          assert lane in ('node-build','jvm-jar')
+          print('RM21_EXPLICIT_EXTERNAL_SHA_PRECHECK_PASS')
+          PY
+      - name: Checkout immutable Devtool source
+        uses: actions/checkout@v6
+        with:
+          path: tool
+          persist-credentials: false
+      - name: Checkout exact external consumer commit (public repository only)
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.external_repository }}
+          ref: ${{ inputs.external_sha }}
+          path: consumer
+          persist-credentials: false
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install Devtool runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install 'setuptools>=75,<82' wheel 'coverage>=7,<9' 'cryptography>=43,<47'
+          python -m pip install -e ./tool\[textual\] pytest pexpect
+      - name: Node 22 (if selected)
+        if: inputs.external_lane == 'node-build'
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          check-latest: false
+      - name: Install exact committed npm manager (if selected)
+        if: inputs.external_lane == 'node-build'
+        shell: bash
+        env:
+          NODE_PROJECT: ${{ inputs.node_project }}
+        run: |
+          set -euo pipefail
+          version="$(python - <<'PY'
+          import json,os,pathlib,re
+          p=os.environ['NODE_PROJECT']
+          assert re.fullmatch(r'(?:[A-Za-z0-9_.-]+/){0,7}[A-Za-z0-9_.-]+',p) and '..' not in p.split('/')
+          value=json.loads((pathlib.Path('consumer')/p/'package.json').read_text())['packageManager']
+          assert re.fullmatch(r'npm@[1-9][0-9]?\.[0-9]+\.[0-9]+',value)
+          print(value.split('@',1)[1])
+          PY
+          )"
+          npm install --global "npm@$version" --ignore-scripts --no-audit --no-fund
+      - name: JDK 21 (if selected)
+        if: inputs.external_lane == 'jvm-jar'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Gradle 9.1.0 (if selected)
+        if: inputs.external_lane == 'jvm-jar'
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: '9.1.0'
+      - name: Native exact-SHA external consumer acceptance (no release)
+        shell: bash
+        env:
+          CONSUMER_REPO: ${{ inputs.external_repository }}
+          CONSUMER_SHA: ${{ inputs.external_sha }}
+          CONSUMER_LANE: ${{ inputs.external_lane }}
+          NODE_PROJECT: ${{ inputs.node_project }}
+          JVM_MODULE: ${{ inputs.jvm_module }}
+        run: |
+          set -euo pipefail
+          mkdir -p out/rm21-external
+          tool_sha="$(git -C tool rev-parse HEAD)"
+          test "$tool_sha" = "$GITHUB_SHA"
+          test "$(git -C consumer rev-parse HEAD)" = "$CONSUMER_SHA"
+          PYTHONPATH="$GITHUB_WORKSPACE/tool" python -m devtool.actions_rm21_hosted_native "$CONSUMER_LANE" \
+            --root consumer \
+            --consumer-sha "$CONSUMER_SHA" \
+            --devtool-sha "$tool_sha" \
+            --external-repository "$CONSUMER_REPO" \
+            --node-project "$NODE_PROJECT" \
+            --jvm-module "$JVM_MODULE" \
+            --receipt "out/rm21-external/$CONSUMER_LANE.json"
+          printf '%s\n' "$GITHUB_SHA" > out/rm21-external/devtool-sha.txt
+          printf '%s\n' "$CONSUMER_SHA" > out/rm21-external/consumer-sha.txt
+          (cd out/rm21-external && sha256sum *.json *-sha.txt > SHA256SUMS)
+      - name: Upload independent consumer non-release qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rm21-external-consumer-acceptance
+          path: out/rm21-external/
+          if-no-files-found: warn
+          retention-days: 14

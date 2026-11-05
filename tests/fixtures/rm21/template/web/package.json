@@ -1,0 +1,7 @@
+{
+  "name": "rm21-hosted-node-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "npm@10.9.4",
+  "scripts": { "build": "node scripts/build.mjs" }
+}
