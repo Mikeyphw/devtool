@@ -1,0 +1,50 @@
+name: Devtool portable .NET evidence source qualification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'devtool/actions_ci_qualification.py'
+      - 'tests/test_actions_ci_qualification.py'
+      - '.github/workflows/devtool-portable-ci-qualification.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'devtool/actions_ci_qualification.py'
+      - 'tests/test_actions_ci_qualification.py'
+      - '.github/workflows/devtool-portable-ci-qualification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portable_evidence_source:
+    name: Devtool portable CI verifier / ${{ matrix.host }}
+    runs-on: ${{ matrix.host }}
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [ubuntu-24.04, windows-2022]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact Devtool commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Pinned Python 3.13
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+          check-latest: false
+      - name: Run positive and negative CI evidence source regressions
+        shell: pwsh
+        run: |
+          if ((git rev-parse HEAD).Trim() -ne $env:GITHUB_SHA) {
+            throw 'Devtool source SHA mismatch'
+          }
+          python -B tests/test_actions_ci_qualification.py
+          if ($LASTEXITCODE -ne 0) { throw 'Devtool source regressions failed' }
+          python -B devtool/actions_ci_qualification.py --help
+          if ($LASTEXITCODE -ne 0) { throw 'Devtool CLI failed' }
+          Write-Output 'DEVTOOL_PORTABLE_CI_SOURCE_PASS'
