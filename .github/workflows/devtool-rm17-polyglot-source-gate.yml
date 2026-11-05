@@ -1,0 +1,59 @@
+name: Devtool RM17 generic polyglot source qualification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'devtool/actions_rm11_node.py'
+      - 'devtool/actions_rm12_jvm.py'
+      - 'devtool/actions_rm17_source_review.py'
+      - 'devtool/actions_language_providers.py'
+      - 'devtool/actions_graph_export.py'
+      - 'tests/test_rm17_*.py'
+      - '.github/workflows/devtool-rm17-polyglot-source-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  rm17-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Exact GitHub source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Python 3.13 for static provider qualification
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install pinned-range Devtool regression dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install 'setuptools>=75,<82' wheel 'coverage>=7,<9' 'cryptography>=43,<47'
+          python -m pip install -e '.[textual]' pytest pexpect
+      - name: Provider, DAG and hostile source fixtures (no local Gradle build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/rm17
+          python -m pytest -q --junitxml=out/rm17/junit.xml \
+            tests/test_rm17_generic_polyglot.py \
+            tests/test_rm17_native_integration.py \
+            tests/test_rm11_node.py \
+            tests/test_rm12_jvm.py \
+            tests/test_rm15_polyglot_native.py \
+            tests/test_next03_language_providers.py \
+            tests/test_rm06_graph_export.py
+          printf '%s\n' "$GITHUB_SHA" > out/rm17/source-sha.txt
+          (cd out/rm17 && sha256sum junit.xml source-sha.txt > SHA256SUMS)
+      - name: Upload non-release source qualification
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rm17-source-qualification
+          path: out/rm17/
+          if-no-files-found: warn
+          retention-days: 14

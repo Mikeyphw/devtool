@@ -252,6 +252,12 @@ def _mixed_gradle(root:Path,selected:str)->dict[str,Any]:
         try:identity,reason=gradle_identity(root,build,tracked)
         except GradleIdentityError as exc:
             raise JvmError('RM-12 mixed Gradle plugin identity: '+str(exc)) from exc
+        if identity=='review':
+            from .actions_rm17_source_review import review_jvm_conventions,SourceReviewError
+            try:convention=review_jvm_conventions(root,build,tracked)
+            except SourceReviewError as exc:raise JvmError(str(exc)) from None
+            sources.update(convention['source_sha256'])
+            identity=convention['identity']
         if identity!='jvm':
             raise JvmError('RM-12 mixed dependency requires known JVM plugin: '+reason)
         if re.search(r'\b(exec|Exec|ProcessBuilder|Runtime\.getRuntime|apply\s+from|evaluate|afterEvaluate)\b',body):
