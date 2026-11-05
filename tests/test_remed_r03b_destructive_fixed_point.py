@@ -82,6 +82,10 @@ CLASSIFIED_FILES: dict[str, str] = {
 # removed destructive call requires fresh review, without freezing unrelated
 # lines or resurrecting historical source SHA assertions.
 NEW_REVIEWED_DESTRUCTIVE_CALLS: dict[str, tuple[str, ...]] = {
+ 'devtool/actions_dn03_dotnet.py': ('path.unlink(missing_ok=True)',),
+ 'devtool/actions_dn03_r3.py': ('path.unlink(missing_ok=True)',),
+ 'devtool/actions_dn03_r4.py': ('path.unlink(missing_ok=True)',),
+ 'devtool/dn03_runtime_only.py': ('archive.unlink(missing_ok=True)', 'shutil.rmtree(stage)'),
  'devtool/go_output_spool.py': ('os.unlink(filename)', 'self._path.unlink(missing_ok=True)'),'devtool/actions_adoption.py': ('os.unlink(temp)', 'file.unlink()'),
  'devtool/actions_r37_mmrl_device.py': ('path.unlink()',),
  'devtool/actions_graph_export.py': ('item.unlink(missing_ok=True)',),
@@ -113,6 +117,10 @@ NEW_REVIEWED_DESTRUCTIVE_CALLS: dict[str, tuple[str, ...]] = {
                                'if os.path.exists(name): os.unlink(name)')}
 
 NEW_REVIEWED_RATIONALES: dict[str, str] = {
+ 'devtool/actions_dn03_dotnet.py': 'DN03 export creates absent workflow and receipt paths with exclusive creation and attempts to unlink only files created during this operation when rollback is necessary; this is a classification, not proof of race-free deletion or general GC authority.',
+ 'devtool/actions_dn03_r3.py': 'DN03-R3 native export removes only paths listed in its own create-only output ledger on failed source-identity or generation checks; not permission to remove unrelated user or artifact state.',
+ 'devtool/actions_dn03_r4.py': 'DN03-R4 generated workflow and evidence rollback removes only paths the current operation successfully created after an absence check, not arbitrary files or history.',
+ 'devtool/dn03_runtime_only.py': 'Pinned .NET 6 runtime fetch removes its newly allocated failed archive download; install cleanup removes only its fresh, private PID-scoped staging directory after refusing an existing stage and symlink. A pathname-swap race still warrants hardening and is not waived by this inventory.',
  'devtool/go_output_spool.py': 'Go test stdout transport owns a private mkstemp file (0600), removes the exclusive pathname if initial setup fails, and unlinks only its own spool after the producer has stopped and both file descriptors close. This does not authorize repository, run, log or consumer-evidence cleanup.','devtool/actions_adoption.py': 'Exclusive atomic staging unlink plus rollback only for workflow bytes just created '
                                 'and verified against the attempted payload; not cleanup by name.',
  'devtool/actions_r37_mmrl_device.py': 'R37 MMRL OfficialDebug smoke stages exclusively absent APK output paths and cleans only its own staged files when not symlinks and with matching SHA-256. The check-and-unlink is not inode-atomic: this classification records a reviewed callsite, not authorization for arbitrary deletion or device/release qualification.',

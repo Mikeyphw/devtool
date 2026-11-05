@@ -42,6 +42,38 @@ def test_compiles_graph_edges_and_independent_siblings(tmp_path):
     assert '    needs: [' not in workflow_yaml(plan)
 
 
+
+def _rm06_job_env_blocks(workflow_text: str) -> list[str]:
+    """Extract only jobs.<job_id>.env; ignore steps[].env and script bodies.
+
+    A job's env is exactly four-space indented in our generated YAML. A
+    subordinate step env has deeper indentation and must not be mistaken for
+    an invalid pre-runner expression. This is intentionally conservative.
+    """
+    lines = workflow_text.splitlines()
+    blocks: list[str] = []
+    for index, line in enumerate(lines):
+        if line != '    env:':
+            continue
+        items = []
+        for value in lines[index + 1:]:
+            if value.strip() and len(value) - len(value.lstrip(' ')) <= 4:
+                break
+            items.append(value)
+        blocks.append('\n'.join(items))
+    return blocks
+
+
+def test_rm06_job_level_expression_checker_is_context_accurate():
+    # A step can use runner.temp, while jobs.<job_id>.env cannot.
+    good = ("jobs:\n  node-01:\n    env:\n      PIN: 'x'\n    steps:\n"
+            "      - name: use runner context\n        env:\n          STORE: ${{ runner.temp }}\n")
+    assert len(_rm06_job_env_blocks(good)) == 1
+    assert all('${{ runner.' not in block for block in _rm06_job_env_blocks(good))
+    bad = good.replace("      PIN: 'x'", '      PIN: ${{ runner.temp }}')
+    assert any('${{ runner.' in block for block in _rm06_job_env_blocks(bad))
+
+
 def test_generated_job_env_is_valid_before_runner_allocation(tmp_path):
     """GitHub rejects runner.temp in jobs.<job_id>.env before any jobs start."""
     root, graph = compile_fixture(tmp_path)
@@ -53,8 +85,9 @@ def test_generated_job_env_is_valid_before_runner_allocation(tmp_path):
     assert yaml.count('>> "$GITHUB_ENV"') == 2 * len(graph['jobs'])
     assert 'NUGET_PACKAGES: ${{ runner.temp }}' not in yaml
     assert 'PIP_CACHE_DIR: ${{ runner.temp }}' not in yaml
-    for chunk in yaml.split('    env:\n')[1:]:
-        job_env = chunk.split('    steps:\n', 1)[0]
+    job_envs = _rm06_job_env_blocks(yaml)
+    assert len(job_envs) == len(graph['jobs'])
+    for job_env in job_envs:
         assert '${{ runner.' not in job_env
     assert '    needs: [node-01]' in yaml
 
