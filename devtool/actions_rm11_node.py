@@ -90,8 +90,14 @@ def _script(s:str,kind:str)->None:
         raise NodeError('RM-11 arbitrary/unreviewed package-script injection refused: '+kind)
 
 
-def node_workspace(root:Path, *, manager_selection:str='')->dict[str,Any]:
-    root=root.resolve();tracked=_git_names(root)
+def node_workspace(root:Path, *, manager_selection:str='', script_policy:str='strict', repository_root:Path|None=None)->dict[str,Any]:
+    if script_policy not in ('strict','reviewed-composite'):
+        raise NodeError('RM17 unsupported reviewed npm script policy')
+    root=root.resolve()
+    repository_root=Path(repository_root).resolve() if repository_root is not None else root
+    if not root.is_relative_to(repository_root):
+        raise NodeError('RM17 workspace root escapes consumer repository')
+    tracked=_git_names(root)
     if len(tracked)>25000 or 'package.json' not in tracked:raise NodeError('RM-11 requires tracked root package.json')
     top=_json(root,'package.json',tracked)
     value=top.get('packageManager','')
@@ -163,10 +169,11 @@ def node_workspace(root:Path, *, manager_selection:str='')->dict[str,Any]:
         # Dependency install is --ignore-scripts, but fail if install lifecycle hooks exist.
         if set(scripts)&{'preinstall','install','postinstall','prepare','prepublish','prepack','postpack',*(f'{prefix}{kind}' for prefix in ('pre','post') for kind in SCRIPTS)}:
             raise NodeError('RM-11 executable install/pack hook refused')
-        for kind in set(scripts)&set(SCRIPTS):_script(scripts[kind],kind)
+        if script_policy=='strict':
+            for kind in set(scripts)&set(SCRIPTS):_script(scripts[kind],kind)
         if any(not isinstance(k,str) or len(k)>80 for k in scripts):
             raise NodeError('RM-11 unsafe script name')
-        pkgs[path]={'name':pkgname,'version':manifest.get('version',''),'scripts':{k:scripts[k] for k in SCRIPTS if k in scripts},
+        pkgs[path]={'name':pkgname,'version':manifest.get('version',''),'scripts':(dict(scripts) if script_policy=='reviewed-composite' else {k:scripts[k] for k in SCRIPTS if k in scripts}),
                     'dependencies':{field:manifest.get(field,{}) for field in ('dependencies','devDependencies','optionalDependencies','peerDependencies')},
                     'path':path}
         if path:source_files.append(name)
@@ -213,11 +220,20 @@ def node_workspace(root:Path, *, manager_selection:str='')->dict[str,Any]:
     if manager=='bun':
         if any((path or '') not in row['packages'] for path in pkgs):
             raise NodeError('RM-11 bun lock workspace mismatch')
+    composite=None
+    if script_policy=='reviewed-composite':
+        from .actions_rm17_source_review import review_node_pipeline,SourceReviewError
+        try:composite=review_node_pipeline(repository_root,root,pkgs,manager=manager)
+        except SourceReviewError as exc:raise NodeError(str(exc)) from None
     hashes={p:hashlib.sha256(_bytes(root,p,tracked)).hexdigest() for p in sorted(source_files)}
+    if composite:
+        hashes.update({'@repo/'+p:v for p,v in composite['source_sha256'].items()})
     digest=hashlib.sha256(json.dumps(hashes,sort_keys=True).encode()).hexdigest()
     return {'manager':manager,'manager_version':manager_version,'lockfile':expected,'lock_sha256':hashes[expected],
             'packages':pkgs,'names':names,'edges':graph,'topological_paths':ordered,'source_sha256':hashes,
-            'source_digest':digest,'source_files':sorted(source_files),'execution_performed':False}
+            'source_digest':digest,'source_files':sorted(source_files),
+            'script_policy':script_policy,'repo_script_sources':([] if not composite else composite['repo_script_sources']),
+            'composite_review':composite,'execution_performed':False}
 
 
 def affected_packages(workspace:dict, changed_paths:list[str])->list[str]:
@@ -253,6 +269,10 @@ def inspect_node_job(root:Path,argv:list[str],metadata:dict)->dict:
     manager=argv[0]
     if manager not in MANAGERS:raise NodeError('RM-11 direct npm/pnpm/yarn/bun command required')
     project_dir=metadata.get('ci_node_project_dir','')
+    script_policy=metadata.get('ci_node_script_policy','strict')
+    python_version=metadata.get('ci_python_version','3.12')
+    if script_policy not in ('strict','reviewed-composite') or python_version not in ('3.12','3.13'):
+        raise NodeError('RM17 unreviewed npm script policy or Python toolchain')
     if not isinstance(project_dir,str) or (project_dir and
             (len(project_dir)>160 or not _safe_path(project_dir))):
         raise NodeError('RM-11 nested project must be a bounded relative source path')
@@ -264,7 +284,7 @@ def inspect_node_job(root:Path,argv:list[str],metadata:dict)->dict:
                 raise NodeError('RM-11 nested project path contains symlink')
         if not project.is_dir():
             raise NodeError('RM-11 nested project directory is missing')
-    ws=node_workspace(project,manager_selection=manager)
+    ws=node_workspace(project,manager_selection=manager,script_policy=script_policy,repository_root=root)
     # Source review is rooted at the consumer repository, not an embedded
     # Git repository or a submodule that could have separate checkout state.
     tracked_root=_git_names(root)
@@ -304,6 +324,7 @@ def inspect_node_job(root:Path,argv:list[str],metadata:dict)->dict:
     return {'provider':'node','toolchain':'node','version':node,'matrix_versions':versions,
             'version_source':'ci_node_version','workspace':ws,'manager':manager,
             'manager_version':ws['manager_version'],'project_dir':project_dir,'lockfiles':ws['source_files'],
+            'script_policy':script_policy,'repo_script_sources':ws['repo_script_sources'],'python_version':python_version,
             'kind':kind,'package_path':path,'package_name':ws['packages'][path]['name'],
             'script':script,'shard':shard,
             'report_adapter':'js-junit' if kind=='test' else 'none',

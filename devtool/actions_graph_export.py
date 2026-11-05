@@ -221,6 +221,8 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                          'node_package_path':row['provider'].get('package_path',''),
                          'node_workspace':row['provider'].get('workspace') if row['provider']['provider']=='node' else None,
                          'node_project_dir':row['provider'].get('project_dir','') if row['provider']['provider']=='node' else '',
+                         'node_script_policy':row['provider'].get('script_policy','strict'),
+                         'node_python_version':row['provider'].get('python_version','3.12'),
                          'node_base_argv':list(row['command']) if row['provider']['provider']=='node' else [],
                          'dotnet_command':row['provider'].get('command',''),
                          'dotnet_selected':row['provider'].get('selected',''),
@@ -617,7 +619,7 @@ def workflow_yaml(graph: dict[str, Any]) -> str:
                '          printf "PIP_CACHE_DIR=%s\\n" "$RUNNER_TEMP/devtool-python-wheel-store" >> "$GITHUB_ENV"\n'
                '      - name: Pinned Python interpreter\n'
                f'        uses: actions/setup-python@{SETUP_PYTHON_SHA}\n'
-               f"        with:\n          python-version: '{job["toolchain_version"] if job["provider"]=="python-shell" else "3.12"}'\n"
+               f"        with:\n          python-version: '{job["toolchain_version"] if job["provider"]=="python-shell" else (job["node_python_version"] if job["provider"]=="node" else "3.12")}'\n"
                f'{setup_go}{android_setup}{dotnet_setup}{dotnet_legacy_setup}{node_setup}{bun_setup}{node_manager_setup}{rust_setup}{jvm_setup}{shell_setup}{cpp_setup}{cache_step}{py_verify}'
                '      - name: Acquire immutable Devtool runtime\n'
                '        shell: bash\n        run: |\n'
@@ -940,7 +942,8 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
             if not project.is_dir() or not project.resolve().is_relative_to(root):
                 raise ProviderError('RM-11 nested source root escaped checkout')
         specs=[replace(specs[0],cwd=str(project))]
-        try:ws=node_workspace(project,manager_selection=selected['node_manager'])
+        try:ws=node_workspace(project,manager_selection=selected['node_manager'],
+                              script_policy=selected['node_script_policy'],repository_root=root)
         except NodeError as exc:raise ProviderError(str(exc)) from None
         if ws['source_digest']!=selected['node_workspace']['source_digest']:
             raise ProviderError('RM-11 manager source drift before installation')

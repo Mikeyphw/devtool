@@ -721,6 +721,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         if len(owned)!=1 or owned[0]['kind']!='wheel' or len(owned[0]['entrypoints'])!=1:
             raise ProviderError('RM-08 wheel smoke requires one owned wheel and one reviewed console entrypoint')
     tracked_sources = ['.devtool.toml'] + sorted({(row['provider'].get('project_dir','')+'/' if row['provider']['provider']=='node' and row['provider'].get('project_dir') else '')+p for row in rows for p in row['provider']['lockfiles']})
+    tracked_sources += sorted({p for row in rows if row['provider']['provider']=='node' for p in row['provider'].get('repo_script_sources',[])})
     if distribution:
         tracked_sources += [CONTRACT_PATH,'pyproject.toml'] if any(e['kind']!='go' for e in (r['expected'] for r in distribution['entries'])) else [CONTRACT_PATH]
     source_digests = {p: hashlib.sha256((root / p).read_bytes()).hexdigest()
