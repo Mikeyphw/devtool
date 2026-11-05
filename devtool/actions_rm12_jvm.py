@@ -204,11 +204,96 @@ def _gradle(root:Path) -> dict[str,Any]:
     return {'manager':'gradle','modules':modules,'edges':edges,'order':order,'source_sha256':sources}
 
 
-def jvm_project(root:Path,*,manager:str) -> dict[str,Any]:
+
+def _mixed_gradle(root:Path,selected:str)->dict[str,Any]:
+    """Review only a JVM dependency closure inside a mixed Android/JVM Gradle tree.
+
+    This opt-in source inspection never runs Gradle or executes plugin code.
+    All settings/module/lock inputs remain Git-tracked and source-bound.
+    """
+    if not re.fullmatch(r':[A-Za-z][A-Za-z0-9_-]*(?::[A-Za-z][A-Za-z0-9_-]*)*', selected):
+        raise JvmError('RM-12 mixed JVM selection must be literal Gradle module')
+    setting=next((s for s in ('settings.gradle.kts','settings.gradle') if (root/s).is_file()),None)
+    if not setting:raise JvmError('RM-12 mixed Gradle settings missing')
+    data=_source(root,setting)
+    sources={setting:hashlib.sha256(data).hexdigest()}
+    text=re.sub(r'(?m)^\s*//[^\n]*$', '', _decode(data))
+    calls=list(re.finditer(r'\binclude\s*\(([^()]*)\)',text,re.S))
+    if not calls or len(calls)!=len(re.findall(r'\binclude\s*\(',text)):
+        raise JvmError('RM-12 dynamic mixed Gradle include refused')
+    item=re.compile(r"[\"'](:[A-Za-z][A-Za-z0-9_-]*(?::[A-Za-z][A-Za-z0-9_-]*)*)[\"']\Z")
+    members=set()
+    for call in calls:
+        tokens=[x.strip() for x in call.group(1).strip().strip(',').split(',')]
+        if not tokens or any(item.fullmatch(x) is None for x in tokens):
+            raise JvmError('RM-12 mixed Gradle include requires literal module names')
+        for value in tokens:
+            name=item.fullmatch(value).group(1)
+            if name in members:raise JvmError('RM-12 duplicate mixed Gradle module')
+            members.add(name)
+    if selected not in members or len(members)>128:
+        raise JvmError('RM-12 selected module missing or inventory unbounded')
+    tracked=set(subprocess.check_output(['git','-C',str(root),'ls-files','-z'],
+                  timeout=10).decode().strip('\0').split('\0'))
+    modules={};edges={}
+    def visit(module:str)->None:
+        if module in modules:return
+        if module not in members or len(modules)>=24:
+            raise JvmError('RM-12 mixed JVM dependency not reviewed or too many modules')
+        directory=module[1:].replace(':','/')
+        build=next((p for p in (directory+'/build.gradle.kts',directory+'/build.gradle')
+                    if (root/p).is_file()),None)
+        if build is None:raise JvmError('RM-12 mixed JVM module build script missing')
+        blob=_source(root,build)
+        body=_decode(blob)
+        sources[build]=hashlib.sha256(blob).hexdigest()
+        if _ANDROID.search(body):
+            raise JvmError('RM-12 Android plugin inside selected JVM dependency closure')
+        try:identity,reason=gradle_identity(root,build,tracked)
+        except GradleIdentityError as exc:
+            raise JvmError('RM-12 mixed Gradle plugin identity: '+str(exc)) from exc
+        if identity!='jvm':
+            raise JvmError('RM-12 mixed dependency requires known JVM plugin: '+reason)
+        if re.search(r'\b(exec|Exec|ProcessBuilder|Runtime\.getRuntime|apply\s+from|evaluate|afterEvaluate)\b',body):
+            raise JvmError('RM-12 mixed JVM dynamic execution refused')
+        pins=re.findall(r'(?:JavaLanguageVersion\.of|jvmToolchain)\(\s*([0-9]+)\s*\)',body)
+        if len(set(pins))>1 or any(p not in _VERSIONS for p in pins):
+            raise JvmError('RM-12 incompatible JVM toolchain pin')
+        refs=re.findall(r"project\(\s*[\"'](:[A-Za-z][A-Za-z0-9_:-]+)[\"']\s*\)",body)
+        if re.search(r"project\(\s*[^\"']",body):
+            raise JvmError('RM-12 dynamic mixed Gradle project dependency refused')
+        deps=sorted(set(refs))
+        modules[module]={'path':build,'directory':directory,'depends':deps,
+                         'packaging':'jar','jdk_pin':pins[0] if pins else ''}
+        edges[module]=deps
+        for dep in deps:visit(dep)
+    visit(selected)
+    order=_graph(modules,edges)
+    catalog='gradle/libs.versions.toml'
+    if (root/catalog).is_file():
+        blob=_source(root,catalog)
+        try:tomllib.loads(_decode(blob))
+        except (ValueError,UnicodeError):
+            raise JvmError('RM-12 malformed mixed Gradle version catalog') from None
+        sources[catalog]=hashlib.sha256(blob).hexdigest()
+    for build in ('build.gradle.kts','build.gradle'):
+        if (root/build).is_file():
+            sources[build]=hashlib.sha256(_source(root,build)).hexdigest()
+            break
+    locks=[p for p in ('gradle.lockfile','gradle/dependency-locks/runtimeClasspath.lockfile',
+                       'gradle/verification-metadata.xml') if (root/p).is_file()]
+    if not locks:raise JvmError('RM-12 mixed Gradle requires checked-in dependency verification')
+    for lock in locks:sources[lock]=hashlib.sha256(_source(root,lock)).hexdigest()
+    return {'manager':'gradle','modules':modules,'edges':edges,'order':order,
+            'source_sha256':sources,'mixed_module':selected}
+
+
+def jvm_project(root:Path,*,manager:str,mixed_module:str='') -> dict[str,Any]:
     if manager not in ('maven','gradle'):raise JvmError('RM-12 unknown JVM manager')
     if (root/'pom.xml').is_file() and any((root/p).is_file() for p in ('settings.gradle','settings.gradle.kts')):
         raise JvmError('RM-12 ambiguous Maven/Gradle project: choose separate reviewed roots')
-    project=_maven(root) if manager=='maven' else _gradle(root)
+    if mixed_module and manager!='gradle':raise JvmError('RM-12 mixed modules require Gradle')
+    project=_mixed_gradle(root,mixed_module) if mixed_module else (_maven(root) if manager=='maven' else _gradle(root))
     files=project['source_sha256']
     project.update({'source_files':sorted(files),'source_digest':_digest(files),'read_only':True})
     return project
@@ -219,7 +304,10 @@ def inspect_jvm_job(root:Path,argv:list[str],meta:dict[str,Any]) -> dict[str,Any
         raise JvmError('RM-12 requires literal JVM command')
     manager='maven' if argv[0]=='mvn' else 'gradle' if argv[0]=='gradle' else ''
     if not manager:raise JvmError('RM-12 only direct mvn/gradle commands allowed')
-    project=jvm_project(root,manager=manager)
+    mixed_module=meta.get('ci_jvm_mixed_module','')
+    if not isinstance(mixed_module,str) or (mixed_module and not re.fullmatch(r':[A-Za-z][A-Za-z0-9_-]*(?::[A-Za-z][A-Za-z0-9_-]*)*',mixed_module)):
+        raise JvmError('RM-12 invalid mixed JVM module selector')
+    project=jvm_project(root,manager=manager,mixed_module=mixed_module)
     jdk=meta.get('ci_jdk_version')
     matrix=meta.get('ci_jdk_versions',jdk)
     if jdk not in _VERSIONS or not isinstance(matrix,str):raise JvmError('RM-12 requires reviewed JDK version 17, 21 or 25')
@@ -251,6 +339,8 @@ def inspect_jvm_job(root:Path,argv:list[str],meta:dict[str,Any]) -> dict[str,Any
         op=argv[4].rsplit(':',1)[-1];operation={'check':'test','assemble':'package','jar':'package'}.get(op,op)
         selected=argv[4].rsplit(':',1)[0] or ':'
         if selected not in project['modules']:raise JvmError('RM-12 unknown Gradle project task')
+        if mixed_module and selected!=mixed_module:
+            raise JvmError('RM-12 mixed module task disagrees with configured selection')
         project_pin=project['modules'][selected]['jdk_pin']
         if project_pin and int(jdk)<int(project_pin):
             raise JvmError('RM-12 JDK older than Gradle toolchain requirement')
@@ -260,7 +350,7 @@ def inspect_jvm_job(root:Path,argv:list[str],meta:dict[str,Any]) -> dict[str,Any
     if not isinstance(tool_version,str) or not re.fullmatch(grammar,tool_version):
         raise JvmError('RM-12 exact reviewed Maven/Gradle tool version required')
     return {'provider':'jvm','manager':manager,'api_version':1,'toolchain':'java','version':jdk,'matrix_versions':versions,'tool_version':tool_version,
-            'version_source':'native-job-ci_jdk_version','lockfiles':project['source_files'],
+            'version_source':'native-job-ci_jdk_version','mixed_module':mixed_module,'lockfiles':project['source_files'],
             'project':project,'selected':selected,'command':operation,'cache_enabled':False,
             'output_role':'local-bytes-only','report_adapter':'junit-xml','release_qualified':False}
 

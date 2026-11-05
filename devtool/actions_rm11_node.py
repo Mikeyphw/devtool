@@ -252,7 +252,25 @@ def inspect_node_job(root:Path,argv:list[str],metadata:dict)->dict:
         raise NodeError('RM-11 bounded direct manager argv required')
     manager=argv[0]
     if manager not in MANAGERS:raise NodeError('RM-11 direct npm/pnpm/yarn/bun command required')
-    ws=node_workspace(root,manager_selection=manager)
+    project_dir=metadata.get('ci_node_project_dir','')
+    if not isinstance(project_dir,str) or (project_dir and
+            (len(project_dir)>160 or not _safe_path(project_dir))):
+        raise NodeError('RM-11 nested project must be a bounded relative source path')
+    project=root
+    if project_dir:
+        for part in project_dir.split('/'):
+            project=project/part
+            if project.is_symlink():
+                raise NodeError('RM-11 nested project path contains symlink')
+        if not project.is_dir():
+            raise NodeError('RM-11 nested project directory is missing')
+    ws=node_workspace(project,manager_selection=manager)
+    # Source review is rooted at the consumer repository, not an embedded
+    # Git repository or a submodule that could have separate checkout state.
+    tracked_root=_git_names(root)
+    prefix=project_dir+'/' if project_dir else ''
+    if any(prefix+rel not in tracked_root for rel in ws['source_files']):
+        raise NodeError('RM-11 nested project sources are not tracked by the consumer root')
     # One reviewed script by root/workspace name, never raw script text from configuration.
     kind='';path=''
     if len(argv)==3 and argv[1]=='run':kind=argv[2]
@@ -285,7 +303,7 @@ def inspect_node_job(root:Path,argv:list[str],metadata:dict)->dict:
     # No scripts may get implicit build/test outputs from arbitrary locations.
     return {'provider':'node','toolchain':'node','version':node,'matrix_versions':versions,
             'version_source':'ci_node_version','workspace':ws,'manager':manager,
-            'manager_version':ws['manager_version'],'lockfiles':ws['source_files'],
+            'manager_version':ws['manager_version'],'project_dir':project_dir,'lockfiles':ws['source_files'],
             'kind':kind,'package_path':path,'package_name':ws['packages'][path]['name'],
             'script':script,'shard':shard,
             'report_adapter':'js-junit' if kind=='test' else 'none',
