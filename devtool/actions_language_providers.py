@@ -534,17 +534,19 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         if declaration['provider']=='node':
             kind=declaration['kind']
             outs=list(job.outputs)
+            folder=declaration.get('project_dir','')
+            prefix=folder+'/' if folder else ''
             if kind=='test':
                 want=('dist/test-results/shard-'+declaration['shard'].split('/')[0].zfill(2)+'.xml' if declaration['shard'] else
                       'dist/test-results.json' if declaration['script'].startswith('jest ') else 'dist/test-results.xml')
-                if outs!=[want]:raise ProviderError('RM-11 JS test must own exact JUnit/Jest output')
+                if outs!=[prefix+want]:raise ProviderError('RM-11 JS test must own exact JUnit/Jest output')
             elif kind in ('typecheck','lint'):
                 if outs:raise ProviderError('RM-11 typecheck/lint cannot claim generated outputs')
             elif kind=='build':
-                if not outs or len(outs)>32 or any(not x.startswith('dist/') for x in outs):
+                if not outs or len(outs)>32 or any(not x.startswith(prefix+'dist/') for x in outs):
                     raise ProviderError('RM-11 build needs bounded dist/ output files')
             elif kind=='pack':
-                if len(outs)!=1 or not outs[0].startswith('dist/') or not outs[0].endswith('.tgz'):
+                if len(outs)!=1 or not outs[0].startswith(prefix+'dist/') or not outs[0].endswith('.tgz'):
                     raise ProviderError('RM-11 package requires exact dist/*.tgz output')
         if declaration['provider']=='rust-cargo':
             if declaration['command']=='package':
@@ -718,7 +720,7 @@ def provider_plan(root: Path, *, target: str, workflow: str, devtool_sha: str,
         owned=[d['expected'] for d in distribution['entries'] if d['expected']['path'] in row['outputs']]
         if len(owned)!=1 or owned[0]['kind']!='wheel' or len(owned[0]['entrypoints'])!=1:
             raise ProviderError('RM-08 wheel smoke requires one owned wheel and one reviewed console entrypoint')
-    tracked_sources = ['.devtool.toml'] + sorted({p for row in rows for p in row['provider']['lockfiles']})
+    tracked_sources = ['.devtool.toml'] + sorted({(row['provider'].get('project_dir','')+'/' if row['provider']['provider']=='node' and row['provider'].get('project_dir') else '')+p for row in rows for p in row['provider']['lockfiles']})
     if distribution:
         tracked_sources += [CONTRACT_PATH,'pyproject.toml'] if any(e['kind']!='go' for e in (r['expected'] for r in distribution['entries'])) else [CONTRACT_PATH]
     source_digests = {p: hashlib.sha256((root / p).read_bytes()).hexdigest()

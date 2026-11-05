@@ -1,0 +1,45 @@
+name: Devtool RM15 strict regression qualification
+
+on:
+  pull_request:
+    paths:
+      - 'devtool/roadmap_gate_audit.py'
+      - 'devtool/actions_graph_export.py'
+      - 'tests/test_remed_r03b_destructive_fixed_point.py'
+      - 'tests/test_rm06_graph_export.py'
+      - 'tests/test_rm15_hf01_regression.py'
+      - '.github/workflows/devtool-rm15-regression-source-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rm15-strict-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install test runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install 'setuptools>=75,<82' wheel 'coverage>=7,<9' 'cryptography>=43,<47'
+          python -m pip install -e '.[textual]' pytest pexpect
+      - name: Verify exact source-bound audit regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_r39_r4_roadmap_gate_audit.py \
+            tests/test_remed_r03b_destructive_fixed_point.py \
+            tests/test_rm06_graph_export.py \
+            tests/test_rm15_hf01_regression.py \
+            tests/test_rm15_polyglot_native.py \
+            tests/test_rm15_archive_provenance.py

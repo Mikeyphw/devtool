@@ -33,6 +33,7 @@ _PINNED_NODE24 = {
     'actions/checkout': 'd23441a48e516b6c34aea4fa41551a30e30af803',
     'actions/setup-python': 'ece7cb06caefa5fff74198d8649806c4678c61a1',
     'actions/setup-java': 'b6effb05e454b25005698d916606bdc6ffcbf961',
+    'actions/setup-dotnet': '26b0ec14cb23fa6904739307f278c14f94c95bf1',
     'actions/upload-artifact': 'cf430e030ddbb5b0abf93d22962f4752f3646cd9',
     'actions/download-artifact': '9000827ccba6bdab643e8b6fd33ac0654aef8333',
     'gradle/actions/setup-gradle': '0723195856401067f7a2779048b490ace7a47d7c',
