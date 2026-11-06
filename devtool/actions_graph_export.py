@@ -82,7 +82,36 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                              host_os=profiles[0].os, host_arch=profiles[0].arch)
         rows = plan['nodes']
         cpp_only=bool(rows) and all(row['provider']['provider']=='cpp' for row in rows)
-        if not cpp_only and len({p.os for p in profiles})>1 and any(p.os=='windows' for p in profiles):
+        dotnet_only=bool(rows) and all(row['provider']['provider']=='dotnet' for row in rows)
+        # W02: each .NET host must pass its own source/provider review. Never
+        # reuse a Linux-admitted .NET provider plan as Windows evidence.
+        host_plans: dict[str, dict[str, Any]] = {}
+        mixed_windows=len({p.os for p in profiles})>1 and any(p.os=='windows' for p in profiles)
+        if mixed_windows and dotnet_only:
+            def portable_identity(candidate: dict[str, Any]) -> tuple:
+                return (
+                    candidate['target'], candidate['workflow'], candidate['runtime_sha'],
+                    candidate['consumer_commit'], candidate['consumer_tree'],
+                    tuple((row['node'], row['job'], tuple(row['depends_on']),
+                           tuple(row['outputs']), tuple(row['command']),
+                           row['provider']['selected'],
+                           tuple(row['provider']['canonical_argv']),
+                           row['provider']['version'],
+                           tuple(row['provider']['matrix_versions']),
+                           tuple(sorted(row['provider']['graph']['sources'].items())),
+                           tuple(row['provider']['graph']['selected_projects']),
+                           row['provider'].get('legacy_runtime_version',''))
+                          for row in candidate['nodes']),
+                )
+            baseline_identity=portable_identity(plan)
+            for profile in profiles:
+                host_plan=(plan if profile==profiles[0] else provider_plan(
+                    root, target=target, workflow=workflow, devtool_sha=devtool_sha,
+                    host_os=profile.os, host_arch=profile.arch))
+                if portable_identity(host_plan)!=baseline_identity:
+                    raise ProviderError('W02 .NET per-host plan drifted in reviewed source or graph identity')
+                host_plans[profile.identifier]=host_plan
+        if not cpp_only and mixed_windows and not dotnet_only:
             raise ProfileError('RM-07 mixed Windows/POSIX native plans are not yet portable')
         if not cpp_only:
             validate_versions([row['provider'] for row in rows],profiles)
@@ -140,6 +169,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
     node_to_id: dict[tuple[str,str],str] = {}
     jobs: list[dict[str, Any]] = []
     for profile in profiles:
+      profile_rows=host_plans[profile.identifier]['nodes'] if host_plans else rows
       for version in versions:
        for feature_index,feature_set in enumerate(feature_sets):
         if cpp_only and version:
@@ -147,7 +177,7 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
             if (matrix_compiler=='msvc')!=(profile.os=='windows') or (matrix_compiler!='msvc' and profile.os!='linux'):
                 continue
         cell=profile.identifier+(':'+version if version else '')+((':f'+str(feature_index)) if len(feature_sets)>1 else '')
-        for index,row in enumerate(rows,1):
+        for index,row in enumerate(profile_rows,1):
             jid=(f'node-{index:02d}' if len(profiles)==1 and profile.identifier=='ubuntu-24.04-x64' else f'node-{index:02d}-{profile.identifier.replace(".","-")}')
             if version:jid+='-v'+version.replace('.','-').replace(':','-')
             if len(feature_sets)>1:jid+='-f'+str(feature_index)
@@ -273,6 +303,10 @@ def compile_graph(root: Path, *, target: str, workflow: str, devtool_sha: str,
                  'toolchain_profiles':[p.identifier for p in profiles],
                  'language_versions':versions,'rust_feature_sets':feature_sets,
                  'cache': 'enabled-reviewed-stores' if cache_locks else 'disabled', 'changed_targets':'full-dag', 'jobs':jobs}
+    if host_plans:
+        immutable['host_provider_plan_sha256']={
+            profile.identifier:host_plans[profile.identifier]['plan_sha256']
+            for profile in profiles}
     return {**immutable, 'graph_sha256':_digest(immutable), 'native_source_sha256':plan['plan_sha256'],
             'fallback':'single-job', 'read_only':True, 'authenticated_remote':False,
             'release_qualified':False, 'consumer_commit':plan['consumer_commit'],
