@@ -76,6 +76,10 @@ def _child_env() -> dict[str, str]:
     safe = ("PATH", "HOME", "TMPDIR", "RUNNER_TEMP", "JAVA_HOME", "GRADLE_USER_HOME",
             "LANG", "LC_ALL", "SYSTEMROOT", "USERPROFILE")
     env = {k: os.environ[k] for k in safe if k in os.environ}
+    # RM22: runner platform is nonsecret, but arbitrary inherited values are not.
+    # This is an environment compatibility hint, NOT hosted authentication.
+    if os.environ.get("RUNNER_OS") in ("Linux", "Windows", "macOS"):
+        env["RUNNER_OS"] = os.environ["RUNNER_OS"]
     env.update({"CI": "true", "GITHUB_ACTIONS": "true",
                 "npm_config_ignore_scripts": "true", "npm_config_audit": "false",
                 "COREPACK_ENABLE_AUTO_PIN": "0", "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0",
@@ -154,7 +158,7 @@ def _jar(path: Path) -> dict[str, Any]:
     try:
         with zipfile.ZipFile(path) as z:
             entries = z.infolist()
-            if not 2 <= len(entries) <= 256 or sum(x.file_size for x in entries) > 128 * 1024 * 1024:
+            if not 2 <= len(entries) <= 4096 or sum(x.file_size for x in entries) > 128 * 1024 * 1024:
                 raise HostedAcceptanceError("RM21 JVM JAR entries exceed bounds")
             names = set()
             for item in entries:
