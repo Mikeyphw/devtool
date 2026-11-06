@@ -1,0 +1,44 @@
+name: Devtool W02 portable .NET native graph source gate
+on:
+  pull_request:
+    paths:
+      - devtool/actions_graph_export.py
+      - tests/test_w02_portable_dotnet.py
+      - .github/workflows/devtool-w02-portable-dotnet-source.yml
+  push:
+    branches: [main]
+    paths:
+      - devtool/actions_graph_export.py
+      - tests/test_w02_portable_dotnet.py
+      - .github/workflows/devtool-w02-portable-dotnet-source.yml
+permissions:
+  contents: read
+jobs:
+  native-graph-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact Devtool event commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          check-latest: false
+      - name: Install tested Python dependencies (no .NET or Gradle)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python -m pip install --disable-pip-version-check -e '.[textual]' 'pytest==8.4.2' pexpect
+      - name: W02 .NET mixed-host source and compatibility regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONDONTWRITEBYTECODE=1 python -B -m pytest -q \
+            tests/test_w02_portable_dotnet.py \
+            tests/test_rm09_dotnet.py \
+            tests/test_rm07_toolchain_profiles.py
+          echo W02_SOURCE_ONLY_PORTABLE_DOTNET_PASS
