@@ -158,7 +158,7 @@ def _jar(path: Path) -> dict[str, Any]:
     try:
         with zipfile.ZipFile(path) as z:
             entries = z.infolist()
-            if not 2 <= len(entries) <= 256 or sum(x.file_size for x in entries) > 128 * 1024 * 1024:
+            if not 2 <= len(entries) <= 4096 or sum(x.file_size for x in entries) > 128 * 1024 * 1024:
                 raise HostedAcceptanceError("RM21 JVM JAR entries exceed bounds")
             names = set()
             for item in entries:
