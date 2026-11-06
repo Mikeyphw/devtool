@@ -1,0 +1,32 @@
+name: Devtool RM22 hosted child environment policy
+on:
+  pull_request:
+    paths:
+      - devtool/actions_rm21_hosted_native.py
+      - tests/test_rm22_hosted_runner_os.py
+      - .github/workflows/devtool-rm22-hosted-env-source.yml
+permissions:
+  contents: read
+jobs:
+  source-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Read exact Devtool pull-request source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+      - name: No-execution hosted environment and RM21 regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$GITHUB_WORKSPACE" python -B tests/test_rm22_hosted_runner_os.py
+          python -m pip install 'setuptools>=75,<82' wheel 'coverage>=7,<9' 'cryptography>=43,<47'
+          python -m pip install -e '.[textual]' pytest pexpect
+          PYTHONDONTWRITEBYTECODE=1 python -m pytest -q \
+            tests/test_rm22_hosted_runner_os.py \
+            tests/test_rm21_hosted_native.py
