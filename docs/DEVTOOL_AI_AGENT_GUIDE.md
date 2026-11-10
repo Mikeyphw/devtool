@@ -4,6 +4,8 @@ This is the comprehensive operating contract for AI agents and automation that i
 
 > Human-facing explanations live in [`DEVTOOL_HUMAN_GUIDE.md`](DEVTOOL_HUMAN_GUIDE.md). Agents should treat this file plus repository `.devtool.toml` as operating context, not as permission to skip inspection.
 
+The global confirmation switch `--yes` (short form `-y`) is accepted before, between, or after Devtool subcommands. For example, `devtool -y apply-overlay patch.zip`, `devtool apply-overlay patch.zip -y`, and `devtool actions android -y run --ref main` all set the same confirmation state. It only approves supported prompts; mandatory checks, explicit plan/mutation conflicts, and authorization gates remain in force. Arguments after a literal `--` belong to the invoked command and are never interpreted as Devtool approval.
+
 ## 1. Agent invariants
 
 1. **Resolve the repository and target explicitly.** In multi-target repositories, do not guess the default target when a named target/group is available.
