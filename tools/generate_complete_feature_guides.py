@@ -222,6 +222,8 @@ The common shape is:
 devtool [global selection/execution options] COMMAND [command options]
 ```
 
+The global confirmation switch `--yes` (short form `-y`) is accepted before, between, or after Devtool subcommands. For example, `devtool -y apply-overlay patch.zip`, `devtool apply-overlay patch.zip -y`, and `devtool actions android -y run --ref main` all set the same confirmation state. It only approves supported prompts; mandatory checks, explicit plan/mutation conflicts, and authorization gates remain in force. Arguments after a literal `--` belong to the invoked command and are never interpreted as Devtool approval.
+
 A repository normally has `.devtool.toml`. Global defaults may live in Devtool's user config. Selection such as `--target`, `--group`, `--all-targets`, or affected-target modes determines *what* is operated on. Execution settings determine *where/how*. The command determines *what operation* is requested.
 
 ## 2. First-use workflow
@@ -533,6 +535,8 @@ AI_BODY = r'''# Devtool complete guide for AI agents
 This is the comprehensive operating contract for AI agents and automation that inspect, modify, build, test, validate, or release repositories through Devtool. It covers the same public feature surface as the human guide, but emphasizes determinism, safety, machine-readable state, artifact integrity, and recovery. The final appendix is generated directly from the live CLI parser so every current public command/subcommand and option is represented.
 
 > Human-facing explanations live in [`DEVTOOL_HUMAN_GUIDE.md`](DEVTOOL_HUMAN_GUIDE.md). Agents should treat this file plus repository `.devtool.toml` as operating context, not as permission to skip inspection.
+
+The global confirmation switch `--yes` (short form `-y`) is accepted before, between, or after Devtool subcommands. For example, `devtool -y apply-overlay patch.zip`, `devtool apply-overlay patch.zip -y`, and `devtool actions android -y run --ref main` all set the same confirmation state. It only approves supported prompts; mandatory checks, explicit plan/mutation conflicts, and authorization gates remain in force. Arguments after a literal `--` belong to the invoked command and are never interpreted as Devtool approval.
 
 ## 1. Agent invariants
 

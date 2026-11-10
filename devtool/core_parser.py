@@ -191,10 +191,56 @@ def _configure_parser(parser: argparse.ArgumentParser, spec: Mapping[str, Any]) 
     return parser
 
 
+
+def _extract_global_yes(argv: list[str]) -> tuple[list[str], bool]:
+    """Make the schema-declared root confirmation option position-independent.
+
+    Preserve everything after a literal ``--`` separator as child/runner data.
+    This is a placement convenience for the existing global option, not a
+    second confirmation policy or new command-local authorization.
+    """
+    remaining: list[str] = []
+    requested = False
+    for index, token in enumerate(argv):
+        if token == "--":
+            remaining.extend(argv[index:])
+            break
+        if token in {"-y", "--yes"}:
+            requested = True
+        else:
+            remaining.append(token)
+    return remaining, requested
+
+
+class CanonicalArgumentParser(argparse.ArgumentParser):
+    """Canonical argparse compiler with root-global confirmation placement.
+
+    Only the root normalizes -y/--yes. Child parsers retain their existing
+    canonical actions. Restore explicit True *after* child parsing so a local
+    default=False cannot silently revoke a parent confirmation.
+    """
+
+    def parse_known_args(
+        self,
+        args: list[str] | None = None,
+        namespace: argparse.Namespace | None = None,
+    ) -> tuple[argparse.Namespace, list[str]]:
+        if not getattr(self, "_devtool_global_yes_root", False):
+            return super().parse_known_args(args, namespace)
+
+        import sys
+        argv = list(sys.argv[1:] if args is None else args)
+        forwarded, requested = _extract_global_yes(argv)
+        parsed, unknown = super().parse_known_args(forwarded, namespace)
+        if requested:
+            parsed.yes = True
+        return parsed, unknown
+
+
 def build_canonical_parser() -> argparse.ArgumentParser:
     schema = canonical_cli_schema()
     spec = schema["parser"]
-    parser = argparse.ArgumentParser(
+    parser = CanonicalArgumentParser(
         prog="devtool",
         description=spec.get("description"),
         epilog=spec.get("epilog"),
@@ -202,6 +248,7 @@ def build_canonical_parser() -> argparse.ArgumentParser:
         add_help=bool(spec.get("add_help", True)),
         allow_abbrev=bool(spec.get("allow_abbrev", True)),
     )
+    parser._devtool_global_yes_root = True
     return _configure_parser(parser, spec)
 
 

@@ -479,7 +479,9 @@ devtool \
   apply-overlay "$HOME/Downloads/example_overlay.zip"
 ```
 
-CLI options still override artifact values. Use `--no-validate`, `--no-commit`, or `--no-artifact-script` for explicit opt-outs. See [`docs/ARTIFACTS.md`](docs/ARTIFACTS.md) for the complete overlay and bundle formats.
+CLI options still override artifact values. Use `--no-validate`, `--no-commit`, or `--no-artifact-script` for explicit opt-outs.
+
+`--yes` and `-y` are interchangeable global confirmation switches and work before, between, or after subcommands (for example, `devtool actions android run --ref main -y`). They confirm supported prompts, not mandatory safety, source integrity, or validation gates. A literal `--` stops Devtool option handling, so forwarded child arguments are not reinterpreted as confirmation. See [`docs/ARTIFACTS.md`](docs/ARTIFACTS.md) for the complete overlay and bundle formats.
 
 ## Resumable Android validation
 

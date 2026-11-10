@@ -14,6 +14,8 @@ The common shape is:
 devtool [global selection/execution options] COMMAND [command options]
 ```
 
+The global confirmation switch `--yes` (short form `-y`) is accepted before, between, or after Devtool subcommands. For example, `devtool -y apply-overlay patch.zip`, `devtool apply-overlay patch.zip -y`, and `devtool actions android -y run --ref main` all set the same confirmation state. It only approves supported prompts; mandatory checks, explicit plan/mutation conflicts, and authorization gates remain in force. Arguments after a literal `--` belong to the invoked command and are never interpreted as Devtool approval.
+
 A repository normally has `.devtool.toml`. Global defaults may live in Devtool's user config. Selection such as `--target`, `--group`, `--all-targets`, or affected-target modes determines *what* is operated on. Execution settings determine *where/how*. The command determines *what operation* is requested.
 
 ## 2. First-use workflow
