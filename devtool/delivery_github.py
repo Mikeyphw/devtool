@@ -399,6 +399,8 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
                                    'unattributed_run_count':0},
                    'branch_rules':None, 'branch_rules_issue':None,
                    'release_qualified':False}
+        from .delivery_ci_diagnostics import diagnose_snapshot
+        summary['diagnosis'] = diagnose_snapshot(summary, slug=item['repository'], client=None)
         record_ci_observation(session_id, summary, state_root=state_root)
         if progress:
             progress(summary)
@@ -551,7 +553,8 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
                 # No inferred empty ruleset on 401/403/rate limit/partial data.
                 # Persist a blocked observation instead of retaining stale green.
                 state = 'BRANCH_RULES_UNVERIFIED'
-                branch_rules_issue = str(exc)[:220]
+                from .delivery_ci_diagnostics import _safe_label
+                branch_rules_issue = _safe_label(str(exc), 220)
         if state == 'REQUIRED_CHECKS_PASSED':
             # Detect a policy/head/merge ref change while all remote calls were in flight.
             if policy_guard is not None:
@@ -561,12 +564,16 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
         diag = []
         if state == 'CHECKS_FAILED':
             from .delivery_ci_evidence import failed_job_details
+            from .delivery_ci_diagnostics import sanitize_failed_metadata
             for match in failures:
+                # S5 also sanitizes the compatibility fields S4 already wrote.
+                # Raw provider metadata never bypasses the new bounded receipt.
                 diag.append({'run_id': match['id'], 'attempt': match['attempt'],
-                             'name': match['name'],
-                             'url': match['url'],
-                             'jobs': _failed_jobs(client, item['repository'], match),
-                             'detailed_jobs': failed_job_details(client, item['repository'], match),
+                             'name': match['name'], 'url': match['url'],
+                             'jobs': sanitize_failed_metadata(
+                                 _failed_jobs(client, item['repository'], match), detailed=False),
+                             'detailed_jobs': sanitize_failed_metadata(
+                                 failed_job_details(client, item['repository'], match), detailed=True),
                              'log_content_collected': False})
         summary = {'state':state, 'checks_qualified':state=='REQUIRED_CHECKS_PASSED',
                    'exact_run_evidence':exact_evidence,
@@ -580,6 +587,13 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
                    'branch_rules':branch_rules,
                    'branch_rules_issue':branch_rules_issue,
                    'poll':i+1, 'release_qualified':False}
+        # S5: diagnosis is observational and never changes CI qualification.
+        # Only bounded, redacted error snippets may enter the durable receipt;
+        # no signed log URLs, raw logs, auth tokens, or automatic reruns.
+        from .delivery_ci_diagnostics import diagnose_snapshot
+        summary['diagnosis'] = diagnose_snapshot(
+            summary, slug=item['repository'], client=client,
+            fetch_logs=(state == 'CHECKS_FAILED'))
         record_ci_observation(session_id, summary, state_root=state_root)
         snapshots.append({'poll':i+1,'state':state,'run_count':len(records)})
         if progress:

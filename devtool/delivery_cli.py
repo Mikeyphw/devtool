@@ -106,6 +106,17 @@ def run_delivery_command(args: Any) -> int:
                 print(f"  Failed job: {job.get('job', '-')}: {job.get('classification', '-')} {job.get('url', '')}",flush=True)
                 for step in job.get('steps', []):
                     print(f"    Step: {step.get('name', '-')} — {step.get('conclusion', '-')}",flush=True)
+        diagnosis = payload.get('diagnosis') or {}
+        if diagnosis:
+            print(f"  S5 CI verdict: {diagnosis.get('classification', 'unknown')} " 
+                  f"aggregate={diagnosis.get('aggregate', 'unverified')}", flush=True)
+            for failed in diagnosis.get('failures', []):
+                print(f"  Diagnostic: {failed.get('classification', 'unclassified')} "
+                      f"run={failed.get('run_id')} attempt={failed.get('attempt')}", flush=True)
+                for job in failed.get('jobs', []):
+                    print(f"    Job: {job.get('name', '-')}: {job.get('classification', '-')}", flush=True)
+                    for excerpt in job.get('excerpt', []):
+                        print('      Evidence: ' + excerpt, flush=True)
         print('Release qualification: NOT PERFORMED',flush=True)
     else:
         print(f'Devtool delivery: {operation} — {payload["stage"]}',flush=True)
@@ -114,7 +125,12 @@ def run_delivery_command(args: Any) -> int:
             print('Session: '+payload['id'],flush=True)
         if payload.get('disposition'):
             print(f'Next: {payload["disposition"]} — {payload["next_action"]}',flush=True)
-        print('Release qualification: NOT PERFORMED',flush=True)
+        if operation == 'report' and isinstance(payload.get('ci'),dict):
+            diagnosis = payload['ci'].get('diagnosis') or {}
+            print(f"CI diagnostics: {diagnosis.get('classification', 'not-observed')} "
+                  f"aggregate={diagnosis.get('aggregate', 'unverified')}", flush=True)
+            print(f"Report run identities: {len(diagnosis.get('matrix', []))}", flush=True)
+        print('Release qualification: NOT PERFORMED — not verified',flush=True)
     if operation=='ci':
         if payload['state']=='CHECKS_FAILED':
             return 1
