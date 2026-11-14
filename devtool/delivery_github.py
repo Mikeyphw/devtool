@@ -349,19 +349,26 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
         token, _ = resolve_token(auth)
         client = GitHubActionsClient(token)
     pr_info = item.get('pr')
-    if pr_info:
-        if pr_info.get('head_sha') != item['head_sha']:
-            raise DeliverySessionError('Saved PR provenance is stale')
-        actual_head = _remote_head(client,item['repository'],item['head'])
+    if pr_info and pr_info.get('head_sha') != item['head_sha']:
+        raise DeliverySessionError('Saved PR provenance is stale')
+
+    def live_provenance() -> str | None:
+        # Check the remote source on EVERY observation, even if no PR exists.
+        # Never infer a successful check from an old head or merge ref.
+        actual_head = _remote_head(client, item['repository'], item['head'])
         if actual_head != item['head_sha']:
-            raise DeliverySessionError('Remote branch moved; CI qualification blocked')
+            raise DeliverySessionError('Remote branch moved during CI; qualification blocked')
+        if not pr_info:
+            return None
         live = client._get(f"/repos/{item['repository']}/pulls/{pr_info['number']}")
-        verified = _pr_match(live,item['repository'],item['head'],item['base'],item['head_sha'])
+        verified = _pr_match(live, item['repository'], item['head'], item['base'], item['head_sha'])
         if not verified or verified['number'] != pr_info['number']:
-            raise DeliverySessionError('Current PR identity changed or closed; CI qualification blocked')
-    merge_sha = _pr_merge_sha(client, item['repository'], pr_info['number']) if pr_info else None
+            raise DeliverySessionError('Current PR identity changed or closed during CI')
+        return _pr_merge_sha(client, item['repository'], pr_info['number'])
+
     snapshots = []
     for i in range(checks):
+        merge_sha = live_provenance()
         raw = client.runs(item['repository'], limit=100)
         seen: dict[str,dict[str,Any]] = {}
         ambiguous = []
@@ -396,6 +403,10 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
             state='CHECKS_RUNNING'
         else:
             state='REQUIRED_CHECKS_PASSED'
+        if state == 'REQUIRED_CHECKS_PASSED':
+            # Detect a head or merge ref change while runs() was in flight.
+            if live_provenance() != merge_sha:
+                raise DeliverySessionError('PR merge identity changed during CI poll; qualification blocked')
         diag = []
         if state == 'CHECKS_FAILED':
             for match in failures:
