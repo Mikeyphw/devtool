@@ -6,7 +6,7 @@ journaled, user-approved lanes. CI observation is bounded and source-attested.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 import os
 from pathlib import Path
@@ -360,13 +360,16 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
                policy_sha256: str = "", policy_guard: Callable[[], None] | None = None,
                client: GitHubActionsClient | None = None,
                auth: str = 'auto', progress: Callable[[dict[str,Any]], None] | None = None,
-               sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
+               sleep: Callable[[float], None] = time.sleep,
+               strict_registration: bool = False, registration_horizon_seconds: int = 1800,
+               dispatch_run_ids: Mapping[int, int] | None = None,
+               clock: Callable[[], datetime] | None = None) -> dict[str, Any]:
     if type(checks) is not int or checks < 1 or checks > 60 or interval < 1 or interval > 120:
         raise DeliverySessionError('CI polling limits: 1..60 checks, 1..120 seconds between polls')
     required = tuple(dict.fromkeys(str(x).strip() for x in required))
     if len(required) > 25 or any(not x or len(x) > 160 for x in required):
         raise DeliverySessionError('Required workflow identifiers must be 1..25 bounded names')
-    if required_event not in ('', 'pull_request'):
+    if required_event not in ('', 'pull_request', 'push', 'workflow_dispatch'):
         raise DeliverySessionError('Unsupported CI policy event')
     if workflow_ids is not None:
         if (set(workflow_ids) != set(required) or
@@ -382,6 +385,35 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
     pr_info = item.get('pr')
     if pr_info and pr_info.get('head_sha') != item['head_sha']:
         raise DeliverySessionError('Saved PR provenance is stale')
+    registrar = None
+    expectations: dict[str, str] = {}
+    def provider_unavailable(phase: str, poll: int) -> dict[str, Any]:
+        summary = {'state':'REGISTRATION_PROVIDER_UNAVAILABLE',
+                   'checks_qualified':False, 'exact_run_evidence':None,
+                   'source_sha':item['head_sha'], 'required':list(required),
+                   'policy_sha256':policy_sha256 or None, 'policy_mismatches':[],
+                   'missing':list(required), 'ambiguous':[], 'runs':[],
+                   'failures':[], 'inventory_limit':500, 'poll':poll,
+                   'registration':{'event':required_event, 'phase':phase,
+                                   'status':'provider-unavailable',
+                                   'unattributed_run_count':0},
+                   'branch_rules':None, 'branch_rules_issue':None,
+                   'release_qualified':False}
+        record_ci_observation(session_id, summary, state_root=state_root)
+        if progress:
+            progress(summary)
+        return {**summary, 'history':[{'poll':poll,
+            'state':'REGISTRATION_PROVIDER_UNAVAILABLE', 'run_count':0}]}
+    if strict_registration:
+        if not required or workflow_ids is None or not required_event:
+            raise DeliverySessionError('Strict CI registrar requires explicit policy IDs and event')
+        from . import delivery_ci_registrar as registrar
+        # Structural errors in policy/committed workflow definitions refuse
+        # before a run can be selected. An API outage is never CI success.
+        try:
+            expectations = registrar.workflow_expectations(client, item, workflow_ids, required_event)
+        except GitHubActionsError:
+            return provider_unavailable('workflow-definitions', 0)
 
     def live_provenance() -> str | None:
         # Check the remote source on EVERY observation, even if no PR exists.
@@ -402,36 +434,95 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
         if policy_guard is not None:
             policy_guard()
         merge_sha = live_provenance()
-        raw = client.runs(item['repository'], limit=100)
-        seen: dict[str,dict[str,Any]] = {}
-        ambiguous = []
-        for candidate in raw:
-            match = _ci_candidate(candidate,item,pr_info,merge_sha)
-            if match is None or (required_event and match['event'] != required_event):
-                continue
-            # Workflow name may be duplicated across workflow files. Reject
-            # unresolvable collisions instead of choosing newest arbitrarily.
-            name = match['name']
-            if not name:
-                continue
-            old = seen.get(name)
-            if old and old['workflow_id'] != match['workflow_id']:
-                ambiguous.append(name)
-                continue
-            if not old or (match['id'],match['attempt']) > (old['id'],old['attempt']):
-                seen[name] = match
-        records = sorted(seen.values(), key=lambda x:x['name'])
-        missing = [name for name in required if name not in seen]
-        mismatched_ids = [name for name, expected in (workflow_ids or {}).items()
-                          if name in seen and seen[name]['workflow_id'] != expected]
+        registration: dict[str, Any] | None = None
+        if strict_registration:
+            window = registrar.registration_window(
+                item, registration_horizon_seconds,
+                now=clock() if clock is not None else None)
+            try:
+                raw = registrar.collect_runs(client, item['repository'])
+            except GitHubActionsError:
+                return provider_unavailable('workflow-run-pages', i+1)
+            def registration_match(row: dict[str, Any], source: Mapping[str, Any],
+                                   pr: Mapping[str, Any] | None, merge: str | None) -> dict[str, Any] | None:
+                # Exact run GET must corroborate the creation-window evidence,
+                # not merely repeat a selected run ID and source SHA.
+                if (row.get('event') != required_event or
+                        type(row.get('run_attempt')) is not int or row['run_attempt'] < 1):
+                    return None
+                try:
+                    at = registrar._date(row.get('created_at'))
+                except DeliverySessionError:
+                    return None
+                if (at < window['began'] - timedelta(seconds=120) or
+                        at > window['deadline'] + timedelta(seconds=120) or
+                        at > window['now'] + timedelta(seconds=120)):
+                    return None
+                if required_event != 'workflow_dispatch':
+                    return _ci_candidate(row, source, pr, merge)
+                # A dispatch must be independently linked to an exact run ID.
+                # Source equality alone is not evidence that a POST registered.
+                if (row.get('head_sha') != source['head_sha'] or
+                        row.get('head_branch') != source['head'] or
+                        (row.get('repository') or {}).get('full_name', source['repository']).lower()
+                        != source['repository'].lower()):
+                    return None
+                return {'id':row['id'], 'attempt':row['run_attempt'],
+                        'name':row['name'], 'workflow_id':row['workflow_id'],
+                        'event':'workflow_dispatch', 'head_sha':row['head_sha'],
+                        'status':row['status'], 'conclusion':row.get('conclusion'),
+                        'url':f"https://github.com/{source['repository']}/actions/runs/{row['id']}"}
+            registration = registrar.select_registration(
+                raw, item, event=required_event, required=workflow_ids,
+                expected=expectations, merge_sha=merge_sha, pr_info=pr_info,
+                window=window, match_run=registration_match,
+                dispatch_run_ids=dispatch_run_ids)
+            records = registration['runs']
+            seen = {row['name']: row for row in records}
+            missing = registration['missing']
+            ambiguous = registration['ambiguous']
+            mismatched_ids = []
+        else:
+            raw = client.runs(item['repository'], limit=100)
+            seen: dict[str,dict[str,Any]] = {}
+            ambiguous = []
+            for candidate in raw:
+                match = _ci_candidate(candidate,item,pr_info,merge_sha)
+                if match is None or (required_event and match['event'] != required_event):
+                    continue
+                # Legacy read-only callers retain their prior selection behavior.
+                name = match['name']
+                if not name:
+                    continue
+                old = seen.get(name)
+                if old and old['workflow_id'] != match['workflow_id']:
+                    ambiguous.append(name)
+                    continue
+                if not old or (match['id'],match['attempt']) > (old['id'],old['attempt']):
+                    seen[name] = match
+            records = sorted(seen.values(), key=lambda x:x['name'])
+            missing = [name for name in required if name not in seen]
+            mismatched_ids = [name for name, expected in (workflow_ids or {}).items()
+                              if name in seen and seen[name]['workflow_id'] != expected]
         failures = [r for r in records if r['name'] in required and r['conclusion'] not in ('success',None)]
         unfinished = [r for r in records if r['name'] in required and r['status'] != 'completed']
         if ambiguous or mismatched_ids:
             state='BLOCKED_AMBIGUOUS'
+        elif registration and registration['indeterminate']:
+            state='BLOCKED_CONDITIONAL'
+        elif registration and registration['not_expected']:
+            # Policy says *required*, but definition excludes this event/ref.
+            # A future policy may explicitly label optional checks; do not
+            # silently exempt required checks from CI qualification today.
+            state='BLOCKED_TRIGGER'
+        elif registration and registration['dispatch_uncorrelated']:
+            state='DISPATCH_UNCORRELATED'
         elif not required:
             state='OBSERVED_ONLY'
         elif failures:
             state='CHECKS_FAILED'
+        elif missing and registration and registration['expired']:
+            state='REGISTRATION_TIMED_OUT'
         elif missing:
             state='WAITING_REGISTRATION'
         elif unfinished:
@@ -446,9 +537,21 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
             from .delivery_ci_evidence import verify_exact_attempts
             exact_evidence = verify_exact_attempts(
                 client, item['repository'], records, workflow_ids,
-                validate_run=lambda row: _ci_candidate(row, item, pr_info, merge_sha))
+                validate_run=(lambda row: registration_match(row, item, pr_info, merge_sha))
+                             if strict_registration else
+                             (lambda row: _ci_candidate(row, item, pr_info, merge_sha)))
             if not exact_evidence['verified']:
                 state = 'CHECKS_EVIDENCE_PENDING'
+        branch_rules = None
+        branch_rules_issue = None
+        if state == 'REQUIRED_CHECKS_PASSED' and strict_registration:
+            try:
+                branch_rules = registrar.audit_branch_rules(client, item, records)
+            except (DeliverySessionError, GitHubActionsError, OSError, ValueError) as exc:
+                # No inferred empty ruleset on 401/403/rate limit/partial data.
+                # Persist a blocked observation instead of retaining stale green.
+                state = 'BRANCH_RULES_UNVERIFIED'
+                branch_rules_issue = str(exc)[:220]
         if state == 'REQUIRED_CHECKS_PASSED':
             # Detect a policy/head/merge ref change while all remote calls were in flight.
             if policy_guard is not None:
@@ -472,8 +575,11 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
                    'policy_mismatches':sorted(mismatched_ids),
                    'missing': missing, 'ambiguous': sorted(set(ambiguous)),
                    'runs': records, 'failures':diag,
-                   'inventory_limit':100, 'poll':i+1,
-                   'release_qualified':False}
+                   'inventory_limit':500 if strict_registration else 100,
+                   'registration':registration,
+                   'branch_rules':branch_rules,
+                   'branch_rules_issue':branch_rules_issue,
+                   'poll':i+1, 'release_qualified':False}
         record_ci_observation(session_id, summary, state_root=state_root)
         snapshots.append({'poll':i+1,'state':state,'run_count':len(records)})
         if progress:
@@ -481,5 +587,5 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
         if state not in ('WAITING_REGISTRATION','CHECKS_RUNNING','CHECKS_EVIDENCE_PENDING'):
             break
         if i+1 < checks:
-            sleep(interval)
+            sleep(registrar.next_delay(interval, i, session_id) if strict_registration else interval)
     return {**summary,'history':snapshots}

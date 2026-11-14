@@ -129,8 +129,17 @@ def observation(repo, *, ids=(101, 102), state='REQUIRED_CHECKS_PASSED'):
     p = policy(repo)
     return {'state': state, 'policy_sha256': p.sha256,
             'required': list(p.names), 'release_qualified': False,
+            'registration': {'event':'pull_request','missing':[],'ambiguous':[],
+                             'indeterminate':[],'not_expected':[],
+                             'dispatch_uncorrelated':False,'run_count':2,
+                             'started_at':'2026-11-14T20:00:00+00:00',
+                             'deadline_at':'2026-11-14T20:30:00+00:00'},
+            'branch_rules':{'protection_checked':True,'ruleset_checked':True,
+                            'required_status_contexts_verified':True,
+                            'release_qualified':False},
             'runs': [{'name': name, 'id': 10 + oid, 'attempt': 1, 'workflow_id': oid,
-                      'status': 'completed', 'conclusion': 'success'}
+                      'status': 'completed', 'conclusion': 'success',
+                      'url':'https://github.com/Mikeyphw/devtool/actions/runs/1'}
                      for name, oid in zip(p.names, ids)],
             'exact_run_evidence': {'verified': True,
                 'evidence_scope': 'per-run-GET-and-exact-attempt-jobs',
@@ -265,20 +274,7 @@ def test_policy_cli_uses_committed_set_automatically(repo, tmp_path, monkeypatch
     monkeypatch.setattr(delivery_cli,'status',lambda identity: status(identity,state_root=folder))
     monkeypatch.setattr(delivery_github,'observe_ci',lambda identity,**kw:
                          (captured.update(kw) or
-                          {'state':'REQUIRED_CHECKS_PASSED','checks_qualified':True,
-                           'required':list(policy(repo).names),
-                           'policy_sha256':policy(repo).sha256,
-                           'runs':[{'name':name, 'id': 10+oid, 'attempt':1,
-                                    'workflow_id':oid,'status':'completed',
-                                    'conclusion':'success','url':'https://github.com/test'}
-                                   for name,oid in policy(repo).workflow_ids.items()],
-                           'exact_run_evidence':{'verified':True,'release_qualified':False,
-                                  'evidence_scope':'per-run-GET-and-exact-attempt-jobs',
-                                  'runs':[{'name':name,'run_id':10+oid,'attempt':1,
-                                           'workflow_id':oid,'source_bound':True,
-                                           'jobs_scope':'exact-run-attempt','jobs_success':1}
-                                          for name,oid in policy(repo).workflow_ids.items()]},
-                           'release_qualified':False,'missing':[]}))
+                          {**observation(repo), 'checks_qualified':True,'missing':[]}))
     args=SimpleNamespace(delivery_session_command='ci',repo=str(repo),delivery_id=item['id'],
                          require_workflow=[],checks=1,interval=2,auth='none',json=False,_devtool_json=False)
     assert delivery_cli.run_delivery_command(args)==0
@@ -327,3 +323,21 @@ def test_unknown_or_nonancestor_remote_refuses_nonforce_update(repo, tmp_path):
         delivery_github.push(item['id'],yes=True,state_root=tmp_path/'sessions',
                              remote_probe=lambda *_:'b'*40,
                              git_push=lambda *_:pytest.fail('must not push'))
+
+
+@pytest.mark.parametrize('alter', [
+    lambda p: p.pop('registration'),
+    lambda p: p['registration'].update(event='workflow_dispatch'),
+    lambda p: p['registration'].update(ambiguous=['Workflow A']),
+    lambda p: p['registration'].update(missing=['Workflow B']),
+    lambda p: p['registration'].update(run_count=1),
+    lambda p: p.pop('branch_rules'),
+    lambda p: p['branch_rules'].update(protection_checked=False),
+    lambda p: p['branch_rules'].update(ruleset_checked=False),
+    lambda p: p['branch_rules'].update(required_status_contexts_verified=False),
+])
+def test_ci_pass_requires_unambiguous_registration_and_provider_rules(repo, alter):
+    receipt = observation(repo)
+    alter(receipt)
+    with pytest.raises(DeliveryCIPolicyError):
+        assert_observation(receipt, policy(repo))

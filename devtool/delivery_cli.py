@@ -59,6 +59,7 @@ def run_delivery_command(args: Any) -> int:
                 payload = observe_ci(identity,required=policy.names,
                                      workflow_ids=policy.workflow_ids, required_event="pull_request",
                                      policy_sha256=policy.sha256,policy_guard=guard,
+                                     strict_registration=True,
                                      checks=int(getattr(args,'checks',1)),
                                      interval=float(getattr(args,'interval',5)),
                                      auth=str(getattr(args,'auth','auto') or 'auto'),
@@ -86,6 +87,17 @@ def run_delivery_command(args: Any) -> int:
             print(f"  {run['name']}: {run['conclusion'] or run['status']} {run['url']}",flush=True)
         for missing in payload.get('missing',[]):
             print(f'  Waiting registration: {missing}',flush=True)
+        registration = payload.get('registration') or {}
+        if registration:
+            print(f"  Registrar: event={registration.get('event')} "
+                  f"deadline={registration.get('deadline_at')} "
+                  f"scanned={registration.get('run_count')}",flush=True)
+            for name in registration.get('ambiguous',[]):
+                print(f'  Ambiguous concurrent run: {name}',flush=True)
+            for name in registration.get('not_expected',[]):
+                print(f'  Trigger excludes required workflow: {name}',flush=True)
+            for name in registration.get('indeterminate',[]):
+                print(f'  Conditional trigger needs explicit proof: {name}',flush=True)
         evidence = payload.get('exact_run_evidence') or {}
         for issue in evidence.get('issues', []):
             print(f"  Evidence pending: {issue['workflow']} — {issue['reason']}", flush=True)

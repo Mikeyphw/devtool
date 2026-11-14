@@ -164,6 +164,21 @@ def assert_observation(summary: Mapping[str, Any], policy: DeliveryCIPolicy) -> 
     if summary.get('release_qualified') is not False:
         raise DeliveryCIPolicyError('CI receipt illegally asserted release qualification')
     if summary.get('state') == 'REQUIRED_CHECKS_PASSED':
+        reg = summary.get('registration')
+        if (not isinstance(reg, dict) or reg.get('event') != 'pull_request'
+                or any(reg.get(k) for k in ('missing','ambiguous','indeterminate',
+                                              'not_expected','dispatch_uncorrelated'))
+                or type(reg.get('run_count')) is not int
+                or reg['run_count'] < len(policy.requirements)
+                or not reg.get('started_at') or not reg.get('deadline_at')):
+            raise DeliveryCIPolicyError('CI pass lacks unambiguous event-bound registration evidence')
+        protected = summary.get('branch_rules')
+        if (not isinstance(protected, dict) or
+                protected.get('protection_checked') is not True or
+                protected.get('ruleset_checked') is not True or
+                protected.get('required_status_contexts_verified') is not True or
+                protected.get('release_qualified') is not False):
+            raise DeliveryCIPolicyError('CI pass lacks verified branch/ruleset requirements')
         evidence = summary.get('exact_run_evidence')
         if (not isinstance(evidence, dict) or evidence.get('verified') is not True
                 or evidence.get('release_qualified') is not False
