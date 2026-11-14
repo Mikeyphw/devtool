@@ -416,7 +416,8 @@ def record_ci_observation(identity: str, observation: Mapping[str, Any], *,
     """Checkpoint a bounded, source-bound CI snapshot; never invent success."""
     obs = dict(observation)
     if obs.get('state') not in {'OBSERVED_ONLY','WAITING_REGISTRATION','CHECKS_RUNNING',
-                                 'CHECKS_FAILED','REQUIRED_CHECKS_PASSED','BLOCKED_AMBIGUOUS'}:
+                                 'CHECKS_FAILED','REQUIRED_CHECKS_PASSED','BLOCKED_AMBIGUOUS',
+                                     'CHECKS_EVIDENCE_PENDING'}:
         raise DeliverySessionError('Unknown CI observation state')
     if not isinstance(obs.get('runs'), list) or len(obs['runs']) > 100:
         raise DeliverySessionError('Invalid bounded CI run inventory')

@@ -129,9 +129,16 @@ def observation(repo, *, ids=(101, 102), state='REQUIRED_CHECKS_PASSED'):
     p = policy(repo)
     return {'state': state, 'policy_sha256': p.sha256,
             'required': list(p.names), 'release_qualified': False,
-            'runs': [{'name': name, 'workflow_id': oid,
+            'runs': [{'name': name, 'id': 10 + oid, 'attempt': 1, 'workflow_id': oid,
                       'status': 'completed', 'conclusion': 'success'}
-                     for name, oid in zip(p.names, ids)]}
+                     for name, oid in zip(p.names, ids)],
+            'exact_run_evidence': {'verified': True,
+                'evidence_scope': 'per-run-GET-and-exact-attempt-jobs',
+                'release_qualified': False,
+                'runs': [{'name': name, 'run_id': 10 + oid, 'attempt': 1,
+                          'workflow_id': oid, 'source_bound': True,
+                          'jobs_scope': 'exact-run-attempt', 'jobs_success': 1}
+                         for name, oid in zip(p.names, ids)]}}
 
 
 def test_policy_receipt_rejects_wrong_id_and_release(repo):
@@ -170,6 +177,14 @@ class Client:
         assert slug == self.item['repository'] and limit == 100
         self.calls += 1
         return list(self.data)
+    def get_run(self, slug, run_id):
+        assert slug == self.item['repository']
+        return next(dict(row) for row in self.data if row['id'] == run_id)
+    def run_attempt_jobs(self, slug, run_id, attempt):
+        assert slug == self.item['repository'] and attempt == 1
+        return [{'id': run_id * 100, 'run_id': run_id, 'run_attempt': 1,
+                 'name': 'hosted-qualification', 'status': 'completed',
+                 'conclusion': 'success', 'steps': []}]
 
 
 def run(item, name, workflow_id, *, event='pull_request'):
@@ -253,9 +268,16 @@ def test_policy_cli_uses_committed_set_automatically(repo, tmp_path, monkeypatch
                           {'state':'REQUIRED_CHECKS_PASSED','checks_qualified':True,
                            'required':list(policy(repo).names),
                            'policy_sha256':policy(repo).sha256,
-                           'runs':[{'name':name, 'workflow_id':oid,'status':'completed',
+                           'runs':[{'name':name, 'id': 10+oid, 'attempt':1,
+                                    'workflow_id':oid,'status':'completed',
                                     'conclusion':'success','url':'https://github.com/test'}
                                    for name,oid in policy(repo).workflow_ids.items()],
+                           'exact_run_evidence':{'verified':True,'release_qualified':False,
+                                  'evidence_scope':'per-run-GET-and-exact-attempt-jobs',
+                                  'runs':[{'name':name,'run_id':10+oid,'attempt':1,
+                                           'workflow_id':oid,'source_bound':True,
+                                           'jobs_scope':'exact-run-attempt','jobs_success':1}
+                                          for name,oid in policy(repo).workflow_ids.items()]},
                            'release_qualified':False,'missing':[]}))
     args=SimpleNamespace(delivery_session_command='ci',repo=str(repo),delivery_id=item['id'],
                          require_workflow=[],checks=1,interval=2,auth='none',json=False,_devtool_json=False)

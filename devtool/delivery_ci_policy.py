@@ -164,9 +164,26 @@ def assert_observation(summary: Mapping[str, Any], policy: DeliveryCIPolicy) -> 
     if summary.get('release_qualified') is not False:
         raise DeliveryCIPolicyError('CI receipt illegally asserted release qualification')
     if summary.get('state') == 'REQUIRED_CHECKS_PASSED':
+        evidence = summary.get('exact_run_evidence')
+        if (not isinstance(evidence, dict) or evidence.get('verified') is not True
+                or evidence.get('release_qualified') is not False
+                or evidence.get('evidence_scope') != 'per-run-GET-and-exact-attempt-jobs'):
+            raise DeliveryCIPolicyError('CI pass lacks independently verified exact-run/attempt evidence')
+        evidence_rows = {row['name']: row for row in evidence.get('runs', ())
+                         if isinstance(row, dict) and 'name' in row}
         runs = {r['name']: r for r in summary.get('runs', ()) if isinstance(r, dict) and 'name' in r}
+        if len(evidence_rows) != len(policy.requirements):
+            raise DeliveryCIPolicyError('CI pass has incomplete exact-run evidence')
         for requirement in policy.requirements:
             row = runs.get(requirement.name)
+            attested = evidence_rows.get(requirement.name)
             if (not row or row.get('workflow_id') != requirement.workflow_id or
                     row.get('status') != 'completed' or row.get('conclusion') != 'success'):
                 raise DeliveryCIPolicyError('CI pass has missing or mismatched workflow ID/result')
+            if (not attested or attested.get('run_id') != row.get('id') or
+                    attested.get('attempt') != row.get('attempt') or
+                    attested.get('workflow_id') != requirement.workflow_id or
+                    attested.get('source_bound') is not True or
+                    attested.get('jobs_scope') != 'exact-run-attempt' or
+                    type(attested.get('jobs_success')) is not int or attested['jobs_success'] < 1):
+                raise DeliveryCIPolicyError('CI pass has unbound exact-run/attempt job evidence')

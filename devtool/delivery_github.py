@@ -438,18 +438,35 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
             state='CHECKS_RUNNING'
         else:
             state='REQUIRED_CHECKS_PASSED'
+        exact_evidence = None
+        if state == 'REQUIRED_CHECKS_PASSED' and workflow_ids is not None:
+            # A run-list row is not proof that a current *attempt* finished.
+            # The source/PR identity and the exact provider run+jobs are independently
+            # checked, without dispatching, rerunning or guessing any IDs.
+            from .delivery_ci_evidence import verify_exact_attempts
+            exact_evidence = verify_exact_attempts(
+                client, item['repository'], records, workflow_ids,
+                validate_run=lambda row: _ci_candidate(row, item, pr_info, merge_sha))
+            if not exact_evidence['verified']:
+                state = 'CHECKS_EVIDENCE_PENDING'
         if state == 'REQUIRED_CHECKS_PASSED':
-            # Detect a policy/head/merge ref change while runs() was in flight.
+            # Detect a policy/head/merge ref change while all remote calls were in flight.
             if policy_guard is not None:
                 policy_guard()
             if live_provenance() != merge_sha:
                 raise DeliverySessionError('PR merge identity changed during CI poll; qualification blocked')
         diag = []
         if state == 'CHECKS_FAILED':
+            from .delivery_ci_evidence import failed_job_details
             for match in failures:
-                diag.append({'run_id': match['id'], 'name':match['name'],
-                             'jobs':_failed_jobs(client,item['repository'],match)})
+                diag.append({'run_id': match['id'], 'attempt': match['attempt'],
+                             'name': match['name'],
+                             'url': match['url'],
+                             'jobs': _failed_jobs(client, item['repository'], match),
+                             'detailed_jobs': failed_job_details(client, item['repository'], match),
+                             'log_content_collected': False})
         summary = {'state':state, 'checks_qualified':state=='REQUIRED_CHECKS_PASSED',
+                   'exact_run_evidence':exact_evidence,
                    'source_sha':item['head_sha'], 'required':list(required),
                    'policy_sha256':policy_sha256 or None,
                    'policy_mismatches':sorted(mismatched_ids),
@@ -461,7 +478,7 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
         snapshots.append({'poll':i+1,'state':state,'run_count':len(records)})
         if progress:
             progress(summary)
-        if state not in ('WAITING_REGISTRATION','CHECKS_RUNNING'):
+        if state not in ('WAITING_REGISTRATION','CHECKS_RUNNING','CHECKS_EVIDENCE_PENDING'):
             break
         if i+1 < checks:
             sleep(interval)

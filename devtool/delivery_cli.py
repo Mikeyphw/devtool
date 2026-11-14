@@ -86,6 +86,14 @@ def run_delivery_command(args: Any) -> int:
             print(f"  {run['name']}: {run['conclusion'] or run['status']} {run['url']}",flush=True)
         for missing in payload.get('missing',[]):
             print(f'  Waiting registration: {missing}',flush=True)
+        evidence = payload.get('exact_run_evidence') or {}
+        for issue in evidence.get('issues', []):
+            print(f"  Evidence pending: {issue['workflow']} — {issue['reason']}", flush=True)
+        for item in payload.get('failures', []):
+            for job in item.get('detailed_jobs', []):
+                print(f"  Failed job: {job.get('job', '-')}: {job.get('classification', '-')} {job.get('url', '')}",flush=True)
+                for step in job.get('steps', []):
+                    print(f"    Step: {step.get('name', '-')} — {step.get('conclusion', '-')}",flush=True)
         print('Release qualification: NOT PERFORMED',flush=True)
     else:
         print(f'Devtool delivery: {operation} — {payload["stage"]}',flush=True)
