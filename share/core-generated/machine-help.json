@@ -39973,9 +39973,283 @@
       ],
       "stability": "experimental",
       "summary": "Read-only delivery evidence report"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.session.push",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.session.push.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "delivery_id",
+          "help": "Exact 32-character session ID",
+          "hidden": false,
+          "id": "cli.option.delivery.session.push.delivery_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Explicitly approve remote mutation",
+          "hidden": false,
+          "id": "cli.option.delivery.session.push.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Machine-readable output",
+          "hidden": false,
+          "id": "cli.option.delivery.session.push.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "session",
+        "push"
+      ],
+      "stability": "experimental",
+      "summary": "Source-bound, journaled, non-force Git push"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.session.pr",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "delivery_id",
+          "help": "Exact 32-character session ID",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.delivery_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "title",
+          "help": "New PR title",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.title",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--title"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "body",
+          "help": "New PR body",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.body",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--body"
+          ]
+        },
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "GitHub authentication source",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Explicitly approve remote mutation",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Machine-readable output",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "session",
+        "pr"
+      ],
+      "stability": "experimental",
+      "summary": "Find or explicitly create one source-bound draft PR"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.session.ci",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.session.ci.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "delivery_id",
+          "help": "Exact 32-character session ID",
+          "hidden": false,
+          "id": "cli.option.delivery.session.ci.delivery_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "require_workflow",
+          "help": "Required workflow name (repeatable)",
+          "hidden": false,
+          "id": "cli.option.delivery.session.ci.require_workflow",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--require-workflow"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "checks",
+          "help": "Maximum finite polling observations",
+          "hidden": false,
+          "id": "cli.option.delivery.session.ci.checks",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--checks"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "interval",
+          "help": "Seconds between CI observations",
+          "hidden": false,
+          "id": "cli.option.delivery.session.ci.interval",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--interval"
+          ]
+        },
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "GitHub authentication source",
+          "hidden": false,
+          "id": "cli.option.delivery.session.ci.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Machine-readable output",
+          "hidden": false,
+          "id": "cli.option.delivery.session.ci.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "session",
+        "ci"
+      ],
+      "stability": "experimental",
+      "summary": "Registration-aware, source-bound GitHub CI observation"
     }
   ],
-  "digest": "5f10c9ea6372f276150b826791854605ff9070876c18410b148cc1efa3e6c8bf",
+  "digest": "90e1b6db1bed2a8f91415567a5e9846284baa60063a43a559f7a77ca90777ff5",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -40178,7 +40452,10 @@
       "delivery",
       "delivery plan",
       "delivery session",
+      "delivery session ci",
       "delivery session plan",
+      "delivery session pr",
+      "delivery session push",
       "delivery session report",
       "delivery session resume",
       "delivery session start",
@@ -40512,11 +40789,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 524,
-    "registry_command_count": 398
+    "parser_command_count": 527,
+    "registry_command_count": 401
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "89f42ecc3210c27c17114cb70ba875158e136a3afaf44c6276707a2433f9704b",
+  "registry_digest": "62cc692b60da35c1b0edf5e10fe3e986d7d50a3208495149701442a43fb38716",
   "registry_schema_version": 1,
   "schema_version": 1
 }

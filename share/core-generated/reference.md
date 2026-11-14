@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `89f42ecc3210c27c17114cb70ba875158e136a3afaf44c6276707a2433f9704b`
+Registry digest: `62cc692b60da35c1b0edf5e10fe3e986d7d50a3208495149701442a43fb38716`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -404,6 +404,9 @@ This file is generated from the CORE command/config registry and the canonical C
 - `delivery session status` — Inspect delivery session without mutation
 - `delivery session resume` — Inspect safe resumption; never retry a mutation
 - `delivery session report` — Read-only delivery evidence report
+- `delivery session push` — Source-bound, journaled, non-force Git push
+- `delivery session pr` — Find or explicitly create one source-bound draft PR
+- `delivery session ci` — Registration-aware, source-bound GitHub CI observation
 
 ## Configuration documents
 

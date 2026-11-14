@@ -246,7 +246,9 @@ def _public(record: Mapping[str, Any]) -> dict[str, Any]:
     # Do not advertise success until relevant remote evidence has been verified.
     return {key: record[key] for key in ("schema", "id", "stage", "repo_root", "repository",
         "head", "base", "head_sha", "overlay", "created_at", "updated_at",
-        "remote_verified", "release_qualified")}
+        "remote_verified", "release_qualified")} | {
+        key: record[key] for key in ("pr", "ci") if key in record
+    }
 
 
 def status(identity: str, *, state_root: Path | None = None, inspect_git: bool = True) -> dict[str, Any]:
@@ -324,7 +326,123 @@ def record_intent(identity: str, operation: str, key: str, *, approved: bool,
 
 def report(identity: str, *, state_root: Path | None = None) -> dict[str, Any]:
     result = status(identity, state_root=state_root)
-    result["result"] = "pending" if result["resumable"] else "requires_reconciliation"
-    result["delivery_completed"] = False
-    result["message"] = "Session tracking only; no push, PR, Actions, or release was performed"
+    ci = result.get('ci') or {}
+    result['result'] = ('required_checks_passed' if ci.get('checks_qualified') else
+                        'pending' if result['resumable'] else 'requires_reconciliation')
+    result['delivery_completed'] = bool(result.get('pr') and ci.get('checks_qualified'))
+    result['release_qualified'] = False
+    result['message'] = ('Local and remote evidence only; formal release qualification not performed')
     return result
+
+
+def confirm_intent(identity: str, operation: str, key: str,
+                   evidence: Mapping[str, Any], *, state_root: Path | None = None,
+                   optional: bool = False) -> dict[str, Any]:
+    """Resolve a previously journaled mutation using independently observed proof.
+
+    The caller must read the external provider *after* a possibly uncertain
+    operation; this function never performs the mutation and never authorizes a
+    replay. An absent intent is acceptable only for pure read-only discovery.
+    """
+    if operation not in _OPERATIONS or not isinstance(key, str):
+        raise DeliverySessionError('Invalid mutation intent reconciliation')
+    proof = dict(evidence)
+    folder = _state_root(state_root)
+    with _locked(folder):
+        path = _path(folder, identity)
+        record = _read(path)
+        if proof.get('head_sha') != record['head_sha']:
+            raise DeliverySessionError('Mutation evidence source SHA does not match session')
+        if operation == 'pr_create':
+            value = proof.get('pr_number')
+            if type(value) is not int or value < 1:
+                raise DeliverySessionError('PR evidence requires an exact PR number')
+        key_hash = hashlib.sha256(key.encode('utf-8')).hexdigest()
+        items = [x for x in record['intents'] if x['operation'] == operation and x['key_sha256'] == key_hash]
+        if not items:
+            if optional:
+                return {'state':'not-recorded','confirmed':False}
+            raise DeliverySessionError('Mutation intent was never recorded')
+        if len(items) != 1:
+            raise DeliverySessionError('Duplicate mutation journal entries')
+        found = items[0]
+        if found['state'] == 'confirmed':
+            if found.get('evidence') != proof:
+                raise DeliverySessionError('Conflicting mutation reconciliation evidence')
+            return {'state':'confirmed','confirmed':True,'reconciled':False}
+        if found['state'] != 'unresolved':
+            raise DeliverySessionError('Mutation intent state is invalid')
+        found['state'] = 'confirmed'
+        found['evidence'] = proof
+        found['confirmed_at'] = _utc()
+        record['updated_at'] = _utc()
+        record['events'].append({'kind':'mutation_confirmed','at':record['updated_at'],
+                                 'operation':operation, 'intent_id':found['id']})
+        _write(path,record)
+        return {'state':'confirmed','confirmed':True,'reconciled':True}
+
+
+def record_pr_observation(identity: str, observation: Mapping[str, Any], *,
+                          state_root: Path | None = None) -> dict[str, Any]:
+    """Persist independently verified PR identity; never a POST intent."""
+    pr = dict(observation)
+    if type(pr.get('number')) is not int or pr['number'] <= 0:
+        raise DeliverySessionError('Invalid PR observation identity')
+    if not isinstance(pr.get('url'), str) or len(pr['url']) > 300:
+        raise DeliverySessionError('Invalid PR observation URL')
+    folder = _state_root(state_root)
+    with _locked(folder):
+        path = _path(folder, identity)
+        record = _read(path)
+        if any(pr.get(field) != record[field] for field in ('head_sha','head','base')):
+            raise DeliverySessionError('PR observation source, head or base differs from session')
+        expected = f"https://github.com/{record['repository']}/pull/{pr['number']}"
+        if pr['url'] != expected:
+            raise DeliverySessionError('PR URL does not belong to session repository')
+        prior = record.get('pr')
+        if prior is not None and prior['number'] != pr['number']:
+            raise DeliverySessionError('PR observation conflicts with bound PR number')
+        record['pr'] = {k:pr.get(k) for k in ('number','head','base','head_sha','url','merge_commit_sha')}
+        record['updated_at'] = _utc()
+        if prior != record['pr']:
+            record['events'].append({'kind':'pr_observed','at':record['updated_at'],
+                                     'number':pr['number']})
+        _write(path,record)
+    return dict(record['pr'])
+
+
+def record_ci_observation(identity: str, observation: Mapping[str, Any], *,
+                          state_root: Path | None = None) -> dict[str, Any]:
+    """Checkpoint a bounded, source-bound CI snapshot; never invent success."""
+    obs = dict(observation)
+    if obs.get('state') not in {'OBSERVED_ONLY','WAITING_REGISTRATION','CHECKS_RUNNING',
+                                 'CHECKS_FAILED','REQUIRED_CHECKS_PASSED','BLOCKED_AMBIGUOUS'}:
+        raise DeliverySessionError('Unknown CI observation state')
+    if not isinstance(obs.get('runs'), list) or len(obs['runs']) > 100:
+        raise DeliverySessionError('Invalid bounded CI run inventory')
+    if not isinstance(obs.get('required'), list) or len(obs['required']) > 25:
+        raise DeliverySessionError('Invalid required check declaration')
+    if bool(obs.get('checks_qualified')) != (obs['state'] == 'REQUIRED_CHECKS_PASSED'):
+        raise DeliverySessionError('CI qualification state is inconsistent')
+    if len(json.dumps(obs, ensure_ascii=False)) > 140_000:
+        raise DeliverySessionError('CI observation exceeds allowed budget')
+    folder = _state_root(state_root)
+    with _locked(folder):
+        path = _path(folder, identity)
+        record = _read(path)
+        if obs.get('source_sha') != record['head_sha']:
+            raise DeliverySessionError('CI observation source SHA differs from session')
+        record['ci'] = obs
+        record['updated_at'] = _utc()
+        record['events'].append({'kind':'ci_observed','at':record['updated_at'],
+                                 'state':obs['state'],'runs':len(obs['runs'])})
+        if len(record['events']) > 500:
+            # Observational progress is expendable; preserve durable mutation
+            # intent/confirmation events and the most recent CI observations.
+            critical = [event for event in record['events']
+                        if event.get('kind') != 'ci_observed']
+            recent = [event for event in record['events']
+                      if event.get('kind') == 'ci_observed'][-100:]
+            record['events'] = sorted([*critical,*recent],key=lambda x:x['at'])
+        _write(path,record)
+    return {'state':obs['state'],'checks_qualified':obs['checks_qualified']}

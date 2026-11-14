@@ -6915,6 +6915,57 @@
       },
       "options": [],
       "stable_id": "cli.command.delivery.session.report"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "delivery",
+        "session",
+        "push"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "delivery",
+        "stability": "experimental",
+        "summary": "Source-bound, journaled, non-force Git push",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.delivery.session.push"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "delivery",
+        "session",
+        "pr"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "delivery",
+        "stability": "experimental",
+        "summary": "Find or explicitly create one source-bound draft PR",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.delivery.session.pr"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "delivery",
+        "session",
+        "ci"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "delivery",
+        "stability": "experimental",
+        "summary": "Registration-aware, source-bound GitHub CI observation",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.delivery.session.ci"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -66829,6 +66880,418 @@
       "sensitive": false,
       "stable_id": "cli.option.delivery.session.report.json",
       "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "push"
+        ],
+        "required": false
+      },
+      "scope": "delivery session push",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.push.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "delivery_id",
+        "help": "Exact 32-character session ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "push"
+        ],
+        "required": true
+      },
+      "scope": "delivery session push",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.push.delivery_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Explicitly approve remote mutation",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "push"
+        ],
+        "required": false
+      },
+      "scope": "delivery session push",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.push.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Machine-readable output",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "push"
+        ],
+        "required": false
+      },
+      "scope": "delivery session push",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.push.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "pr"
+        ],
+        "required": false
+      },
+      "scope": "delivery session pr",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.pr.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "delivery_id",
+        "help": "Exact 32-character session ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "pr"
+        ],
+        "required": true
+      },
+      "scope": "delivery session pr",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.pr.delivery_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--title",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "title",
+        "help": "New PR title",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "pr"
+        ],
+        "required": false
+      },
+      "scope": "delivery session pr",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.pr.title",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--body",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "body",
+        "help": "New PR body",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "pr"
+        ],
+        "required": false
+      },
+      "scope": "delivery session pr",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.pr.body",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "GitHub authentication source",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "pr"
+        ],
+        "required": false
+      },
+      "scope": "delivery session pr",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.pr.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--yes",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "yes",
+        "help": "Explicitly approve remote mutation",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "pr"
+        ],
+        "required": false
+      },
+      "scope": "delivery session pr",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.pr.yes",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Machine-readable output",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "pr"
+        ],
+        "required": false
+      },
+      "scope": "delivery session pr",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.pr.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "ci"
+        ],
+        "required": false
+      },
+      "scope": "delivery session ci",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.ci.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "delivery_id",
+        "help": "Exact 32-character session ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "ci"
+        ],
+        "required": true
+      },
+      "scope": "delivery session ci",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.ci.delivery_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--require-workflow",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "require_workflow",
+        "help": "Required workflow name (repeatable)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "ci"
+        ],
+        "required": false
+      },
+      "scope": "delivery session ci",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.ci.require_workflow",
+      "value_kind": "_AppendAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--checks",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "checks",
+        "help": "Maximum finite polling observations",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "ci"
+        ],
+        "required": false
+      },
+      "scope": "delivery session ci",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.ci.checks",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--interval",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "interval",
+        "help": "Seconds between CI observations",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "ci"
+        ],
+        "required": false
+      },
+      "scope": "delivery session ci",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.ci.interval",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "env",
+          "gh",
+          "none"
+        ],
+        "dest": "auth",
+        "help": "GitHub authentication source",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "ci"
+        ],
+        "required": false
+      },
+      "scope": "delivery session ci",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.ci.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Machine-readable output",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "ci"
+        ],
+        "required": false
+      },
+      "scope": "delivery session ci",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.ci.json",
+      "value_kind": "_StoreTrueAction"
     }
   ],
   "parser": {
@@ -94288,6 +94751,331 @@
                                 "dest": "json",
                                 "group": null,
                                 "help": "Emit machine-readable result",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "Source-bound, journaled, non-force Git push",
+                          "help_present": true,
+                          "name": "push",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "delivery_id",
+                                "group": null,
+                                "help": "Exact 32-character session ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--id"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "yes",
+                                "group": null,
+                                "help": "Explicitly approve remote mutation",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Machine-readable output",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "Find or explicitly create one source-bound draft PR",
+                          "help_present": true,
+                          "name": "pr",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "delivery_id",
+                                "group": null,
+                                "help": "Exact 32-character session ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--id"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "title",
+                                "group": null,
+                                "help": "New PR title",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--title"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "body",
+                                "group": null,
+                                "help": "New PR body",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--body"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "GitHub authentication source",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "yes",
+                                "group": null,
+                                "help": "Explicitly approve remote mutation",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--yes"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Machine-readable output",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "Registration-aware, source-bound GitHub CI observation",
+                          "help_present": true,
+                          "name": "ci",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "delivery_id",
+                                "group": null,
+                                "help": "Exact 32-character session ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--id"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "append",
+                                "choices": null,
+                                "const": null,
+                                "default": [],
+                                "dest": "require_workflow",
+                                "group": null,
+                                "help": "Required workflow name (repeatable)",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--require-workflow"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": 1,
+                                "dest": "checks",
+                                "group": null,
+                                "help": "Maximum finite polling observations",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--checks"
+                                ],
+                                "required": false,
+                                "type": "int"
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": 5.0,
+                                "dest": "interval",
+                                "group": null,
+                                "help": "Seconds between CI observations",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--interval"
+                                ],
+                                "required": false,
+                                "type": "float"
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "env",
+                                  "gh",
+                                  "none"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "group": null,
+                                "help": "GitHub authentication source",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Machine-readable output",
                                 "metavar": null,
                                 "mutex": null,
                                 "nargs": 0,

@@ -103,7 +103,7 @@ def test_cli_human_default_and_json_opt_in(repo, tmp_path, capsys, monkeypatch):
                            head=None, overlay=None, json=False)
     assert run_delivery_command(args) == 0
     captured = capsys.readouterr().out
-    assert "Devtool delivery: start" in captured and "not verified" in captured
+    assert "Devtool delivery: start" in captured and "Release qualification: NOT PERFORMED" in captured
     assert "{\"schema\"" not in captured
     args.delivery_session_command = "plan"
     args.json = True
