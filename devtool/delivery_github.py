@@ -71,6 +71,24 @@ def _ls_remote(repo: str, branch: str) -> str | None:
     return sha.lower()
 
 
+def _assert_nonforce_fast_forward(repo: str, old_sha: str, new_sha: str) -> None:
+    """Require an observed remote tip to be an existing ancestor in local Git.
+
+    A regular `git push` then supplies a second server-side non-fast-forward
+    check. No fetch, reset, force, or lease override is performed here.
+    """
+    if not _SHA.fullmatch(old_sha) or not _SHA.fullmatch(new_sha):
+        raise DeliverySessionError('Remote and target commits must have full Git SHA identities')
+    try:
+        p = subprocess.run(['git', '-C', repo, 'merge-base', '--is-ancestor',
+                            old_sha, new_sha],capture_output=True, text=True,
+                           timeout=12,check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise DeliverySessionError('Cannot prove the existing remote head is an ancestor') from exc
+    if p.returncode != 0:
+        raise DeliverySessionError('Remote head differs from session source and is not a proven fast-forward ancestor')
+
+
 def push(session_id: str, *, yes: bool = False, state_root: Path | None = None,
          remote_probe: Callable[[str, str], str | None] = _ls_remote,
          git_push: Callable[[str, str], int] | None = None) -> dict[str, Any]:
@@ -83,10 +101,11 @@ def push(session_id: str, *, yes: bool = False, state_root: Path | None = None,
         return {'state': 'PUSH_VERIFIED', 'pushed_now': False, 'head_sha': current,
                 'repository': item['repository'], 'source_bound': True}
     if current is not None:
-        raise DeliverySessionError('Remote head differs from session source; no force push permitted')
+        _assert_nonforce_fast_forward(item['repo_root'], current, item['head_sha'])
     if not yes:
         return {'state': 'PUSH_REQUIRES_APPROVAL', 'pushed_now': False,
-                'head_sha': item['head_sha'], 'source_bound': False}
+                'head_sha': item['head_sha'], 'remote_old_sha': current,
+                'mode': 'fast-forward' if current else 'create', 'source_bound': False}
     intent = record_intent(session_id, 'push', key, approved=True, state_root=state_root)
     if not intent['new']:
         raise DeliverySessionError('Previous push intent cannot be replayed; reconcile remote branch')
@@ -336,6 +355,9 @@ def _failed_jobs(client: GitHubActionsClient, slug: str, run: Mapping[str, Any])
 
 def observe_ci(session_id: str, *, required: tuple[str,...] = (),
                checks: int = 1, interval: float = 5, state_root: Path | None = None,
+               workflow_ids: Mapping[str, int] | None = None,
+               required_event: str = '',
+               policy_sha256: str = "", policy_guard: Callable[[], None] | None = None,
                client: GitHubActionsClient | None = None,
                auth: str = 'auto', progress: Callable[[dict[str,Any]], None] | None = None,
                sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
@@ -344,6 +366,15 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
     required = tuple(dict.fromkeys(str(x).strip() for x in required))
     if len(required) > 25 or any(not x or len(x) > 160 for x in required):
         raise DeliverySessionError('Required workflow identifiers must be 1..25 bounded names')
+    if required_event not in ('', 'pull_request'):
+        raise DeliverySessionError('Unsupported CI policy event')
+    if workflow_ids is not None:
+        if (set(workflow_ids) != set(required) or
+                any(type(value) is not int or value <= 0 for value in workflow_ids.values()) or
+                len(policy_sha256) != 64 or any(c not in '0123456789abcdef' for c in policy_sha256)):
+            raise DeliverySessionError('Workflow IDs require the exact named required set and valid policy SHA-256')
+    if policy_guard is not None:
+        policy_guard()
     item = _checked(session_id, state_root=state_root)
     if client is None:
         token, _ = resolve_token(auth)
@@ -368,13 +399,15 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
 
     snapshots = []
     for i in range(checks):
+        if policy_guard is not None:
+            policy_guard()
         merge_sha = live_provenance()
         raw = client.runs(item['repository'], limit=100)
         seen: dict[str,dict[str,Any]] = {}
         ambiguous = []
         for candidate in raw:
             match = _ci_candidate(candidate,item,pr_info,merge_sha)
-            if match is None:
+            if match is None or (required_event and match['event'] != required_event):
                 continue
             # Workflow name may be duplicated across workflow files. Reject
             # unresolvable collisions instead of choosing newest arbitrarily.
@@ -389,9 +422,11 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
                 seen[name] = match
         records = sorted(seen.values(), key=lambda x:x['name'])
         missing = [name for name in required if name not in seen]
+        mismatched_ids = [name for name, expected in (workflow_ids or {}).items()
+                          if name in seen and seen[name]['workflow_id'] != expected]
         failures = [r for r in records if r['name'] in required and r['conclusion'] not in ('success',None)]
         unfinished = [r for r in records if r['name'] in required and r['status'] != 'completed']
-        if ambiguous:
+        if ambiguous or mismatched_ids:
             state='BLOCKED_AMBIGUOUS'
         elif not required:
             state='OBSERVED_ONLY'
@@ -404,7 +439,9 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
         else:
             state='REQUIRED_CHECKS_PASSED'
         if state == 'REQUIRED_CHECKS_PASSED':
-            # Detect a head or merge ref change while runs() was in flight.
+            # Detect a policy/head/merge ref change while runs() was in flight.
+            if policy_guard is not None:
+                policy_guard()
             if live_provenance() != merge_sha:
                 raise DeliverySessionError('PR merge identity changed during CI poll; qualification blocked')
         diag = []
@@ -414,6 +451,8 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
                              'jobs':_failed_jobs(client,item['repository'],match)})
         summary = {'state':state, 'checks_qualified':state=='REQUIRED_CHECKS_PASSED',
                    'source_sha':item['head_sha'], 'required':list(required),
+                   'policy_sha256':policy_sha256 or None,
+                   'policy_mismatches':sorted(mismatched_ids),
                    'missing': missing, 'ambiguous': sorted(set(ambiguous)),
                    'runs': records, 'failures':diag,
                    'inventory_limit':100, 'poll':i+1,

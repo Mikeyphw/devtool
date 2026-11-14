@@ -38,16 +38,33 @@ def run_delivery_command(args: Any) -> int:
                              body=str(getattr(args,'body','') or ''),
                              auth=str(getattr(args,'auth','auto') or 'auto'))
             else:
+                from .delivery_ci_policy import (load_policy, check_requested,
+                                                 assert_observation)
+                repo_name = str(bound['repository'])
+                base_branch = str(bound['base'])
+                policy = load_policy(root, expected_repository=repo_name,
+                                     expected_base=base_branch)
+                check_requested(tuple(getattr(args,'require_workflow',[]) or ()), policy)
+                def guard() -> None:
+                    again = load_policy(root, expected_repository=repo_name,
+                                        expected_base=base_branch)
+                    if again.sha256 != policy.sha256:
+                        raise DeliverySessionError('Committed CI policy changed during observation')
                 def progress(s:dict[str,Any])->None:
                     if bool(getattr(args,'json',False) or getattr(args,'_devtool_json',False)):
                         return
                     print(f"DEVTOOL_DELIVERY_CI_CHECK poll={s['poll']} state={s['state']} "
-                          f"matched={len(s['runs'])} missing={len(s['missing'])}",flush=True)
-                payload = observe_ci(identity,required=tuple(getattr(args,'require_workflow',[]) or []),
+                          f"matched={len(s['runs'])} missing={len(s['missing'])} "
+                          f"policy={policy.sha256[:12]}",flush=True)
+                payload = observe_ci(identity,required=policy.names,
+                                     workflow_ids=policy.workflow_ids, required_event="pull_request",
+                                     policy_sha256=policy.sha256,policy_guard=guard,
                                      checks=int(getattr(args,'checks',1)),
                                      interval=float(getattr(args,'interval',5)),
                                      auth=str(getattr(args,'auth','auto') or 'auto'),
                                      progress=progress)
+                guard()
+                assert_observation(payload, policy)
         else:
             raise DeliverySessionError('Unsupported delivery session command')
     except (DeliverySessionError, OSError, ValueError) as exc:
@@ -78,10 +95,12 @@ def run_delivery_command(args: Any) -> int:
         if payload.get('disposition'):
             print(f'Next: {payload["disposition"]} — {payload["next_action"]}',flush=True)
         print('Release qualification: NOT PERFORMED',flush=True)
-    if operation=='ci' and payload['state'] in ('WAITING_REGISTRATION','CHECKS_RUNNING','BLOCKED_AMBIGUOUS'):
-        return 2
-    if operation=='ci' and payload['state']=='CHECKS_FAILED':
-        return 1
+    if operation=='ci':
+        if payload['state']=='CHECKS_FAILED':
+            return 1
+        # An observed-only or unrecognized state is never a CI success.
+        if payload['state']!='REQUIRED_CHECKS_PASSED' or payload.get('checks_qualified') is not True:
+            return 2
     if operation in ('push','pr') and payload['state'].endswith('REQUIRES_APPROVAL'):
         return 2
     return 0
