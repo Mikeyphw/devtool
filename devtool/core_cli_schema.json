@@ -6814,6 +6814,107 @@
       },
       "options": [],
       "stable_id": "cli.command.onboard"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "delivery",
+        "session"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "delivery",
+        "stability": "experimental",
+        "summary": "Delivery session journal and safe recovery",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.delivery.session"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "delivery",
+        "session",
+        "plan"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "delivery",
+        "stability": "experimental",
+        "summary": "Read-only source-bound delivery session plan",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.delivery.session.plan"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "delivery",
+        "session",
+        "start"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "delivery",
+        "stability": "experimental",
+        "summary": "Create a private PLANNED delivery session",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.delivery.session.start"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "delivery",
+        "session",
+        "status"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "delivery",
+        "stability": "experimental",
+        "summary": "Inspect delivery session without mutation",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.delivery.session.status"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "delivery",
+        "session",
+        "resume"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "delivery",
+        "stability": "experimental",
+        "summary": "Inspect safe resumption; never retry a mutation",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.delivery.session.resume"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "delivery",
+        "session",
+        "report"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "delivery",
+        "stability": "experimental",
+        "summary": "Read-only delivery evidence report",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.delivery.session.report"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -66277,6 +66378,457 @@
       "sensitive": false,
       "stable_id": "cli.option.capabilities.width",
       "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session"
+        ],
+        "required": false
+      },
+      "scope": "delivery session",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "delivery session plan",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.plan.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--base",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "base",
+        "help": "Target base branch",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "delivery session plan",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.plan.base",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--head",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "head",
+        "help": "Checked-out feature branch",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "delivery session plan",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.plan.head",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--overlay",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "overlay",
+        "help": "Read-only overlay SHA-256 inventory",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "delivery session plan",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.plan.overlay",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit machine-readable result",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "delivery session plan",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.plan.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "start"
+        ],
+        "required": false
+      },
+      "scope": "delivery session start",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.start.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--base",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "base",
+        "help": "Target base branch",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "start"
+        ],
+        "required": false
+      },
+      "scope": "delivery session start",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.start.base",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--head",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "head",
+        "help": "Checked-out feature branch",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "start"
+        ],
+        "required": false
+      },
+      "scope": "delivery session start",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.start.head",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--overlay",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "overlay",
+        "help": "Read-only overlay SHA-256 inventory",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "start"
+        ],
+        "required": false
+      },
+      "scope": "delivery session start",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.start.overlay",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit machine-readable result",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "start"
+        ],
+        "required": false
+      },
+      "scope": "delivery session start",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.start.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "status"
+        ],
+        "required": false
+      },
+      "scope": "delivery session status",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.status.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "delivery_id",
+        "help": "Exact 32-character session ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "status"
+        ],
+        "required": true
+      },
+      "scope": "delivery session status",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.status.delivery_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit machine-readable result",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "status"
+        ],
+        "required": false
+      },
+      "scope": "delivery session status",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.status.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "resume"
+        ],
+        "required": false
+      },
+      "scope": "delivery session resume",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.resume.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "delivery_id",
+        "help": "Exact 32-character session ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "resume"
+        ],
+        "required": true
+      },
+      "scope": "delivery session resume",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.resume.delivery_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit machine-readable result",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "resume"
+        ],
+        "required": false
+      },
+      "scope": "delivery session resume",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.resume.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "report"
+        ],
+        "required": false
+      },
+      "scope": "delivery session report",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.report.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "delivery_id",
+        "help": "Exact 32-character session ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "report"
+        ],
+        "required": true
+      },
+      "scope": "delivery session report",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.report.delivery_id",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit machine-readable result",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "report"
+        ],
+        "required": false
+      },
+      "scope": "delivery session report",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.report.json",
+      "value_kind": "_StoreTrueAction"
     }
   ],
   "parser": {
@@ -93400,6 +93952,371 @@
                     "groups": [],
                     "mutexes": [],
                     "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Delivery session journal and safe recovery",
+                  "help_present": true,
+                  "name": "session",
+                  "parser": {
+                    "actions": [],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": {
+                      "children": [
+                        {
+                          "aliases": [],
+                          "help": "Read-only source-bound delivery session plan",
+                          "help_present": true,
+                          "name": "plan",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "main",
+                                "dest": "base",
+                                "group": null,
+                                "help": "Target base branch",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--base"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "head",
+                                "group": null,
+                                "help": "Checked-out feature branch",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--head"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "overlay",
+                                "group": null,
+                                "help": "Read-only overlay SHA-256 inventory",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--overlay"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit machine-readable result",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "Create a private PLANNED delivery session",
+                          "help_present": true,
+                          "name": "start",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "main",
+                                "dest": "base",
+                                "group": null,
+                                "help": "Target base branch",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--base"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "head",
+                                "group": null,
+                                "help": "Checked-out feature branch",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--head"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "overlay",
+                                "group": null,
+                                "help": "Read-only overlay SHA-256 inventory",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--overlay"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit machine-readable result",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "Inspect delivery session without mutation",
+                          "help_present": true,
+                          "name": "status",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "delivery_id",
+                                "group": null,
+                                "help": "Exact 32-character session ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--id"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit machine-readable result",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "Inspect safe resumption; never retry a mutation",
+                          "help_present": true,
+                          "name": "resume",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "delivery_id",
+                                "group": null,
+                                "help": "Exact 32-character session ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--id"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit machine-readable result",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "Read-only delivery evidence report",
+                          "help_present": true,
+                          "name": "report",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "delivery_id",
+                                "group": null,
+                                "help": "Exact 32-character session ID",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--id"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit machine-readable result",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        }
+                      ],
+                      "dest": "delivery_session_command",
+                      "group": null,
+                      "help": null,
+                      "metavar": null,
+                      "required": true
+                    },
                     "usage": null
                   }
                 }

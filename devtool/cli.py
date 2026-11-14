@@ -15855,6 +15855,10 @@ def _main_after_parse(
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0 if bool(payload.get("validation", {}).get("ok", False)) else 1
 
+    if args.command == "delivery" and getattr(args, "delivery_command", "") == "session":
+        from .delivery_cli import run_delivery_command
+        return run_delivery_command(args)
+
     if args.command == "delivery":
         repo = Path(args.repo or Path.cwd()).resolve()
         resolver = ArtifactEnvelopeResolver()
