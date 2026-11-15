@@ -362,3 +362,88 @@ def test_exact_run_get_rejects_invalid_attempt_even_with_green_job(ctx):
     cli.get_run=invalid
     result=strict(ctx,cli)
     assert result['state']=='CHECKS_EVIDENCE_PENDING'
+
+
+def test_ruleset_only_branch_verifies_real_required_job_without_classic_api(ctx):
+    """GitHub marks active-ruleset-only branches protected even with classic off."""
+    item, _, _ = ctx
+    cli = Client(item, [row(item)])
+    original = cli._get
+    def provider(path):
+        if path.endswith('/branches/main'):
+            return {'protected': True, 'protection': {'enabled': False,
+                'required_status_checks': {'enforcement_level': 'off',
+                                           'contexts': [], 'checks': []}}}
+        if '/protection/' in path:
+            raise AssertionError('No classic-protection endpoint may be read')
+        return original(path)
+    cli._get = provider
+    cli.branch_rules = lambda *args: [{'type': 'required_status_checks',
+        'parameters': {'required_status_checks': [
+            {'context': 'tests', 'integration_id': 15368}]}}]
+    result = strict(ctx, cli)
+    assert result['state'] == 'REQUIRED_CHECKS_PASSED'
+    assert result['checks_qualified'] is True
+    assert result['release_qualified'] is False
+    assert result['branch_rules']['required_status_contexts'] == ['tests']
+
+
+def test_ruleset_only_missing_job_still_blocks_ci(ctx):
+    item, _, _ = ctx
+    cli = Client(item, [row(item)])
+    original = cli._get
+    cli._get = lambda path: ({'protected': True, 'protection': {'enabled': False,
+        'required_status_checks': {'enforcement_level': 'off', 'contexts': [], 'checks': []}}}
+        if path.endswith('/branches/main') else original(path))
+    cli.branch_rules = lambda *args: [{'type': 'required_status_checks',
+        'parameters': {'required_status_checks': [
+            {'context': 'a-missing-job', 'integration_id': 15368}]}}]
+    result = strict(ctx, cli)
+    assert result['state'] == 'BRANCH_RULES_UNVERIFIED'
+    assert not result['checks_qualified']
+    assert 'not fully satisfied' in result['branch_rules_issue']
+
+
+@pytest.mark.parametrize('classic', [
+    {'enabled': False},
+    {'enabled': False, 'required_status_checks': {'enforcement_level': 'off', 'contexts': []}},
+    {'enabled': False, 'required_status_checks': {'enforcement_level': 'off', 'contexts': ['unverified'], 'checks': []}},
+    {'enabled': False, 'required_status_checks': {'enforcement_level': 'non_admins', 'contexts': [], 'checks': []}},
+    {'enabled': False, 'required_status_checks': {'enforcement_level': 'off', 'contexts': [], 'checks': [{'context': 'unverified'}]}},
+])
+def test_ruleset_only_incomplete_classic_proof_refuses(ctx, classic):
+    item, _, _ = ctx
+    cli = Client(item, [row(item)])
+    original = cli._get
+    cli._get = lambda path: ({'protected': True, 'protection': classic}
+        if path.endswith('/branches/main') else original(path))
+    cli.branch_rules = lambda *args: [{'type': 'pull_request'}]
+    result = strict(ctx, cli)
+    assert result['state'] == 'BRANCH_RULES_UNVERIFIED'
+    assert not result['checks_qualified']
+
+
+def test_ruleset_only_protected_without_effective_rules_refuses(ctx):
+    item, _, _ = ctx
+    cli = Client(item, [row(item)])
+    original = cli._get
+    cli._get = lambda path: ({'protected': True, 'protection': {'enabled': False,
+        'required_status_checks': {'enforcement_level': 'off', 'contexts': [], 'checks': []}}}
+        if path.endswith('/branches/main') else original(path))
+    cli.branch_rules = lambda *args: []
+    result = strict(ctx, cli)
+    assert result['state'] == 'BRANCH_RULES_UNVERIFIED'
+    assert result['checks_qualified'] is False
+
+
+def test_ruleset_only_required_workflows_not_inferred_passed(ctx):
+    item, _, _ = ctx
+    cli = Client(item, [row(item)])
+    original = cli._get
+    cli._get = lambda path: ({'protected': True, 'protection': {'enabled': False,
+        'required_status_checks': {'enforcement_level': 'off', 'contexts': [], 'checks': []}}}
+        if path.endswith('/branches/main') else original(path))
+    cli.branch_rules = lambda *args: [{'type': 'required_workflows', 'parameters': {'workflows': [{'workflow_id': 77}]}}]
+    result = strict(ctx, cli)
+    assert result['state'] == 'BRANCH_RULES_UNVERIFIED'
+    assert not result['checks_qualified']

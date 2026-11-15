@@ -251,21 +251,43 @@ def audit_branch_rules(client: Any, session: Mapping[str, Any],
         raise DeliverySessionError('Branch ruleset response is incomplete or invalid')
     contexts: list[str] = []
     if protected:
-        required = client._get(f'/repos/{slug}/branches/{base}/protection/required_status_checks')
-        if not isinstance(required, dict):
-            raise DeliverySessionError('Required protected-branch status checks unavailable')
-        raw_contexts = required.get('contexts', [])
-        raw_checks = required.get('checks', [])
-        if not isinstance(raw_contexts, list) or not isinstance(raw_checks, list):
-            raise DeliverySessionError('Protected-branch status check inventory invalid')
-        contexts.extend(raw_contexts)
-        for check in raw_checks:
-            if not isinstance(check, dict) or not isinstance(check.get('context'), str):
-                raise DeliverySessionError('Invalid protected-branch context')
-            # GitHub Actions is app 15368; app_id null means unconstrained.
-            if check.get('app_id') not in (None, 15368):
-                raise DeliverySessionError('Protected-branch check belongs to an external app')
-            contexts.append(check['context'])
+        # GitHub's `protected` flag includes *ruleset-only* protection. The
+        # classic `.../protection/required_status_checks` endpoint needs
+        # Administration(read) and may return 403 to a normal Actions token,
+        # even when no classic protection exists. Do not require that endpoint
+        # if the branch GET itself proves classic protection is disabled.
+        classic = branch.get('protection')
+        classic_disabled = isinstance(classic, dict) and classic.get('enabled') is False
+        if classic_disabled:
+            # A mere `enabled:false` is not enough: fail closed unless the
+            # same provider response explicitly reports *no* classic contexts.
+            advertised = classic.get('required_status_checks')
+            if (not isinstance(advertised, dict)
+                    or advertised.get('enforcement_level') != 'off'
+                    or advertised.get('contexts') != []
+                    or advertised.get('checks') != []):
+                raise DeliverySessionError('Disabled classic protection lacks complete off/empty evidence')
+            if not rules:
+                raise DeliverySessionError('Protected branch has no independently verified effective rules')
+        else:
+            # Classic protection is active or its state is ambiguous. Retain
+            # the independent endpoint read and block on 401/403/404/partial
+            # evidence rather than treating any uncertainty as a CI pass.
+            required = client._get(f'/repos/{slug}/branches/{base}/protection/required_status_checks')
+            if not isinstance(required, dict):
+                raise DeliverySessionError('Required protected-branch status checks unavailable')
+            raw_contexts = required.get('contexts', [])
+            raw_checks = required.get('checks', [])
+            if not isinstance(raw_contexts, list) or not isinstance(raw_checks, list):
+                raise DeliverySessionError('Protected-branch status check inventory invalid')
+            contexts.extend(raw_contexts)
+            for check in raw_checks:
+                if not isinstance(check, dict) or not isinstance(check.get('context'), str):
+                    raise DeliverySessionError('Invalid protected-branch context')
+                # GitHub Actions is app 15368; app_id null means unconstrained.
+                if check.get('app_id') not in (None, 15368):
+                    raise DeliverySessionError('Protected-branch check belongs to an external app')
+                contexts.append(check['context'])
     for rule in rules:
         kind = rule.get('type')
         if kind == 'required_workflows':
