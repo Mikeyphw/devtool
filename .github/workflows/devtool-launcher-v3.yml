@@ -1,0 +1,30 @@
+name: Devtool Python Launcher v3 Contract
+on:
+  pull_request:
+    paths:
+      - devtool/launcher_contract_v3.py
+      - tests/test_launcher_contract_v3.py
+      - docs/DEVTOOL_LAUNCHER_CONTRACT_V3.md
+      - .github/workflows/devtool-launcher-v3.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  launcher-v3:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Validate launcher contract and adversarial tests
+        run: python3 -B -m unittest discover -s tests -p 'test_launcher_contract_v3.py' -v
+      - name: Verify package import and builder CLI
+        run: |
+          python3 -B -m devtool.launcher_contract_v3 --help
+          python3 -B -m devtool.launcher_contract_v3 build --help
+          python3 -B -m devtool --help
