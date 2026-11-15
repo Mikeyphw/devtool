@@ -269,6 +269,11 @@ def status(identity: str, *, state_root: Path | None = None, inspect_git: bool =
         except (DeliverySessionError, OSError):
             result["source_binding"] = "unavailable"
         result["resumable"] = bool(result["resumable"] and result["source_binding"] == "matching")
+    from .delivery_receipt import build_stream
+    try:
+        result["event_stream"] = build_stream(record)
+    except ValueError as exc:
+        raise DeliverySessionError("Delivery event stream invalid") from exc
     return result
 
 
@@ -327,11 +332,15 @@ def record_intent(identity: str, operation: str, key: str, *, approved: bool,
 def report(identity: str, *, state_root: Path | None = None) -> dict[str, Any]:
     result = status(identity, state_root=state_root)
     ci = result.get('ci') or {}
-    result['result'] = ('required_checks_passed' if ci.get('checks_qualified') else
+    safe_ci = bool(result['resumable'] and ci.get('checks_qualified'))
+    result['result'] = ('required_checks_passed' if safe_ci else
                         'pending' if result['resumable'] else 'requires_reconciliation')
-    result['delivery_completed'] = bool(result.get('pr') and ci.get('checks_qualified'))
+    result['delivery_completed'] = bool(result.get('pr') and safe_ci)
     result['release_qualified'] = False
     result['message'] = ('Local and remote evidence only; formal release qualification not performed')
+    from .delivery_receipt import build_receipt, render_human
+    result['receipt'] = build_receipt(result)
+    result['human_report'] = render_human(result['receipt'])
     return result
 
 

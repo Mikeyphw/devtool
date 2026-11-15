@@ -56,6 +56,10 @@ def run_delivery_command(args: Any) -> int:
                     print(f"DEVTOOL_DELIVERY_CI_CHECK poll={s['poll']} state={s['state']} "
                           f"matched={len(s['runs'])} missing={len(s['missing'])} "
                           f"policy={policy.sha256[:12]}",flush=True)
+                    for row in (s.get('diagnosis') or {}).get('matrix', []):
+                        print(f"  run={row['id']} attempt={row['attempt']} "
+                              f"workflow={row['name']} status={row['status']} "
+                              f"conclusion={row['conclusion']} {row['url']}", flush=True)
                 payload = observe_ci(identity,required=policy.names,
                                      workflow_ids=policy.workflow_ids, required_event="pull_request",
                                      policy_sha256=policy.sha256,policy_guard=guard,
@@ -118,6 +122,12 @@ def run_delivery_command(args: Any) -> int:
                     for excerpt in job.get('excerpt', []):
                         print('      Evidence: ' + excerpt, flush=True)
         print('Release qualification: NOT PERFORMED',flush=True)
+    elif operation == 'report' and isinstance(payload.get('receipt'), dict):
+        if sys.stdout.isatty():
+            from .delivery_receipt import render_rich
+            render_rich(payload['receipt'])
+        else:
+            print(payload['human_report'],flush=True)
     else:
         print(f'Devtool delivery: {operation} — {payload["stage"]}',flush=True)
         print('Source: '+payload['head_sha'],flush=True)
