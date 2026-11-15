@@ -150,3 +150,52 @@ def run_delivery_command(args: Any) -> int:
     if operation in ('push','pr') and payload['state'].endswith('REQUIRES_APPROVAL'):
         return 2
     return 0
+
+
+def run_adoption_command(args: Any) -> int:
+    """S7 P02 canonical entrypoint for P01's source-bound adoption engine.
+
+    Never calls remote providers, applies an overlay, or modifies a consumer
+    worktree. Scaffold writes only a new, exact-tree-bound artifact outside it.
+    """
+    import subprocess
+    from .delivery_adoption import AdoptionError, audit_consumer, scaffold_overlay
+
+    op = str(getattr(args, "delivery_adoption_command", "") or "")
+    repo_value = str(getattr(args, "repo", None) or Path.cwd())
+    try:
+        repo = Path(repo_value).expanduser()
+        if op == "audit":
+            result = audit_consumer(repo)
+        elif op == "scaffold":
+            result = scaffold_overlay(
+                repo, Path(str(args.payload)).expanduser(),
+                Path(str(args.plan)).expanduser(),
+                Path(str(args.output)).expanduser(),
+                expected_head=str(args.expected_head),
+            )
+        else:
+            raise AdoptionError("Unsupported canonical adoption operation")
+    except AdoptionError as exc:
+        print("Devtool adoption: " + str(exc), file=sys.stderr, flush=True)
+        return 2
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        # Do not echo arbitrary provider/file content or command-line secrets.
+        print("Devtool adoption: local filesystem or Git inspection unavailable ("+
+              type(exc).__name__+")", file=sys.stderr, flush=True)
+        return 2
+    if bool(getattr(args, "json", False) or getattr(args, "_devtool_json", False)):
+        print(json.dumps(result, sort_keys=True, indent=2, ensure_ascii=False))
+    elif op == "audit":
+        print("Devtool adoption: READ_ONLY_AUDIT", flush=True)
+        print("Consumer: " + result["repository"] + " " + result["source_sha"], flush=True)
+        print("Worktree: " + ("clean" if result["worktree_clean"] else "dirty"), flush=True)
+        print("Candidate duplicate launchers: " + str(len(result["candidate_duplicate_launchers"])), flush=True)
+        print("Qualification: NOT PERFORMED", flush=True)
+    else:
+        print("Devtool adoption: SCAFFOLD_CREATED_NOT_APPLIED", flush=True)
+        print("Consumer: " + result["repository"] + " " + result["source_sha"], flush=True)
+        print("Artifact: " + result["output"], flush=True)
+        print("SHA-256: " + result["sha256"], flush=True)
+        print("Qualification: NOT PERFORMED", flush=True)
+    return 0

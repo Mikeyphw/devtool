@@ -39643,6 +39643,161 @@
       "adoption_source": "core-registry",
       "aliases": [],
       "domain": "delivery",
+      "id": "cli.command.delivery.adoption",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "adoption"
+      ],
+      "stability": "experimental",
+      "summary": "Source-bound consumer audit and overlay scaffolding"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.adoption.audit",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.audit.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit machine-readable adoption audit",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.audit.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "adoption",
+        "audit"
+      ],
+      "stability": "experimental",
+      "summary": "Inspect one consumer without modifying it"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.adoption.scaffold",
+      "options": [
+        {
+          "choices": [],
+          "dest": "expected_head",
+          "help": "Exactly pinned consumer Git HEAD",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.scaffold.expected_head",
+          "nargs": 0,
+          "required": true,
+          "spellings": [
+            "--expected-head"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.scaffold.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit machine-readable scaffold receipt",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.scaffold.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "output",
+          "help": "New output ZIP outside consumer/payload",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.scaffold.output",
+          "nargs": 0,
+          "required": true,
+          "spellings": [
+            "--output"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "payload",
+          "help": "Separate, trusted candidate payload directory",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.scaffold.payload",
+          "nargs": 0,
+          "required": true,
+          "spellings": [
+            "--payload"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "plan",
+          "help": "Bounded data-only JSON changes plan",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.scaffold.plan",
+          "nargs": 0,
+          "required": true,
+          "spellings": [
+            "--plan"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "adoption",
+        "scaffold"
+      ],
+      "stability": "experimental",
+      "summary": "Generate an exact-tree consumer overlay without applying"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
       "id": "cli.command.delivery.session",
       "options": [
         {
@@ -40249,7 +40404,7 @@
       "summary": "Registration-aware, source-bound GitHub CI observation"
     }
   ],
-  "digest": "90e1b6db1bed2a8f91415567a5e9846284baa60063a43a559f7a77ca90777ff5",
+  "digest": "5a41cda68140787d8958ae676a93fa4d68c24b3df93592ecfa6222a30673df40",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -40450,6 +40605,9 @@
       "core runtime",
       "core surfaces",
       "delivery",
+      "delivery adoption",
+      "delivery adoption audit",
+      "delivery adoption scaffold",
       "delivery plan",
       "delivery session",
       "delivery session ci",
@@ -40789,11 +40947,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 527,
-    "registry_command_count": 401
+    "parser_command_count": 530,
+    "registry_command_count": 404
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "62cc692b60da35c1b0edf5e10fe3e986d7d50a3208495149701442a43fb38716",
+  "registry_digest": "8ca68f96db5a6033a1c7db5e81b88286bb57ea905f5f0e9a21afbd133974e097",
   "registry_schema_version": 1,
   "schema_version": 1
 }

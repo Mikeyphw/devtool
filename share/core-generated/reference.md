@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `62cc692b60da35c1b0edf5e10fe3e986d7d50a3208495149701442a43fb38716`
+Registry digest: `8ca68f96db5a6033a1c7db5e81b88286bb57ea905f5f0e9a21afbd133974e097`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -398,6 +398,9 @@ This file is generated from the CORE command/config registry and the canonical C
 - `actions android release-batch-import` — Source-bound unsigned Android release batch
 - `actions android release-batch-sign` — Source-bound unsigned Android release batch
 - `onboard` — In-place whole-repository review, ownership and source-bound onboarding
+- `delivery adoption` — Source-bound consumer audit and overlay scaffolding
+- `delivery adoption audit` — Inspect one consumer without modifying it
+- `delivery adoption scaffold` — Generate an exact-tree consumer overlay without applying
 - `delivery session` — Delivery session journal and safe recovery
 - `delivery session plan` — Read-only source-bound delivery session plan
 - `delivery session start` — Create a private PLANNED delivery session

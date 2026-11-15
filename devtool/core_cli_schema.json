@@ -6819,6 +6819,56 @@
       "aliases": [],
       "canonical_path": [
         "delivery",
+        "adoption"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "delivery",
+        "stability": "experimental",
+        "summary": "Source-bound consumer audit and overlay scaffolding",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.delivery.adoption"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "delivery",
+        "adoption",
+        "audit"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "delivery",
+        "stability": "experimental",
+        "summary": "Inspect one consumer without modifying it",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.delivery.adoption.audit"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "delivery",
+        "adoption",
+        "scaffold"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "delivery",
+        "stability": "experimental",
+        "summary": "Generate an exact-tree consumer overlay without applying",
+        "wrapper_native": false
+      },
+      "options": [],
+      "stable_id": "cli.command.delivery.adoption.scaffold"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "delivery",
         "session"
       ],
       "metadata": {
@@ -66444,6 +66494,209 @@
         "nargs": 0,
         "path": [
           "delivery",
+          "adoption",
+          "audit"
+        ],
+        "required": false
+      },
+      "scope": "delivery adoption audit",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.adoption.audit.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit machine-readable adoption audit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "adoption",
+          "audit"
+        ],
+        "required": false
+      },
+      "scope": "delivery adoption audit",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.adoption.audit.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "adoption"
+        ],
+        "required": false
+      },
+      "scope": "delivery adoption",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.adoption.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--expected-head",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "expected_head",
+        "help": "Exactly pinned consumer Git HEAD",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "adoption",
+          "scaffold"
+        ],
+        "required": true
+      },
+      "scope": "delivery adoption scaffold",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.adoption.scaffold.expected_head",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "adoption",
+          "scaffold"
+        ],
+        "required": false
+      },
+      "scope": "delivery adoption scaffold",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.adoption.scaffold.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--json",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "json",
+        "help": "Emit machine-readable scaffold receipt",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "adoption",
+          "scaffold"
+        ],
+        "required": false
+      },
+      "scope": "delivery adoption scaffold",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.adoption.scaffold.json",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--output",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "output",
+        "help": "New output ZIP outside consumer/payload",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "adoption",
+          "scaffold"
+        ],
+        "required": true
+      },
+      "scope": "delivery adoption scaffold",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.adoption.scaffold.output",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--payload",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "payload",
+        "help": "Separate, trusted candidate payload directory",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "adoption",
+          "scaffold"
+        ],
+        "required": true
+      },
+      "scope": "delivery adoption scaffold",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.adoption.scaffold.payload",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--plan",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "plan",
+        "help": "Bounded data-only JSON changes plan",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "adoption",
+          "scaffold"
+        ],
+        "required": true
+      },
+      "scope": "delivery adoption scaffold",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.adoption.scaffold.plan",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
           "session"
         ],
         "required": false
@@ -94415,6 +94668,175 @@
                     "groups": [],
                     "mutexes": [],
                     "subparsers": null,
+                    "usage": null
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "Source-bound consumer audit and overlay scaffolding",
+                  "help_present": true,
+                  "name": "adoption",
+                  "parser": {
+                    "actions": [],
+                    "add_help": true,
+                    "allow_abbrev": true,
+                    "defaults": {},
+                    "description": null,
+                    "epilog": null,
+                    "formatter": "HelpFormatter",
+                    "groups": [],
+                    "mutexes": [],
+                    "subparsers": {
+                      "children": [
+                        {
+                          "aliases": [],
+                          "help": "Inspect one consumer without modifying it",
+                          "help_present": true,
+                          "name": "audit",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit machine-readable adoption audit",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        },
+                        {
+                          "aliases": [],
+                          "help": "Generate (but do not apply) an exact-tree consumer overlay",
+                          "help_present": true,
+                          "name": "scaffold",
+                          "parser": {
+                            "actions": [
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "payload",
+                                "group": null,
+                                "help": "Separate, trusted candidate payload directory",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--payload"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "plan",
+                                "group": null,
+                                "help": "Bounded data-only JSON changes plan",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--plan"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "output",
+                                "group": null,
+                                "help": "New output ZIP outside consumer/payload",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--output"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "expected_head",
+                                "group": null,
+                                "help": "Exactly pinned consumer Git HEAD",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--expected-head"
+                                ],
+                                "required": true,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "json",
+                                "group": null,
+                                "help": "Emit machine-readable scaffold receipt",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              }
+                            ],
+                            "add_help": true,
+                            "allow_abbrev": true,
+                            "defaults": {},
+                            "description": null,
+                            "epilog": null,
+                            "formatter": "HelpFormatter",
+                            "groups": [],
+                            "mutexes": [],
+                            "subparsers": null,
+                            "usage": null
+                          }
+                        }
+                      ],
+                      "dest": "delivery_adoption_command",
+                      "group": null,
+                      "help": null,
+                      "metavar": null,
+                      "required": true
+                    },
                     "usage": null
                   }
                 },

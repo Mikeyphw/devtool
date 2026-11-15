@@ -1,0 +1,21 @@
+name: Devtool S7 P02 Canonical Consumer CLI
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  canonical-cli:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install current Devtool and pytest
+        run: python -m pip install -e . pytest
+      - name: Canonical CLI, source binding and adoption regression
+        run: python -m pytest -q tests/test_delivery_adoption.py tests/test_delivery_adoption_cli.py tests/test_delivery_cli_surface.py
+      - name: Generated parser and surfaces parity
+        run: python -m devtool core surfaces --check share/core-generated

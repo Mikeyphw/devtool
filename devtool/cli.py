@@ -13317,6 +13317,12 @@ def _main_impl(argv: list[str] | None = None) -> int:
     parse_argv, universal_json = extract_universal_json_flag(parse_argv)
     parser = build_parser()
     args = parser.parse_args(parse_argv)
+    # S7 P02 adoption is intentionally read-only with respect to the consumer.
+    # Dispatch before normal CLI workspace initialization: that initializer can
+    # create .devtool state even for otherwise observational operations.
+    if args.command == "delivery" and getattr(args, "delivery_command", "") == "adoption":
+        from .delivery_cli import run_adoption_command
+        return run_adoption_command(args)
     _apply_ui_cli_overrides(args)
     if getattr(args, "job_ui", None) is not None:
         os.environ["DEVTOOL_JOB_UI"] = str(args.job_ui)
