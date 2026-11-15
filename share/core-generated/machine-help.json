@@ -39638,9 +39638,773 @@
       ],
       "stability": "experimental",
       "summary": "In-place whole-repository review, ownership and source-bound onboarding"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.adoption",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "adoption"
+      ],
+      "stability": "experimental",
+      "summary": "Source-bound consumer audit and overlay scaffolding"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.adoption.audit",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.audit.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit machine-readable adoption audit",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.audit.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "adoption",
+        "audit"
+      ],
+      "stability": "experimental",
+      "summary": "Inspect one consumer without modifying it"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.adoption.scaffold",
+      "options": [
+        {
+          "choices": [],
+          "dest": "expected_head",
+          "help": "Exactly pinned consumer Git HEAD",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.scaffold.expected_head",
+          "nargs": 0,
+          "required": true,
+          "spellings": [
+            "--expected-head"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.scaffold.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit machine-readable scaffold receipt",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.scaffold.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "output",
+          "help": "New output ZIP outside consumer/payload",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.scaffold.output",
+          "nargs": 0,
+          "required": true,
+          "spellings": [
+            "--output"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "payload",
+          "help": "Separate, trusted candidate payload directory",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.scaffold.payload",
+          "nargs": 0,
+          "required": true,
+          "spellings": [
+            "--payload"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "plan",
+          "help": "Bounded data-only JSON changes plan",
+          "hidden": false,
+          "id": "cli.option.delivery.adoption.scaffold.plan",
+          "nargs": 0,
+          "required": true,
+          "spellings": [
+            "--plan"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "adoption",
+        "scaffold"
+      ],
+      "stability": "experimental",
+      "summary": "Generate an exact-tree consumer overlay without applying"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.session",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.session.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "session"
+      ],
+      "stability": "experimental",
+      "summary": "Delivery session journal and safe recovery"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.session.plan",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.session.plan.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "base",
+          "help": "Target base branch",
+          "hidden": false,
+          "id": "cli.option.delivery.session.plan.base",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--base"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "head",
+          "help": "Checked-out feature branch",
+          "hidden": false,
+          "id": "cli.option.delivery.session.plan.head",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--head"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "overlay",
+          "help": "Read-only overlay SHA-256 inventory",
+          "hidden": false,
+          "id": "cli.option.delivery.session.plan.overlay",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--overlay"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit machine-readable result",
+          "hidden": false,
+          "id": "cli.option.delivery.session.plan.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "session",
+        "plan"
+      ],
+      "stability": "experimental",
+      "summary": "Read-only source-bound delivery session plan"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.session.start",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.session.start.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "base",
+          "help": "Target base branch",
+          "hidden": false,
+          "id": "cli.option.delivery.session.start.base",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--base"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "head",
+          "help": "Checked-out feature branch",
+          "hidden": false,
+          "id": "cli.option.delivery.session.start.head",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--head"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "overlay",
+          "help": "Read-only overlay SHA-256 inventory",
+          "hidden": false,
+          "id": "cli.option.delivery.session.start.overlay",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--overlay"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit machine-readable result",
+          "hidden": false,
+          "id": "cli.option.delivery.session.start.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "session",
+        "start"
+      ],
+      "stability": "experimental",
+      "summary": "Create a private PLANNED delivery session"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.session.status",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.session.status.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "delivery_id",
+          "help": "Exact 32-character session ID",
+          "hidden": false,
+          "id": "cli.option.delivery.session.status.delivery_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit machine-readable result",
+          "hidden": false,
+          "id": "cli.option.delivery.session.status.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "session",
+        "status"
+      ],
+      "stability": "experimental",
+      "summary": "Inspect delivery session without mutation"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.session.resume",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.session.resume.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "delivery_id",
+          "help": "Exact 32-character session ID",
+          "hidden": false,
+          "id": "cli.option.delivery.session.resume.delivery_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit machine-readable result",
+          "hidden": false,
+          "id": "cli.option.delivery.session.resume.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "session",
+        "resume"
+      ],
+      "stability": "experimental",
+      "summary": "Inspect safe resumption; never retry a mutation"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.session.report",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.session.report.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "delivery_id",
+          "help": "Exact 32-character session ID",
+          "hidden": false,
+          "id": "cli.option.delivery.session.report.delivery_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Emit machine-readable result",
+          "hidden": false,
+          "id": "cli.option.delivery.session.report.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "session",
+        "report"
+      ],
+      "stability": "experimental",
+      "summary": "Read-only delivery evidence report"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.session.push",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.session.push.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "delivery_id",
+          "help": "Exact 32-character session ID",
+          "hidden": false,
+          "id": "cli.option.delivery.session.push.delivery_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Explicitly approve remote mutation",
+          "hidden": false,
+          "id": "cli.option.delivery.session.push.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Machine-readable output",
+          "hidden": false,
+          "id": "cli.option.delivery.session.push.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "session",
+        "push"
+      ],
+      "stability": "experimental",
+      "summary": "Source-bound, journaled, non-force Git push"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.session.pr",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "delivery_id",
+          "help": "Exact 32-character session ID",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.delivery_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "title",
+          "help": "New PR title",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.title",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--title"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "body",
+          "help": "New PR body",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.body",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--body"
+          ]
+        },
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "GitHub authentication source",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "yes",
+          "help": "Explicitly approve remote mutation",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.yes",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--yes"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Machine-readable output",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "session",
+        "pr"
+      ],
+      "stability": "experimental",
+      "summary": "Find or explicitly create one source-bound draft PR"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "delivery",
+      "id": "cli.command.delivery.session.ci",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.delivery.session.ci.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "delivery_id",
+          "help": "Exact 32-character session ID",
+          "hidden": false,
+          "id": "cli.option.delivery.session.ci.delivery_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "require_workflow",
+          "help": "Required workflow name (repeatable)",
+          "hidden": false,
+          "id": "cli.option.delivery.session.ci.require_workflow",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--require-workflow"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "checks",
+          "help": "Maximum finite polling observations",
+          "hidden": false,
+          "id": "cli.option.delivery.session.ci.checks",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--checks"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "interval",
+          "help": "Seconds between CI observations",
+          "hidden": false,
+          "id": "cli.option.delivery.session.ci.interval",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--interval"
+          ]
+        },
+        {
+          "choices": [
+            "auto",
+            "env",
+            "gh",
+            "none"
+          ],
+          "dest": "auth",
+          "help": "GitHub authentication source",
+          "hidden": false,
+          "id": "cli.option.delivery.session.ci.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "json",
+          "help": "Machine-readable output",
+          "hidden": false,
+          "id": "cli.option.delivery.session.ci.json",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--json"
+          ]
+        }
+      ],
+      "path": [
+        "delivery",
+        "session",
+        "ci"
+      ],
+      "stability": "experimental",
+      "summary": "Registration-aware, source-bound GitHub CI observation"
     }
   ],
-  "digest": "2d44bd723104fd9867185262188956a515f65801706d03f35d044dca8a1cea14",
+  "digest": "5a41cda68140787d8958ae676a93fa4d68c24b3df93592ecfa6222a30673df40",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -39841,7 +40605,19 @@
       "core runtime",
       "core surfaces",
       "delivery",
+      "delivery adoption",
+      "delivery adoption audit",
+      "delivery adoption scaffold",
       "delivery plan",
+      "delivery session",
+      "delivery session ci",
+      "delivery session plan",
+      "delivery session pr",
+      "delivery session push",
+      "delivery session report",
+      "delivery session resume",
+      "delivery session start",
+      "delivery session status",
       "detect",
       "doctor",
       "dr",
@@ -40171,11 +40947,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 518,
-    "registry_command_count": 392
+    "parser_command_count": 530,
+    "registry_command_count": 404
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "96d2d8f2368b62ae1e0c17d35f50da1676f4d8b44d09fb0a747e5ee4325b0a3a",
+  "registry_digest": "8ca68f96db5a6033a1c7db5e81b88286bb57ea905f5f0e9a21afbd133974e097",
   "registry_schema_version": 1,
   "schema_version": 1
 }

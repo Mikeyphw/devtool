@@ -1,0 +1,28 @@
+name: Devtool S7 Native Consumer Adoption
+on:
+  pull_request:
+    paths:
+      - 'devtool/delivery_adoption.py'
+      - 'tests/test_delivery_adoption.py'
+      - 'docs/DELIVERY_S7_ADOPTION.md'
+      - '.github/workflows/devtool-delivery-s7.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-scaffold-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install current test dependencies
+        run: python -m pip install -e . pytest
+      - name: Current scaffold and adversarial tests
+        run: python -m pytest -q tests/test_delivery_adoption.py
+      - name: Compile source and verify static mode
+        run: |
+          python -m py_compile devtool/delivery_adoption.py
+          python -B -m devtool.delivery_adoption --help

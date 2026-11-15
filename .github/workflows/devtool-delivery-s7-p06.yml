@@ -1,0 +1,41 @@
+name: Devtool S7 P06 Cross-Consumer Hosted Acceptance
+on:
+  pull_request:
+    paths:
+      - devtool/delivery_cross_consumer.py
+      - tests/test_delivery_cross_consumer.py
+      - docs/DELIVERY_S7_P06_CROSS_CONSUMER.md
+      - .github/workflows/devtool-delivery-s7-p06.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cross-consumer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Offline adversarial regression contracts
+        run: python3 -m unittest discover -s tests -p 'test_delivery_cross_consumer.py' -v
+      - name: Exact-HEAD provider-backed qualification (read only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$RUNNER_TEMP/s7-p06-evidence"
+          python3 -m devtool.delivery_cross_consumer --output "$RUNNER_TEMP/s7-p06-evidence" --json > "$RUNNER_TEMP/s7-p06-receipt-stdout.json"
+          test -s "$RUNNER_TEMP/s7-p06-evidence/s7-p06-evidence.json"
+          test -s "$RUNNER_TEMP/s7-p06-evidence/s7-p06-report.md"
+      - name: Upload non-release cross-consumer evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: devtool-s7-p06-cross-consumer-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/s7-p06-evidence/
+          if-no-files-found: error
+          retention-days: 14

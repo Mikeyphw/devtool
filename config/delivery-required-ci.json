@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "repository": "Mikeyphw/devtool",
+  "base_branch": "main",
+  "event": "pull_request",
+  "release_qualification": "separate",
+  "required_workflows": [
+    {"name": "DN03-R2 R06d real hosted native .NET DAG (non-release)", "workflow_id": 406242056},
+    {"name": "Devtool DN02 real hosted .NET 6 acceptance (non-release)", "workflow_id": 406127205},
+    {"name": "Devtool DN03 .NET native exporter source qualification", "workflow_id": 406191495},
+    {"name": "Devtool DN03-R3 generated native .NET node verification (source gate)", "workflow_id": 406303253},
+    {"name": "Devtool DN03-R4 native .NET cross-node receipt source qualification", "workflow_id": 406355030},
+    {"name": "Devtool DN03-R6 typed TRX source qualification", "workflow_id": 406997308}
+  ]
+}
