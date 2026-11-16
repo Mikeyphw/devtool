@@ -16190,9 +16190,27 @@ def _main_after_parse(
         return run_hud(hud_args)
 
     if args.command == "tui":
-        from .tui_textual import run_tui_entrypoint
-
         config = _load_command_config(args)
+        # UX-RICH03: honor the operator's native terminal-only execution mode.
+        # Other TUI invocations retain the previously tested Textual contract;
+        # this path cannot enable an alternate-screen execution/apply host.
+        native_plain = (os.environ.get('DEVTOOL_EXECUTION_PRESENTATION') == 'plain'
+                        and os.environ.get('DEVTOOL_JOB_UI') == 'plain'
+                        and os.environ.get('DEVTOOL_TEXTUAL_APPLY_HOST') == '0'
+                        and os.environ.get('DEVTOOL_TEXTUAL_EXECUTION_HOST') == '0')
+        if native_plain:
+            from .operator_workspace import run_operator_workspace
+            try:
+                if run_operator_workspace(config.repo_root, None, args=args, console=console):
+                    return 0
+                print('Devtool Rich workspace requires an interactive color-capable TTY',
+                      file=sys.stderr,flush=True)
+                return 2
+            except (RuntimeError, ValueError, OSError) as exc:
+                print('Devtool Rich workspace refused ('+type(exc).__name__+')',
+                      file=sys.stderr,flush=True)
+                return 2
+        from .tui_textual import run_tui_entrypoint
         return run_tui_entrypoint(args, repo_root=config.repo_root, console=console)
 
     if args.command == "cleanup":

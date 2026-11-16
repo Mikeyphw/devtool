@@ -13,19 +13,15 @@ def _uxrich02_operator_view(args: Any, command: str, root: Path,
                              payload: dict[str, Any]) -> bool:
     # Pure representation for existing read-only Actions APIs. Pipeline run,
     # dispatch, release mutation, retry/cancel/collection are unaffected.
-    from .operator_rich import render_operator, browse_operator, operator_enabled
+    from .operator_rich import render_operator, operator_enabled
     if not operator_enabled(args=args):
         return False
     if command == 'ui':
-        from .actions_operator import operator_workflows, operator_review, operator_lineage
-        slug = str(payload['repository'])
-        return browse_operator('actions',payload,args=args,
-                               refresh=lambda: actions_cli(args,root),
-                               remote_views={
-                                 'w':lambda _item:operator_workflows(slug),
-                                 'g':lambda item:operator_review(item,slug),
-                                 'l':lambda item:operator_lineage(item,root,slug),
-                               })
+        # UX-RICH03 extends the existing read-only Actions browser into one
+        # foreground native workspace. No new launch/CI/SSH authority.
+        from .operator_workspace import run_operator_workspace
+        return run_operator_workspace(root, str(payload['repository']),
+                                      initial=payload, args=args)
     kind = 'pipeline' if command == 'pipeline' else 'actions'
     return render_operator(kind,payload,args=args)
 
