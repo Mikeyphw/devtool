@@ -1015,12 +1015,25 @@ def push_pr(repo:Path,devtool_root:Path,m:dict[str,Any],sid:str)->None:
     say('LAUNCHER_V3_REMOTE_DELIVERED; hosted CI and merge are NOT qualified')
 
 
+def ci_watch_timeout_seconds(checks:int,interval:int)->int:
+    """Bound launcher supervision without preempting native CI polling.
+
+    Native CI's registrar uses exponential backoff capped at 120 s, rather
+    than a fixed interval. Reserve 120 s of network/diagnostics per poll,
+    120 s of capped backoff per poll, and 180 s for final receipts. Native
+    Devtool remains the only owner of CI outcome and poll-count limits.
+    """
+    if checks < 1 or checks > 60 or interval < 1 or interval > 120:
+        raise Refused('INVALID_BOUNDED_CI_POLLING')
+    return max(900, checks * (120 + 120) + 180)
+
+
 def observe_delivery_ci(repo:Path,devtool_root:Path,sid:str,*,checks:int=25,interval:int=8)->int:
-    if checks<1 or checks>120 or interval<1 or interval>120:
+    if checks<1 or checks>60 or interval<1 or interval>120:
         raise Refused('INVALID_BOUNDED_CI_POLLING')
     native(repo,devtool_root,'delivery','session','ci','--id',sid,'--checks',str(checks),
            '--interval',str(interval),stage='native-source-bound-ci',
-           timeout=max(120,checks*interval+180),live=True)
+           timeout=ci_watch_timeout_seconds(checks,interval),live=True)
     report=native_json(repo,devtool_root,'delivery','session','report','--id',sid,stage='native-ci-machine-receipt')
     ci=(report.get('receipt') or {}).get('ci_state') or (report.get('ci') or {}).get('state')
     say('LAUNCHER_V3_CI_STATE '+str(ci or 'UNKNOWN')+'; formal release NOT qualified')
@@ -1463,7 +1476,7 @@ def _main_impl()->int:
                 say('LAUNCHER_V3_SELF_TESTS_PASS count='+str(result.testsRun));return 0
             if args.command=='build':build_package(args);return 0
         else:
-            if args.command in ('ci','apply') and (args.checks<1 or args.checks>120 or args.interval<1 or args.interval>120):
+            if args.command in ('ci','apply') and (args.checks<1 or args.checks>60 or args.interval<1 or args.interval>120):
                 raise Refused('INVALID_BOUNDED_CI_POLLING')
             return runtime_command(args,package)
         raise Refused('UNKNOWN_OPERATION')

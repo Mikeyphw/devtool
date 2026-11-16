@@ -193,3 +193,20 @@ pinned is a hard refusal, never silently cleaned or replaced.
 - The new source-owned GitHub workflow runs tests on the exact PR head. It does not dispatch other workflows, approve releases, or assert formal external qualification.
 - Source-dependent launchers are intentionally *not portable between arbitrary Devtool versions*. After a reviewed Devtool update, rebuild a new package; do not silently repin old packages.
 - Delivery module is a Python `-m` entrypoint in v3; `core_cli_schema.json` remains unchanged and native CLI subcommands retain their original owners. A future explicit CLI schema registration may be done with generated surface synchronization when that is beneficial.
+
+
+## CI watcher timeout supervision (v3.1)
+
+The native delivery registrar uses bounded exponential polling backoff (up to
+120 seconds) and GitHub requests/diagnostics can add time per poll. The thin
+launcher now reserves those bounded components in its **outer watchdog**, not
+just `checks * interval`. The native `delivery session ci` command retains
+full ownership of required-check policy, workflow identities, failure states,
+CI evidence, and durable session receipts. The launcher accepts 1–60 checks,
+matching native Devtool, and 1–120 seconds as the initial interval.
+
+A timeout or interrupted observation is **not** a hosted CI success. After a
+committed apply, use the same durable session ID and native `delivery session
+ci` (or a rebuilt source-bound launcher `ci`) instead of reapplying an overlay.
+Older immutable launcher packages are never repinned or rewritten; this fix
+becomes available to packages built from the reviewed updated Devtool source.

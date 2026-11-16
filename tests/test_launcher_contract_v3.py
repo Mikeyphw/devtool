@@ -1047,3 +1047,29 @@ class MachineReceiptColorTests(unittest.TestCase):
         self.assertEqual(machine['NO_COLOR'],'1')
         self.assertEqual(live['FORCE_COLOR'],'1')
         self.assertNotIn('NO_COLOR',live)
+
+
+class NativeCiWatcherDeadlineRegressionTests(unittest.TestCase):
+    """Native checks remain the authority; launcher watchdog is only supervision."""
+
+    def test_ci_timeout_accommodates_native_bounded_backoff(self):
+        for count in (1, 8, 25, 60):
+            with self.subTest(checks=count):
+                self.assertGreaterEqual(lc.ci_watch_timeout_seconds(count, 8),
+                                        count * (120 + 120) + 180)
+        self.assertEqual(lc.ci_watch_timeout_seconds(8, 8), 2100)
+
+    def test_native_poll_count_limits_match_cli(self):
+        for checks, interval in ((0, 8), (61, 8), (1, 0), (1, 121)):
+            with self.subTest(checks=checks, interval=interval):
+                with self.assertRaises(lc.Refused):
+                    lc.ci_watch_timeout_seconds(checks, interval)
+
+    def test_ci_failure_is_still_a_failure_and_uses_worst_case_budget(self):
+        with patch('devtool.launcher_contract_v3.native') as native, \
+             patch('devtool.launcher_contract_v3.native_json',
+                   return_value={'ci': {'state': 'CHECKS_FAILED'}}):
+            result = lc.observe_delivery_ci(Path('.'), Path('.'), 'a'*32, checks=8, interval=8)
+        self.assertEqual(result, 3)
+        self.assertEqual(native.call_args_list[0].kwargs['timeout'], 2100)
+        self.assertEqual(native.call_args_list[0].kwargs['stage'], 'native-source-bound-ci')
