@@ -26,6 +26,11 @@ def project_pipeline(payload: Mapping[str, Any]) -> dict[str, Any]:
         row = {'id':node['id'], 'kind':str(node.get('kind') or ''),
                'state':status, 'detail':str(node.get('detail') or ''),
                'run_id':node.get('run_id'), 'artifact_id':node.get('artifact_id')}
+        if 'needs' in node:
+            needs = node['needs']
+            if not isinstance(needs,list) or any(not isinstance(x,str) for x in needs):
+                raise ValueError('Invalid pipeline dependency metadata')
+            row['needs'] = list(needs)
         rows.append(row)
     success = bool(payload.get('completed_successfully')) and bool(rows) and all(n['state']=='success' for n in rows)
     blocked = any(n['state'] in ('blocked','failure','uncertain') for n in rows)

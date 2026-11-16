@@ -6,18 +6,44 @@ import sys
 from pathlib import Path
 from typing import Any
 from .github_actions import GitHubActionsError, actions_cli
+from .delivery_rich import NativeRichMonitor, MonitorDetached, terminal_rich_enabled
+
+
+def _uxrich02_operator_view(args: Any, command: str, root: Path,
+                             payload: dict[str, Any]) -> bool:
+    # Pure representation for existing read-only Actions APIs. Pipeline run,
+    # dispatch, release mutation, retry/cancel/collection are unaffected.
+    from .operator_rich import render_operator, operator_enabled
+    if not operator_enabled(args=args):
+        return False
+    if command == 'ui':
+        # UX-RICH03 extends the existing read-only Actions browser into one
+        # foreground native workspace. No new launch/CI/SSH authority.
+        from .operator_workspace import run_operator_workspace
+        return run_operator_workspace(root, str(payload['repository']),
+                                      initial=payload, args=args)
+    kind = 'pipeline' if command == 'pipeline' else 'actions'
+    return render_operator(kind,payload,args=args)
 
 
 def run_actions_command(args: Any) -> int:
     command = str(getattr(args, 'actions_command', '') or '')
     subcommand = str(getattr(args, 'android_command', '') or '')
-    streaming = (os.environ.get('DEVTOOL_ACTIONS_STREAM') == '1'
+    explicit_streaming = (os.environ.get('DEVTOOL_ACTIONS_STREAM') == '1'
                  and (command == 'watch' or (command == 'android' and subcommand == 'unsigned-run')))
+    rich_watch = (command == 'watch' and not explicit_streaming and
+                  not bool(getattr(args,'json',False) or getattr(args,'_devtool_json',False)) and
+                  terminal_rich_enabled())
+    streaming = explicit_streaming or rich_watch
+    monitor = NativeRichMonitor(kind='run') if rich_watch else None
     callback = None
     if streaming:
         from .actions_live_progress import encode_observation
         def callback(observation: dict[str, Any]) -> None:
-            print(encode_observation(observation), flush=True)
+            if monitor is not None:
+                monitor.observe(observation)
+            else:
+                print(encode_observation(observation), flush=True)
     try:
         root = Path(str(getattr(args, "repo", "") or Path.cwd()))
         if command == 'adoption-doctor':
@@ -78,8 +104,24 @@ def run_actions_command(args: Any) -> int:
                 return 1
             print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
             return 0
-        payload = (actions_cli(args, root, observation_callback=callback) if streaming
-                   else actions_cli(args, root))
+        if monitor is not None:
+            from .github_actions import GitHubActionsClient,resolve_repository,resolve_token
+            from .delivery_remote_logs import fetch_selected_run_logs
+            def _fetch_logs(run):
+                selected=resolve_repository(str(getattr(args,'github_repo','') or ''),root)
+                token,_=resolve_token(str(getattr(args,'auth','auto') or 'auto'))
+                return fetch_selected_run_logs(GitHubActionsClient(token),selected,run)
+            monitor.log_fetcher=_fetch_logs
+            with monitor:
+                payload = actions_cli(args, root, observation_callback=callback,
+                                      watch_sleep=monitor.wait_interval)
+                monitor.review_failed()
+        else:
+            payload = (actions_cli(args, root, observation_callback=callback) if streaming
+                       else actions_cli(args, root))
+    except MonitorDetached as exc:
+        print('GitHub Actions: '+str(exc), file=sys.stderr, flush=True)
+        return 2
     except GitHubActionsError as exc:
         from .actions_control_center import error_info, diagnostic_text
         info=error_info(str(exc),operation=command,state='BLOCKED')
@@ -94,6 +136,12 @@ def run_actions_command(args: Any) -> int:
             print(f"Run: {remote['html_url']}")
         if last.get('source_binding') == 'not-confirmed':
             print('WARNING: run source SHA differs from dispatch receipt', file=sys.stderr)
+    elif ((command in ('recent','detail','ui','overview','lineage','runs','view','jobs','qualification')
+          or (command == 'pipeline' and str(getattr(args,'pipeline_command','') or '')
+              in ('status','plan'))
+          or (command == 'release' and str(getattr(args,'release_command','') or '')=='readiness'))
+          and _uxrich02_operator_view(args,command,root,payload)):
+        pass
     elif command in ('recent', 'detail', 'ui') and not (bool(getattr(args,'json',False)) or bool(getattr(args,'_devtool_json',False))):
         from .actions_workspace import screen_lines, create_actions_app
         interactive = command == 'ui' and sys.stdout.isatty() and sys.stdin.isatty() and not os.environ.get('CI')

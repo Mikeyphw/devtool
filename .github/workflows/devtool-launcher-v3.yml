@@ -9,6 +9,32 @@ on:
       - tests/test_delivery_ci_registrar.py
       - tests/test_delivery_ci_window_pagination.py
       - docs/DEVTOOL_LAUNCHER_CONTRACT_V3.md
+      - devtool/delivery_rich.py
+      - devtool/operator_rich.py
+      - devtool/operator_workspace.py
+      - devtool/operator_event_feed.py
+      - tests/test_operator_workspace.py
+      - tests/test_operator_event_feed.py
+      - docs/UX_RICH03_LIVE_OPERATOR_WORKSPACE.md
+      - docs/UX_RICH04_EVENT_EXPLORER.md
+      - devtool/actions_pipeline.py
+      - devtool/actions_presentation.py
+      - tests/test_actions_pipeline_projection.py
+      - tests/test_operator_rich.py
+      - docs/UX_RICH02_OPERATOR_WORKSPACE.md
+      - devtool/delivery_remote_logs.py
+      - devtool/summary.py
+      - devtool/cli.py
+      - tests/test_delivery_remote_logs.py
+      - docs/UX_RICH01_COMPLETION.md
+      - devtool/delivery_cli.py
+      - devtool/actions_cli.py
+      - tests/test_delivery_rich.py
+      - docs/RICH_DELIVERY_MONITOR.md
+      - devtool/launcher_runtime_compat.py
+      - devtool/github_actions.py
+      - tests/test_launcher_runtime_compat.py
+      - docs/LAUNCHER_RUNTIME_COMPATIBILITY.md
       - docs/CI_RUN_PAGINATION.md
       - .github/workflows/devtool-launcher-v3.yml
   workflow_dispatch:
@@ -34,6 +60,20 @@ jobs:
         run: |
           python3 -B -m pip install --disable-pip-version-check pytest
           python3 -B -m pytest -q tests/test_delivery_ci_registrar.py tests/test_delivery_ci_window_pagination.py
+      - name: Verify Rich delivery and Actions live monitor contracts
+        run: python3 -B -m unittest discover -s tests -p 'test_delivery_rich.py' -v
+      - name: Verify native Rich log fetch and compact manifest contracts
+        run: python3 -B -m unittest discover -s tests -p 'test_delivery_remote_logs.py' -v
+      - name: Verify source-attested forward 3.x launcher ABI contracts
+        run: python3 -B -m unittest discover -s tests -p 'test_launcher_runtime_compat.py' -v
+      - name: Verify unified Rich operator view contracts
+        run: python3 -B -m unittest discover -s tests -p 'test_operator_rich.py' -v
+      - name: Verify native pipeline dependency projection and legacy journal compatibility
+        run: python3 -B -m unittest discover -s tests -p 'test_actions_pipeline_projection.py' -v
+      - name: Verify persistent Rich workspace, source and SSH negative contracts
+        run: python3 -B -m pytest -q tests/test_operator_workspace.py
+      - name: Verify live canonical event explorer and filtering negative contracts
+        run: python3 -B -m pytest -q tests/test_operator_event_feed.py
       - name: Verify package import and builder CLI
         run: |
           python3 -B -m devtool.launcher_contract_v3 --help

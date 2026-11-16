@@ -156,7 +156,7 @@ def workflow_expectations(client: Any, session: Mapping[str, Any],
 
     `not_expected` may be used only for a proven branch-filter exclusion;
     trigger paths or unsupported conditional constructs are `indeterminate`.
-    An explicitly required workflow with an indeterminate trigger cannot pass.
+    An indeterminate trigger requires an independently proven registered run.
     """
     if event not in _EVENTS:
         raise DeliverySessionError('Unsupported CI registration event')
@@ -224,7 +224,8 @@ def select_registration(rows: list[dict[str, Any]], session: Mapping[str, Any],
     dispatch_run_ids = dispatch_run_ids or {}
     for row in rows:
         name = row.get('name')
-        if name not in required or expected.get(name) != 'expected' or row.get('workflow_id') != required[name]:
+        if (name not in required or expected.get(name) not in ('expected', 'indeterminate')
+                or row.get('workflow_id') != required[name]):
             continue
         if row.get('event') != event:
             continue
@@ -254,9 +255,13 @@ def select_registration(rows: list[dict[str, Any]], session: Mapping[str, Any],
         if old is None or (rid, matched['attempt']) > (old['id'], old['attempt']):
             seen[name] = matched
     ambiguous = sorted(name for name, ids in alternatives.items() if len(ids) > 1)
-    missing = [name for name in required if expected.get(name) == 'expected' and name not in seen]
+    missing = [name for name in required if expected.get(name) in ('expected', 'indeterminate')
+               and name not in seen]
     not_expected = [name for name in required if expected.get(name) == 'not_expected']
-    conditional = [name for name in required if expected.get(name) == 'indeterminate']
+    # Successful *registration* resolves uncertain static trigger filters.
+    # CI success still requires independent exact-run/attempt verification.
+    conditional = [name for name in required if expected.get(name) == 'indeterminate'
+                   and name not in seen]
     return {'runs': sorted(seen.values(), key=lambda r:r['name']), 'missing':missing,
             'ambiguous':ambiguous, 'not_expected':not_expected,
             'indeterminate':conditional, 'unknown_time':sorted(unknown_time),

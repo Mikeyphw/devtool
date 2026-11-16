@@ -26,6 +26,9 @@ from typing import Callable
 from typing import Any
 
 SCHEMA = 'devtool.launcher-contract.v3'
+LAUNCHER_CONTRACT_VERSION = '3.1.0'
+from .launcher_runtime_compat import (
+    require_version, declared_version, IncompatibleLauncherRuntime)
 SHA40 = re.compile(r'[0-9a-f]{40}\Z')
 SHA256 = re.compile(r'[0-9a-f]{64}\Z')
 SESSION32 = re.compile(r'[0-9a-f]{32}\Z')
@@ -205,9 +208,9 @@ def _with_failure_transcript(action: Callable[[],int]) -> int:
 
 def banner(command: str, *, builder: bool = False) -> None:
     role = 'BUILDER' if builder else 'NATIVE DELIVERY'
-    message = (f'Devtool Launcher v3 | {role} | {command}\n'
-               'Source/tree/CLI bound; Devtool owns validation and sessions\n'
-               'No auto merge, force push, local Gradle, device writes or release claims')
+    message = (f'Devtool · {role} · {command}\n'
+               'Native source-bound delivery · exact provenance · durable sessions\n'
+               'No merge, force push, device writes or release qualification')
     if _RICH is not None and _RichPanel is not None and 'NO_COLOR' not in os.environ and os.environ.get('CLICOLOR') != '0' and os.environ.get('TERM') != 'dumb':
         if _ACTIVE_TRANSCRIPT is not None:
             _ACTIVE_TRANSCRIPT.append(message+'\n')
@@ -217,7 +220,7 @@ def banner(command: str, *, builder: bool = False) -> None:
 CLI_CONTRACT = (
     ('delivery', 'adoption', 'audit'),
     ('delivery', 'adoption', 'scaffold'),
-    ('validate', 'overlay'),
+    ('validate-overlay',),
     ('apply', 'overlay'),
     ('delivery', 'session', 'start'),
     ('delivery', 'session', 'status'),
@@ -455,10 +458,19 @@ def make_manifest(name: str, identity: dict[str,str], devtool: dict[str,str],
                       '; build the package from a clean named feature worktree; no changes made')
     if not 1<=len(pr_title)<=160 or len(pr_body)>8000:
         raise Refused('PR_METADATA_INVALID')
+    devtool_contract={'repository':devtool['repository'],'schema_blob':schema_blob,
+                      'source_sha':devtool['source_sha'],'source_tree':devtool['source_tree'],
+                      'module_blob':devtool['module_blob']}
+    # No implicit repin: keep exact build-runtime identity in every package.
+    # Version-based execution is opt-in only for new explicit ABI manifests.
+    if devtool.get('launcher_version') is not None:
+        version=str(devtool['launcher_version'])
+        from .launcher_runtime_compat import parse_version
+        major=parse_version(version)[0]
+        if major != 3:raise Refused('LAUNCHER_RUNTIME_UNSUPPORTED_MAJOR')
+        devtool_contract['runtime_compatibility']={'minimum':version,'major':major}
     return {'schema':SCHEMA,'name':name,'source':{k:identity[k] for k in ('repository','branch','source_sha','source_tree')},
-            'devtool':{'repository':devtool['repository'],'schema_blob':schema_blob,
-                       'source_sha':devtool['source_sha'],'source_tree':devtool['source_tree'],
-                       'module_blob':devtool['module_blob']},
+            'devtool':devtool_contract,
             'plan':{'schema_version':1,'changes':[{'path':c['path'],'action':c['action']} for c in inventory]},
             'inventory':inventory,'delivery':{'base':base,'commit_message':message,'pr_title':pr_title,'pr_body':pr_body},
             'limitations':{'release_qualified':False,'device_qualified':False,'auto_merge_permitted':False,
@@ -472,6 +484,14 @@ def verify_manifest(m: dict[str,Any]) -> None:
     for key in ('source_sha','source_tree'):validate_sha(source.get(key),'source.'+key)
     for k in ('schema_blob','source_sha','source_tree','module_blob'):
         validate_sha(devtool.get(k),'devtool.'+k)
+    if 'runtime_compatibility' in devtool:
+        from .launcher_runtime_compat import parse_version
+        contract=devtool['runtime_compatibility']
+        if not isinstance(contract,dict) or set(contract)!={'minimum','major'}:
+            raise Refused('LAUNCHER_COMPATIBILITY_MANIFEST_INVALID')
+        version=parse_version(contract['minimum'])
+        if contract['major'] != 3 or version[0] != contract['major']:
+            raise Refused('LAUNCHER_COMPATIBILITY_MAJOR_INVALID')
     for key in ('repository','branch'):
         if not isinstance(source.get(key),str) or not source.get(key):raise Refused('INVALID_SOURCE_'+key)
     if not GHREPO.fullmatch(source['repository']) or devtool.get('repository')!='Mikeyphw/devtool':
@@ -564,6 +584,7 @@ def build_package(args:argparse.Namespace)->None:
     devtool=repo_identity(devtool_repo,clean=True,branch_required=False)
     if devtool['repository']!='Mikeyphw/devtool':raise Refused('WRONG_DEVTOOL_REPOSITORY')
     devtool['module_blob']=validate_sha(git(devtool_repo,'rev-parse','HEAD:devtool/launcher_contract_v3.py'), 'devtool.module_blob')
+    devtool['launcher_version']=LAUNCHER_CONTRACT_VERSION
     schema_blob=validate_sha(git(devtool_repo,'rev-parse','HEAD:devtool/core_cli_schema.json'), 'schema_blob')
     if not (devtool_repo/'devtool/core_cli_schema.json').is_file():raise Refused('DEVTOOL_CLI_SCHEMA_MISSING')
     with Path(args.plan).open('r',encoding='utf-8') as f:plan=json.load(f)
@@ -902,6 +923,8 @@ def prepare_worktrees(repo:Path,devtool_root:Path,m:dict[str,Any],
         if actual['repository']!=pinned_src['repository'] or actual['branch']!=pinned_src['branch']:
             raise Refused('POST_APPLY_WORKTREE_IDENTITY_MISMATCH')
     pinned_dev={**m['devtool'],'branch':'main'}
+    if 'runtime_compatibility' in pinned_dev:
+        return repo, resolve_compatible_runtime(repo,devtool_root,pinned_dev)
     # On generated v3 packages the original runtime can be a feature branch;
     # the exact SHA+tree is still the authority for selection.
     if pinned_dev.get('source_sha') is None or pinned_dev.get('source_tree') is None:
@@ -917,6 +940,28 @@ def runtime_probe(repo:Path,devtool_root:Path,m:dict[str,Any])->None:
     # Native LIFE receipts are retained, not deleted or silently ignored.
     verify_postcommit_status(devtool_root)
     if dev['repository'] != 'Mikeyphw/devtool':raise Refused('DEVTOOL_ORIGIN_MISMATCH')
+    if 'runtime_compatibility' in m['devtool']:
+        runtime=check_compatible_runtime(devtool_root,m['devtool'])
+        # Fail closed on dropped/renamed required native CLI commands
+        # even if the newer module claims a compatible 3.x version.
+        from .core_parser import parser_identity_projection
+        present=parser_identity_projection()['commands']
+        required=set(CLI_CONTRACT)
+        missing=sorted(required-present)
+        if missing:raise Refused('COMPATIBLE_RUNTIME_MISSING_NATIVE_CLI '+str(missing[:4]))
+        code='import devtool; from pathlib import Path; print(Path(devtool.__file__).resolve())'
+        actual=exec_cmd([sys.executable,'-B','-c',code],stage='runtime-source-import',
+                    cwd=devtool_root,devtool_root=devtool_root,target_root=repo,timeout=30).strip()
+        expected=str((devtool_root/'devtool/__init__.py').resolve())
+        if actual!=expected:raise Refused('WRONG_PYTHON_DEVTOOL_MODULE expected='+expected+' actual='+actual)
+        for command in (('delivery','adoption','scaffold'),('validate-overlay',)):
+            native(repo,devtool_root,*command,'--help',stage='cli-help-'+'-'.join(command),timeout=45)
+        say('LAUNCHER_V3_RUNTIME_COMPAT_PASS version='+runtime['version']+
+            ' expected=>='+m['devtool']['runtime_compatibility']['minimum']+
+            ' major=3.x head='+runtime['sha']+
+            ' tree='+runtime['tree']+' module='+runtime['module']+
+            ' schema='+runtime['schema']+' native_probes=2')
+        return
     for k, actual in (('source_sha',dev['source_sha']),('source_tree',dev['source_tree'])):
         if actual != m['devtool'][k]:
             raise Refused('DEVTOOL_RUNTIME_'+k.upper()+'_DRIFT expected='+m['devtool'][k]+' actual='+actual)
@@ -936,7 +981,7 @@ def runtime_probe(repo:Path,devtool_root:Path,m:dict[str,Any])->None:
     # process 15 times and can turn a read-only preflight into a 2-minute hang.
     # Probe a minimal representative set; every requested native operation is
     # independently parsed by its real CLI at invocation time.
-    for command in (('delivery','adoption','scaffold'),('validate','overlay')):
+    for command in (('delivery','adoption','scaffold'),('validate-overlay',)):
         native(repo,devtool_root,*command,'--help',stage='cli-help-'+'-'.join(command),timeout=45)
     say('LAUNCHER_V3_DEVTOOL_BOUND module='+actual+' schema_pinned=yes native_probes=2')
 
@@ -987,7 +1032,7 @@ def scaffold(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,bytes]
         if (info.get('source_sha') != m['source']['source_sha'] or
                 info.get('applied') is not False or not archive.is_file()):
             raise Refused('NATIVE_SCAFFOLD_RECEIPT_MISMATCH')
-    native(repo,devtool_root,'validate','overlay',str(archive),stage='native-validate-overlay',timeout=330,live=True)
+    native(repo,devtool_root,'validate-overlay',str(archive),stage='native-validate-overlay',timeout=330,live=True)
     say('LAUNCHER_V3_NATIVE_OVERLAY_VALIDATED '+str(archive))
     return archive
 
@@ -1141,6 +1186,16 @@ def apply_package(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,b
            '--keep-artifact',stage='native-atomic-apply-and-commit',timeout=800,live=True)
     after=repo_identity(repo,clean=False)
     verify_postcommit_status(repo)
+    # A newly added required-CI policy cannot be checked before its
+    # source-bound native commit. Once committed, verify it through
+    # native Devtool before starting CI observation. Existing malformed
+    # policies still fail preflight prior to any mutation.
+    if watch_ci and ci_policy is None and any(
+            c['path']=='config/delivery-required-ci.json' and c['action']=='add'
+            for c in m['inventory']):
+        ci_policy=required_ci_preflight(repo,devtool_root,m)
+        if ci_policy is None:
+            raise Refused('POST_COMMIT_REQUIRED_CI_POLICY_NOT_VERIFIED')
     if after['source_sha']==m['source']['source_sha'] or after['branch']!=m['source']['branch']:
         raise Refused('POST_COMMIT_IDENTITY_NOT_PROVEN')
     for c in m['inventory']:
@@ -1250,8 +1305,214 @@ def runtime_command(args:argparse.Namespace,package:Path)->int:
     raise Refused('UNKNOWN_RUNTIME_OPERATION')
 
 
+def check_compatible_runtime(root:Path, definition:dict[str,Any])->dict[str,str]:
+    """Attest the chosen Git *commit* and files, then verify declared 3.x ABI.
+
+    Exact original devtool SHA/tree/blob remain in the immutable manifest as
+    provenance, but need not equal this separately re-attested runtime.
+    """
+    identity=repo_identity(root,clean=False,branch_required=False)
+    if identity['repository']!='Mikeyphw/devtool':
+        raise Refused('COMPATIBLE_RUNTIME_WRONG_ORIGIN')
+    verify_postcommit_status(root)
+    module='devtool/launcher_contract_v3.py'
+    schema='devtool/core_cli_schema.json'
+    blobs={}
+    for path in (module,schema):
+        committed=validate_sha(git(root,'rev-parse','HEAD:'+path),path)
+        if committed!=git(root,'hash-object',path):
+            raise Refused('COMPATIBLE_RUNTIME_UNCOMMITTED_SOURCE '+path)
+        blobs[path]=committed
+    requirement=definition.get('runtime_compatibility')
+    try:
+        version=declared_version(root/module)
+        require_version(version,requirement)
+    except IncompatibleLauncherRuntime as exc:
+        raise Refused(str(exc)) from exc
+    # Package ABI != project release version. A major-incompatible module
+    # must not disguise itself behind a 3.x version marker.
+    import ast as _ast
+    tree=_ast.parse((root/module).read_text(encoding='utf-8'))
+    schema_markers=[n.value for n in tree.body if isinstance(n,_ast.Assign)
+        and any(isinstance(t,_ast.Name) and t.id=='SCHEMA' for t in n.targets)]
+    if len(schema_markers)!=1 or _ast.literal_eval(schema_markers[0])!='devtool.launcher-contract.v3':
+        raise Refused('COMPATIBLE_RUNTIME_LAUNCHER_ABI_SCHEMA_MISMATCH')
+    return {'version':version,'sha':identity['source_sha'],'tree':identity['source_tree'],
+            'module':blobs[module],'schema':blobs[schema]}
+
+
+def resolve_compatible_runtime(target:Path,requested:Path,definition:dict[str,Any])->Path:
+    """Use verified requested runtime; freeze it if the target will mutate it.
+
+    Never silently downgrade, repin, reset, fetch, or update a branch. New 3.x
+    runtimes are selected by semantic ABI and independent Git provenance.
+    """
+    runtime=check_compatible_runtime(requested,definition)
+    if requested.resolve()!=target.resolve():
+        say('LAUNCHER_V3_SELECT_COMPATIBLE_RUNTIME '+runtime['version']+
+            ' head='+runtime['sha']+' tree='+runtime['tree'])
+        return requested
+    root=_runtime_cache_root(target)
+    dest=root/('compatible-runtime-'+runtime['sha'])
+    if dest.exists() or dest.is_symlink():
+        if dest.is_symlink() or not dest.is_dir():
+            raise Refused('COMPATIBLE_RUNTIME_CACHE_INVALID')
+        reused=check_compatible_runtime(dest,definition)
+        if reused['sha']!=runtime['sha'] or reused['tree']!=runtime['tree']:
+            raise Refused('COMPATIBLE_RUNTIME_CACHE_IDENTITY_DRIFT')
+        say('LAUNCHER_V3_REUSE_COMPATIBLE_RUNTIME '+str(dest))
+        return dest
+    say('LAUNCHER_V3_FREEZE_COMPATIBLE_RUNTIME '+runtime['version']+
+        ' head='+runtime['sha']+' worktree='+str(dest))
+    exec_cmd(['git','-C',str(requested),'worktree','add','--detach',str(dest),runtime['sha']],
+             stage='native-compatible-runtime-worktree',timeout=90,live=True)
+    new=check_compatible_runtime(dest,definition)
+    if new!=runtime:
+        raise Refused('COMPATIBLE_RUNTIME_FREEZE_RESULT_MISMATCH')
+    return dest
+
+
+def compatible_bootstrap_content(devtool:dict[str,str])->str:
+    """Minimal version-aware package entrypoint with no native engine logic."""
+    from .launcher_runtime_compat import parse_version
+    required=str(devtool['launcher_version'])
+    major=parse_version(required)[0]
+    if major!=3:raise Refused('COMPATIBLE_BOOTSTRAP_UNSUPPORTED_MAJOR')
+    code = r'''# Source-attested 3.x native launcher bootstrap: NOT an overlay engine.
+import ast, json, os, pathlib, re, subprocess, sys, zipfile
+MINIMUM = _MINIMUM_
+MAJOR = _MAJOR_
+argv = sys.argv[1:]
+if argv == ['inspect']:
+    with zipfile.ZipFile(sys.argv[0]) as z:
+        m=json.loads(z.read('manifest.json'))
+    print(json.dumps({k:m[k] for k in ('schema','name','source','devtool','inventory','limitations')},indent=2,sort_keys=True))
+    raise SystemExit(0)
+if not zipfile.is_zipfile(sys.argv[0]):
+    raise SystemExit('LAUNCHER_V3_REFUSED: corrupted immutable zipapp')
+with zipfile.ZipFile(sys.argv[0]) as z:
+    m=json.loads(z.read('manifest.json'))
+required=m.get('devtool',{}).get('runtime_compatibility')
+if required != {'minimum':MINIMUM,'major':MAJOR}:
+    raise SystemExit('LAUNCHER_V3_REFUSED: immutable runtime ABI manifest mismatch')
+env=dict(os.environ,GIT_NO_REPLACE_OBJECTS='1',GIT_TERMINAL_PROMPT='0',PYTHONDONTWRITEBYTECODE='1')
+env.update(DEVTOOL_EXECUTION_PRESENTATION='plain',DEVTOOL_JOB_UI='plain',
+           DEVTOOL_TEXTUAL_APPLY_HOST='0',DEVTOOL_TEXTUAL_EXECUTION_HOST='0')
+if sys.stdout.isatty() and 'NO_COLOR' not in env and env.get('CLICOLOR')!='0' and env.get('TERM')!='dumb':
+    env.setdefault('FORCE_COLOR','1')
+GH=re.compile(r'(?:git@github[.]com:|https://github[.]com/|ssh://git@github[.]com/)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:[.]git)?/?\Z',re.I)
+SHA=re.compile(r'[0-9a-f]{40}\Z')
+VER=re.compile(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z')
+def git(path,*args):
+    p=subprocess.run(['git','-C',str(path),*args],env=env,capture_output=True,
+                     text=True,timeout=35,check=False)
+    if p.returncode:raise RuntimeError('Cannot verify native Git operation '+args[0])
+    return p.stdout.strip()
+def trust(path):
+    try:
+        if path.is_symlink() or not path.is_dir():return None
+        if pathlib.Path(git(path,'rev-parse','--show-toplevel')).resolve()!=path.resolve():return None
+        match=GH.fullmatch(git(path,'remote','get-url','origin'))
+        if match is None or match.group(1)!='Mikeyphw/devtool':return None
+        flags=git(path,'status','--porcelain','--untracked-files=all')
+        for line in flags.splitlines():
+            if not re.fullmatch(r'\?\? \.devtool/private/cleanup/receipts/cleanup-receipt-[0-9a-f]{32}\.json',line):
+                return None
+            receipt=path/line[3:]
+            if receipt.is_symlink() or not receipt.is_file() or receipt.stat().st_size>131072:return None
+            if not str(json.loads(receipt.read_text(encoding='utf-8')).get('receipt_id','')).startswith('cleanup-receipt:'):
+                return None
+        sha=git(path,'rev-parse','HEAD')
+        tree=git(path,'rev-parse','HEAD^{tree}')
+        if not SHA.fullmatch(sha) or not SHA.fullmatch(tree):return None
+        module=path/'devtool/launcher_contract_v3.py'
+        schema=path/'devtool/core_cli_schema.json'
+        for file in (module,schema):
+            if file.is_symlink() or not file.is_file() or file.stat().st_size>8*1024*1024:return None
+            rel=str(file.relative_to(path))
+            commit=git(path,'rev-parse','HEAD:'+rel)
+            if not SHA.fullmatch(commit) or git(path,'hash-object',rel)!=commit:return None
+        source=module.read_text(encoding='utf-8')
+        nodes=ast.parse(source).body
+        markers=[x.value for x in nodes if isinstance(x,ast.Assign) and any(
+                 isinstance(t,ast.Name) and t.id=='LAUNCHER_CONTRACT_VERSION' for t in x.targets)]
+        if len(markers)!=1:return None
+        sm=[x.value for x in nodes if isinstance(x,ast.Assign) and any(
+            isinstance(t,ast.Name) and t.id=='SCHEMA' for t in x.targets)]
+        if len(sm)!=1 or ast.literal_eval(sm[0])!='devtool.launcher-contract.v3':return None
+        v=ast.literal_eval(markers[0])
+        match=VER.fullmatch(v) if isinstance(v,str) else None
+        if match is None:return None
+        tup=tuple(int(i) for i in match.groups())
+        low=tuple(int(i) for i in MINIMUM.split('.'))
+        if tup[0]!=MAJOR or tup<low:return None
+        return (v,sha,tree)
+    except (OSError,ValueError,RuntimeError,SyntaxError,UnicodeError,subprocess.TimeoutExpired):
+        return None
+if '--repo' not in argv:
+    try:
+        target=pathlib.Path(git(pathlib.Path.cwd(),'rev-parse','--show-toplevel')).resolve()
+        rm=GH.fullmatch(git(target,'remote','get-url','origin'))
+        if rm is None or rm.group(1)!=m['source']['repository'] or git(target,'symbolic-ref','--quiet','--short','HEAD')!=m['source']['branch']:
+            raise RuntimeError('wrong target')
+    except (OSError,RuntimeError,KeyError,subprocess.TimeoutExpired):
+        raise SystemExit('LAUNCHER_V3_REFUSED: cd into source-bound named target or pass --repo')
+    argv.extend(['--repo',str(target)])
+else:
+    try:target=pathlib.Path(argv[argv.index('--repo')+1]).expanduser().absolute()
+    except (IndexError,ValueError):raise SystemExit('LAUNCHER_V3_REFUSED: --repo needs a value')
+explicit='--devtool-repo' in argv
+if explicit:
+    try:root=pathlib.Path(argv[argv.index('--devtool-repo')+1]).expanduser().absolute()
+    except (IndexError,ValueError):raise SystemExit('LAUNCHER_V3_REFUSED: --devtool-repo needs a value')
+    selected=trust(root)
+    if selected is None:raise SystemExit('LAUNCHER_V3_REFUSED: explicit runtime is not verified compatible 3.x')
+else:
+    home=pathlib.Path.home()
+    choices=[]
+    if env.get('DEVTOOL_REPO'):choices.append(pathlib.Path(env['DEVTOOL_REPO']).expanduser())
+    choices.extend((home/'Code/devtool',target,home/'Code/dev',home/'Code/devtool-launcher-v3'))
+    for base in list(choices):
+        if base.is_dir() and not base.is_symlink():
+            try:
+                for row in git(base,'worktree','list','--porcelain').splitlines():
+                    if row.startswith('worktree '):choices.append(pathlib.Path(row[9:]))
+            except (RuntimeError,OSError,subprocess.TimeoutExpired):pass
+    root=None;selected=None;seen=set()
+    for candidate in choices[:80]:
+        candidate=candidate.absolute()
+        if candidate in seen:continue
+        seen.add(candidate)
+        found=trust(candidate)
+        if found is not None:
+            root=candidate;selected=found;break
+    if selected is None:
+        raise SystemExit('LAUNCHER_V3_REFUSED: no trusted same-major 3.x runtime found; no repin or import')
+    argv.extend(['--devtool-repo',str(root)])
+# A runtime version is not evidence of source integrity: log actual SHA/tree.
+print('LAUNCHER_V3_RUNTIME_VERSION_PASS version='+selected[0]+' major='+str(MAJOR)+
+      '.x head='+selected[1]+' tree='+selected[2]+' original_build_sha='+m['devtool']['source_sha'],flush=True)
+# Ensure installed Python source is from verified Git origin/commit before import.
+for key in ('DEVTOOL_EXECUTION_PRESENTATION','DEVTOOL_JOB_UI','DEVTOOL_TEXTUAL_APPLY_HOST','DEVTOOL_TEXTUAL_EXECUTION_HOST'):
+    os.environ[key]=env[key]
+if 'FORCE_COLOR' in env and 'FORCE_COLOR' not in os.environ:os.environ['FORCE_COLOR']=env['FORCE_COLOR']
+sys.argv[1:]=argv
+sys.path.insert(0,str(root))
+from devtool.launcher_contract_v3 import main
+raise SystemExit(main())
+'''
+    code=code.replace('_MINIMUM_',repr(required)).replace('_MAJOR_',repr(major))
+    compile(code,'compatible-bootstrap.py','exec')
+    return code
+
+
 def bootstrap_content(devtool:dict[str,str])->str:
-    """Minimal immutable bootstrap: exact Git identity before imported module."""
+    """Select verified same-major runtime for opt-in manifests; exact for legacy."""
+    if 'launcher_version' in devtool:
+        return compatible_bootstrap_content(devtool)
+    if 'runtime_compatibility' in devtool:
+        return compatible_bootstrap_content(
+            {**devtool,'launcher_version':devtool['runtime_compatibility']['minimum']})
     pins={'source_sha':devtool['source_sha'],'source_tree':devtool['source_tree'],'module_blob':devtool['module_blob']}
     code='''# Minimal v3 manifest-only zipapp bootstrap. No Devtool engine is bundled.
 import json, os, pathlib, re, subprocess, sys, zipfile
