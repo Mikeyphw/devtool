@@ -8,13 +8,13 @@
 
 Before any module import, the bootstrap checks Devtool's exact pinned HEAD and tree with Git replacement objects disabled. The v3 module then verifies selected worktree/origin/cleanliness, committed schema and module blobs, imported module path and the native CLI contract. The target and runtime execution worktrees are separated by the exact-runtime resolver before any native overlay mutation. A caller can run the launcher inside its target worktree, including a Devtool worktree; the runtime is resolved to a stable exact pinned checkout or detached cache. Never silently repin an existing immutable package after its commit.
 
-All mutation uses the native `delivery adoption scaffold` -> `validate overlay` -> `apply overlay --yes --commit ... --static-validate --keep-artifact` transaction, followed by a fresh source-bound `delivery session start`. `check` itself runs the **native scaffold plus validator** but does not apply the overlay, write Git refs or contact GitHub. Native RUN-V3/LIFE cleanup receipts are preserved and reported, not deleted or reinterpreted as release evidence. Remote push/PR must be requested with `--approve-remote`; CI uses the exact committed Devtool policy and session, never guessed workflow names. A non-green CI report returns exit code 3 even when native observation completed successfully.
+All mutation uses the native `delivery adoption scaffold` -> `validate overlay` -> `apply overlay --yes --commit ... --static-validate --keep-artifact` transaction, followed by a fresh source-bound `delivery session start`. `check` itself runs the **native scaffold plus validator** but does not apply the overlay, write Git refs or contact GitHub. Native RUN-V3/LIFE cleanup receipts are preserved and reported, not deleted or reinterpreted as release evidence. Remote push/PR must be requested with `--approve-remote`; required-CI qualification uses the exact committed Devtool policy and session, never guessed workflow names. When the policy is absent, delivery continues with an explicit warning and CI qualification is **skipped**, not passed. If a committed policy exists, non-green required CI returns exit code 3 even when native observation completed successfully.
 
 The optional native paths use *existing* Devtool `plan`, `capabilities`, `overlay recovery-plan`, `artifacts verify --receipt`, `delivery session resume`, `status`, and `report`, without another implementation of those features. Planning is read-only and does not execute a DAG. `diagnose` never automatically rolls back. `verify-artifact` verifies a specific receipt but does not establish signing, production authenticity, or formal release authorization.
 
 ## Build an immutable feature launcher
 
-The feature checkout must be an existing, clean **named branch** with canonical GitHub `origin`, and `plan.json` must use Devtool S7 schema v1 (bounded `add`/`modify` entries) with a separate matching payload tree. This contract intentionally excludes delete; an authorized native delete overlay requires separate review/contract.
+The feature checkout must be an existing, clean **named feature branch DIFFERENT from the intended PR base** (usually `main`), with canonical GitHub `origin`, and `plan.json` must use Devtool S7 schema v1 (bounded `add`/`modify` entries) with a separate matching payload tree. This contract intentionally excludes delete; an authorized native delete overlay requires separate review/contract.
 
 ```zsh
 python3 -B -m devtool.launcher_contract_v3 build \
@@ -29,6 +29,20 @@ python3 -B -m devtool.launcher_contract_v3 build \
 ```
 
 The output is exclusively created (`O_EXCL`) outside the target; it refuses overwrites, wrong source/remote, missing preimages, symlink traversal, unreviewed add/modify, and oversized/extra ZIP members. Archive SHA256 is an integrity check, **not a signature**.
+
+**Base branch safety:** A PR cannot be opened from `main` into `main`. The
+launcher refuses package building when `source.branch == delivery.base` and
+refuses legacy base-branch packages during both `check` and `apply` **before**
+scaffolding, validation, atomic application, commit, durable session creation
+or push. It does not silently rename branches, rewrite a pinned manifest, reset
+`main`, or create a hidden worktree. Prepare a clean named feature checkout and
+build a **new immutable package** with that branch explicitly source-pinned.
+Existing legacy packages remain inspectable, and committed sessions remain
+available for read-only status/report/recovery. An already committed
+base-branch overlay must **not** be reapplied. Native delivery refuses pushing
+from the PR base; recovery requires selecting a feature branch for the existing
+commit and starting a **new source-bound delivery session**. Never claim the
+original session's head binding survives a branch move.
 
 ## One-command operation (v3.1)
 
@@ -47,23 +61,31 @@ python3 -B "$pkg" apply --approve-remote --watch-ci
 
 This **one invocation** performs exact preflight and native scaffold/validation,
 atomic overlay commit, durable session creation, authorized native push/PR, and
-bounded native required-CI observation. `--approve-remote` is **always explicit**:
+native required-CI observation **when a committed policy exists**. `--approve-remote` is **always explicit**:
 without it, `apply` stays local. `--watch-ci` is optional and requires approval;
 without it, the local apply/push still occur but CI must be checked later.
 If required CI is still non-green, it returns a nonzero exit code and retains
 the session; do not replay `apply` after a commit.
 For `apply --approve-remote --watch-ci`, **before** native scaffolding,
 validation, atomic apply, commit, push or PR, the launcher invokes the
-source-bound Devtool `delivery_ci_policy.load_policy` authority. The current
-**target HEAD** must already contain a valid committed
-`config/delivery-required-ci.json`, including explicit required workflow names
-and GitHub workflow IDs matching the target origin and PR base. Missing, staged,
-modified or invalid policy fails before mutation, not after a successful push.
-The launcher never invents required checks, adds the policy implicitly, or
-waives a policy simply because observed runs are green. A policy-onboarding
-overlay must be applied without `--watch-ci`; once committed, establish a new
-native delivery session/CI observation for its new HEAD (do not replay any
-older committed package or drifted session).
+source-bound Devtool `delivery_ci_policy.load_policy` authority **if the policy
+exists**. The policy is **optional**. When both the target HEAD and worktree
+lack `config/delivery-required-ci.json`, the launcher emits
+`LAUNCHER_V3_WARNING REQUIRED_CI_POLICY_ABSENT`, performs all native overlay
+validation, apply/commit and explicitly authorized push/PR normally, and skips
+formal required-CI observation with `REQUIRED_CI_SKIPPED_NO_POLICY`. Successful
+delivery returns 0 but **hosted CI remains NOT QUALIFIED**, even if a separate
+GitHub interface shows green checks. The explicit `ci --session-id` command also
+warns and skips rather than refusing when the policy is absent.
+
+When a policy exists, it must be *committed, clean and valid*, with exact
+required-workflow names and IDs matching the origin/base. Tracked-but-deleted,
+modified, staged, untracked, symlinked, wrong-repository and invalid policies
+continue to refuse before mutation; they are **not** treated as absent. No
+workflows are inferred from observed runs, no release qualification is claimed,
+and no native validation is bypassed. A policy added after a previous commit
+requires a new source-bound session for that new commit; never replay an old
+committed overlay or a drifted session.
 
 `inspect`, `check`, `status`, `resume`, `report`, `ci`, `diagnose`, `plan`,
 `capabilities`, and `verify-artifact` remain native optional controls. E.g.:

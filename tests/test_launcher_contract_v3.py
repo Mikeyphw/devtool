@@ -112,6 +112,7 @@ class ContractTests(unittest.TestCase):
         g(runtime,'add','.');g(runtime,'commit','-m','runtime source')
         g(runtime,'checkout','--detach')
         target=fixture(self.root,'consumer')
+        g(target,'switch','-c','feature/consumer-test')
         payload=self.root/'payload';payload.mkdir()
         (payload/'added.txt').write_text('new payload\n')
         plan=self.root/'plan.json'
@@ -247,7 +248,8 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(x.checks,25);self.assertEqual(x.interval,8)
 
     def test_a24_remote_only_native(self):
-        m=self.fake_manifest();repo=fixture(self.root);dt=self.root/'devtool';dt.mkdir()
+        m=self.fake_manifest();m['source']['branch']='feature/test-delivery'
+        repo=fixture(self.root);dt=self.root/'devtool';dt.mkdir()
         with patch('devtool.launcher_contract_v3.session_check',return_value={'head_sha':g(repo,'rev-parse','HEAD')}),\
              patch('devtool.launcher_contract_v3.git',return_value=g(repo,'rev-parse','HEAD')),\
              patch('devtool.launcher_contract_v3.native') as call:
@@ -343,6 +345,7 @@ class ContractV3Tests(unittest.TestCase):
             yield ns,json_call,native_call
 
     def test_v306_check_runs_native_validation(self):
+        self.m['source']['branch']='feature/test-delivery'
         ns=argparse.Namespace(command='check',repo=str(self.root),devtool_repo=str(self.root))
         with patch('devtool.launcher_contract_v3.read_embedded_package',return_value=(self.m,{})),\
              patch('devtool.launcher_contract_v3.check_source'),\
@@ -389,10 +392,12 @@ class ContractV3Tests(unittest.TestCase):
     def test_v312_non_green_ci_returns_nonzero(self):
         for ns,json_call,_ in self._run('ci',session_id='a'*32,checks=5,interval=1):
             json_call.return_value={'receipt':{'ci_state':'WAITING_REGISTRATION'}}
-            self.assertEqual(lc.runtime_command(ns,self.root/'x.pyz'),3)
+            with patch('devtool.launcher_contract_v3.required_ci_preflight',return_value={'required_workflows':[{'name':'Current CI','workflow_id':3}]}):
+                self.assertEqual(lc.runtime_command(ns,self.root/'x.pyz'),3)
         for ns,json_call,_ in self._run('ci',session_id='a'*32,checks=5,interval=1):
             json_call.return_value={'receipt':{'ci_state':'REQUIRED_CHECKS_PASSED'}}
-            self.assertEqual(lc.runtime_command(ns,self.root/'x.pyz'),0)
+            with patch('devtool.launcher_contract_v3.required_ci_preflight',return_value={'required_workflows':[{'name':'Current CI','workflow_id':3}]}):
+                self.assertEqual(lc.runtime_command(ns,self.root/'x.pyz'),0)
 
     def test_v313_reject_unsupported_plan_target(self):
         for ns,json_call,_ in self._run('plan',target='../../x',workflow='validate'):
@@ -687,6 +692,7 @@ class ContractV31Tests(unittest.TestCase):
             apply.assert_not_called()
 
     def test_3109_one_step_passes_native_watch_policy(self):
+        self.manifest['source']['branch']='feature/test-delivery'
         args=lc.make_parser(False).parse_args(['apply','--approve-remote','--watch-ci','--checks','7','--interval','2'])
         root=fixture(self.root,'sample')
         with patch('devtool.launcher_contract_v3.read_embedded_package',return_value=(self.manifest,{})), \
@@ -799,7 +805,9 @@ class NativeDeliveryClipboardAndCITests(unittest.TestCase):
               'policy_sha256':'a'*64,
               'required_workflows':[{'name':'Current CI','workflow_id':1234}],
               'release_qualified':False}
-        with patch('devtool.launcher_contract_v3.exec_cmd',return_value=json.dumps(data)) as run:
+        with patch('devtool.launcher_contract_v3.git',
+                   return_value='config/delivery-required-ci.json'), \
+             patch('devtool.launcher_contract_v3.exec_cmd',return_value=json.dumps(data)) as run:
             self.assertEqual(lc.required_ci_preflight(self.repo,self.runtime,
                                                      self.manifest)['policy_sha256'],'a'*64)
         argv=run.call_args.args[0]
@@ -815,24 +823,135 @@ class NativeDeliveryClipboardAndCITests(unittest.TestCase):
                         json.dumps({'required_workflows':[{'name':'Bad','workflow_id':0}],
                                     'policy_sha256':'a'*64})):
             with self.subTest(payload=payload), \
+                 patch('devtool.launcher_contract_v3.git',
+                       return_value='config/delivery-required-ci.json'), \
                  patch('devtool.launcher_contract_v3.exec_cmd',return_value=payload):
                 with self.assertRaisesRegex(lc.Refused,'PREFLIGHT'):
                     lc.required_ci_preflight(self.repo,self.runtime,self.manifest)
 
-    def test_missing_policy_prevents_scaffold_commit_and_remote_delivery(self):
+    def test_missing_policy_warns_without_native_preflight_process(self):
+        import contextlib
+        output=io.StringIO()
+        with patch('devtool.launcher_contract_v3.git',return_value=''), \
+             patch('devtool.launcher_contract_v3.exec_cmd') as run, \
+             patch('devtool.launcher_contract_v3._RICH',None), \
+             contextlib.redirect_stdout(output):
+            self.assertIsNone(lc.required_ci_preflight(self.repo,self.runtime,
+                                                      self.manifest))
+        run.assert_not_called()
+        self.assertIn('REQUIRED_CI_POLICY_ABSENT',output.getvalue())
+        self.assertIn('NOT QUALIFIED',output.getvalue())
+
+    def test_missing_policy_does_not_stop_validated_apply_and_pr(self):
+        self.manifest['inventory']=[]
+        self.manifest['source']['branch']='feature/consumer'
+        changed={'repository':'Mikeyphw/sample','branch':'feature/consumer',
+                 'source_sha':'f'*40,'source_tree':'a'*40}
+        receipt={'id':'a'*32,'head_sha':'f'*40}
         with patch('devtool.launcher_contract_v3.check_source'), \
              patch('devtool.launcher_contract_v3.runtime_probe'), \
-             patch('devtool.launcher_contract_v3.required_ci_preflight',
-                   side_effect=lc.Refused('NATIVE_COMMAND_FAILED stage=native-required-ci-preflight rc=1')), \
+             patch('devtool.launcher_contract_v3.scaffold',return_value=self.root/'p.zip') as scaffold, \
+             patch('devtool.launcher_contract_v3.native') as native, \
+             patch('devtool.launcher_contract_v3.repo_identity',return_value=changed), \
+             patch('devtool.launcher_contract_v3.verify_postcommit_status'), \
+             patch('devtool.launcher_contract_v3.native_json',return_value=receipt), \
+             patch('devtool.launcher_contract_v3.push_pr') as push, \
+             patch('devtool.launcher_contract_v3.observe_delivery_ci') as observe:
+            self.assertEqual(lc.apply_package(self.repo,self.runtime,self.manifest,{},
+                                              True,watch_ci=True),0)
+        scaffold.assert_called_once();native.assert_called_once();push.assert_called_once()
+        observe.assert_not_called()
+
+    def test_committed_but_deleted_policy_is_not_missing(self):
+        policy=self.repo/'config'/'delivery-required-ci.json'
+        policy.parent.mkdir();policy.write_text('{}')
+        g(self.repo,'add','config/delivery-required-ci.json')
+        g(self.repo,'commit','-m','policy')
+        policy.unlink()
+        self.assertFalse(lc._missing_committed_ci_policy(self.repo))
+        with self.assertRaisesRegex(lc.Refused,'native-required-ci-preflight'):
+            lc.required_ci_preflight(self.repo,self.runtime,self.manifest)
+
+    def test_existing_untracked_policy_still_fails_closed(self):
+        policy=self.repo/'config'/'delivery-required-ci.json'
+        policy.parent.mkdir();policy.write_text('{}')
+        self.assertFalse(lc._missing_committed_ci_policy(self.repo))
+        with self.assertRaisesRegex(lc.Refused,'native-required-ci-preflight'):
+            lc.required_ci_preflight(self.repo,self.runtime,self.manifest)
+
+    def test_policy_parent_symlink_refused(self):
+        destination=self.root/'external';destination.mkdir()
+        (self.repo/'config').symlink_to(destination,target_is_directory=True)
+        with self.assertRaisesRegex(lc.Refused,'CI_POLICY_PARENT_SYMLINK'):
+            lc.required_ci_preflight(self.repo,self.runtime,self.manifest)
+
+    def test_optional_ci_session_warns_and_skips_observer(self):
+        args=argparse.Namespace(command='ci',repo=str(self.repo),devtool_repo=str(self.runtime),
+                                no_auto_ff=True,session_id='a'*32,checks=1,interval=1)
+        with patch('devtool.launcher_contract_v3.read_embedded_package',
+                   return_value=(self.manifest,{})), \
+             patch('devtool.launcher_contract_v3.resolve_target_path',return_value=self.repo), \
+             patch('devtool.launcher_contract_v3.discover_runtime',return_value=self.runtime), \
+             patch('devtool.launcher_contract_v3.prepare_worktrees',
+                   return_value=(self.repo,self.runtime)), \
+             patch('devtool.launcher_contract_v3.runtime_probe'), \
+             patch('devtool.launcher_contract_v3.session_check',
+                   return_value={'stage':'CI_PENDING'}), \
+             patch('devtool.launcher_contract_v3.observe_delivery_ci') as observe:
+            self.assertEqual(lc.runtime_command(args,self.root/'not-real.pyz'),0)
+        observe.assert_not_called()
+
+    def test_base_branch_package_builder_refused_before_output(self):
+        manifest=ContractTests.fake_manifest(ContractTests)
+        with self.assertRaisesRegex(lc.Refused,'DELIVERY_BASE_BRANCH_REFUSED'):
+            lc.make_manifest('test-package',manifest['source'],manifest['devtool'],
+                manifest['inventory'],'test: commit','Test PR','description','main',
+                manifest['devtool']['schema_blob'])
+        manifest['source']['branch']='feature/current-delivery'
+        self.assertEqual(lc.make_manifest('test-package',manifest['source'],manifest['devtool'],
+                manifest['inventory'],'test: commit','Test PR','description','main',
+                manifest['devtool']['schema_blob'])['source']['branch'],
+                'feature/current-delivery')
+
+    def test_base_branch_runtime_refuses_before_repo_mutations(self):
+        with patch('devtool.launcher_contract_v3.check_source') as check, \
+             patch('devtool.launcher_contract_v3.runtime_probe') as probe, \
              patch('devtool.launcher_contract_v3.scaffold') as scaffold, \
              patch('devtool.launcher_contract_v3.native') as native, \
              patch('devtool.launcher_contract_v3.push_pr') as push:
-            with self.assertRaisesRegex(lc.Refused,'native-required-ci-preflight'):
-                lc.apply_package(self.repo,self.runtime,self.manifest,{},True,watch_ci=True)
-            scaffold.assert_not_called();native.assert_not_called();push.assert_not_called()
+            with self.assertRaisesRegex(lc.Refused,'DELIVERY_BASE_BRANCH_REFUSED'):
+                lc.apply_package(self.repo,self.runtime,self.manifest,{},
+                                 True,watch_ci=False)
+        check.assert_not_called();probe.assert_not_called()
+        scaffold.assert_not_called();native.assert_not_called();push.assert_not_called()
+
+    def test_base_branch_check_refuses_before_worktree_preparation(self):
+        args=argparse.Namespace(command='check',repo=str(self.repo),devtool_repo=str(self.runtime),
+                                no_auto_ff=True)
+        with patch('devtool.launcher_contract_v3.read_embedded_package',
+                   return_value=(self.manifest,{})), \
+             patch('devtool.launcher_contract_v3.resolve_target_path') as select, \
+             patch('devtool.launcher_contract_v3.prepare_worktrees') as prep:
+            with self.assertRaisesRegex(lc.Refused,'DELIVERY_BASE_BRANCH_REFUSED'):
+                lc.runtime_command(args,self.root/'legacy-base.pyz')
+        select.assert_not_called();prep.assert_not_called()
+
+    def test_base_branch_push_refuses_without_session_or_remote(self):
+        with patch('devtool.launcher_contract_v3.session_check') as session, \
+             patch('devtool.launcher_contract_v3.native') as native:
+            with self.assertRaisesRegex(lc.Refused,'DELIVERY_BASE_BRANCH_REFUSED'):
+                lc.push_pr(self.repo,self.runtime,self.manifest,'a'*32)
+        session.assert_not_called();native.assert_not_called()
+
+    def test_legacy_base_package_can_still_be_inspected(self):
+        args=argparse.Namespace(command='inspect')
+        with patch('devtool.launcher_contract_v3.read_embedded_package',
+                   return_value=(self.manifest,{})):
+            self.assertEqual(lc.runtime_command(args,self.root/'legacy-base.pyz'),0)
 
     def test_local_policy_onboarding_avoids_ci_policy_gate(self):
         sentinel=lc.Refused('NEXT_STAGE_NATIVE_SCAFFOLD')
+        self.manifest['source']['branch']='feature/consumer'
         with patch('devtool.launcher_contract_v3.check_source'), \
              patch('devtool.launcher_contract_v3.runtime_probe'), \
              patch('devtool.launcher_contract_v3.required_ci_preflight') as policy, \
@@ -841,9 +960,12 @@ class NativeDeliveryClipboardAndCITests(unittest.TestCase):
                 lc.apply_package(self.repo,self.runtime,self.manifest,{},False,watch_ci=False)
             policy.assert_not_called();scaffold.assert_called_once()
 
-    def test_real_policy_subprocess_error_is_diagnostic_and_safe(self):
-        # The actual native policy checker is imported by a read-only Python
-        # child, not approximated by the launcher. Missing module never passes.
+    def test_real_invalid_committed_policy_refuses_without_qualification(self):
+        policy=self.repo/'config'/'delivery-required-ci.json'
+        policy.parent.mkdir();policy.write_text('{invalid json')
+        g(self.repo,'add','config/delivery-required-ci.json')
+        g(self.repo,'commit','-m','invalid-policy-fixture')
+        # The strict native loader remains authoritative and refuses bad JSON.
         with self.assertRaisesRegex(lc.Refused,'native-required-ci-preflight'):
             lc.required_ci_preflight(self.repo,self.runtime,self.manifest)
 
