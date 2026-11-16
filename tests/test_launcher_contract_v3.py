@@ -526,3 +526,144 @@ class ReplayFastForwardContractTests(unittest.TestCase):
             with self.assertRaisesRegex(lc.Refused,'SOURCE_ALREADY_ADVANCED_NO_REPLAY'):
                 lc.prepare_worktrees(self.repo,self.repo,self.manifest,operation='check')
             ff.assert_not_called()
+
+
+class ContractV31Tests(unittest.TestCase):
+    """Concrete v3.1 opt-in/identity/presentation regression tests."""
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name)
+        self.manifest=ContractTests.fake_manifest(ContractTests)
+
+    def test_3101_optional_explicit_paths_and_one_step_remote(self):
+        p=lc.make_parser(False)
+        run=p.parse_args(['apply','--approve-remote','--watch-ci'])
+        self.assertIsNone(run.repo);self.assertIsNone(run.devtool_repo)
+        self.assertTrue(run.approve_remote);self.assertTrue(run.watch_ci)
+        self.assertEqual((run.checks,run.interval),(25,8))
+        self.assertFalse(p.parse_args(['apply']).approve_remote)
+        for item in ['status','report','ci','deliver','resume']:
+            with self.assertRaises(SystemExit):p.parse_args([item])
+
+    def test_3102_auto_target_exact_checkout(self):
+        repo=fixture(self.root,'sample')
+        self.manifest['source']['repository']='Mikeyphw/sample'
+        self.manifest['source']['branch']='main'
+        self.assertEqual(lc.resolve_target_path(None,self.manifest,cwd=repo),repo)
+        nested=repo/'dir';nested.mkdir()
+        self.assertEqual(lc.resolve_target_path(None,self.manifest,cwd=nested),repo)
+
+    def test_3103_wrong_directory_refused_pre_apply(self):
+        repo=fixture(self.root,'wrong')
+        with self.assertRaisesRegex(lc.Refused,'AUTO_TARGET_WRONG_REPOSITORY'):
+            lc.resolve_target_path(None,self.manifest,cwd=repo)
+
+    def test_3104_discover_runtime_only_exact_trusted(self):
+        repo=fixture(self.root,'devtool')
+        pin=lc.repo_identity(repo,clean=True)
+        other=fixture(self.root,'sample')
+        with patch('devtool.launcher_contract_v3.runtime_candidates',return_value=[other,repo]):
+            self.assertEqual(lc.discover_runtime(other,pin),repo)
+        with patch('devtool.launcher_contract_v3.runtime_candidates',return_value=[other]):
+            with self.assertRaisesRegex(lc.Refused,'NO_TRUSTED_DEVTOOL_CHECKOUT'):
+                lc.discover_runtime(other,pin)
+
+    def test_3105_native_ui_is_plain_even_with_parent_textual(self):
+        with patch.dict(os.environ,{'DEVTOOL_EXECUTION_PRESENTATION':'textual',
+                                     'DEVTOOL_JOB_UI':'compact',
+                                     'DEVTOOL_TEXTUAL_APPLY_HOST':'1',
+                                     'DEVTOOL_TEXTUAL_EXECUTION_HOST':'1'},clear=False):
+            e=lc.safe_env()
+        self.assertEqual(e['DEVTOOL_EXECUTION_PRESENTATION'],'plain')
+        self.assertEqual(e['DEVTOOL_JOB_UI'],'plain')
+        self.assertEqual(e['DEVTOOL_TEXTUAL_APPLY_HOST'],'0')
+        self.assertEqual(e['DEVTOOL_TEXTUAL_EXECUTION_HOST'],'0')
+
+    def test_3106_no_color_respected_in_native_process(self):
+        with patch.dict(os.environ,{'NO_COLOR':'1','FORCE_COLOR':'', 'TERM':'xterm-256color'},clear=False):
+            with patch('devtool.launcher_contract_v3.sys.stdout') as stream:
+                stream.isatty.return_value=True
+                e=lc.safe_env(color_output=True)
+        self.assertEqual(e['NO_COLOR'],'1')
+        self.assertEqual(e['FORCE_COLOR'],'')
+
+    def test_3107_tty_force_color_only_when_allowed(self):
+        with patch.dict(os.environ,{'TERM':'xterm-256color'},clear=True):
+            with patch('devtool.launcher_contract_v3.sys.stdout') as stream:
+                stream.isatty.return_value=True
+                self.assertEqual(lc.safe_env(color_output=True)['FORCE_COLOR'],'1')
+                stream.isatty.return_value=False
+                self.assertNotIn('FORCE_COLOR',lc.safe_env(color_output=False))
+
+    def test_3108_ci_watch_requires_remote_approval(self):
+        args=lc.make_parser(False).parse_args(['apply','--watch-ci'])
+        root=fixture(self.root,'sample')
+        with patch('devtool.launcher_contract_v3.read_embedded_package',return_value=(self.manifest,{})), \
+             patch('devtool.launcher_contract_v3.resolve_target_path',return_value=root), \
+             patch('devtool.launcher_contract_v3.discover_runtime',return_value=root), \
+             patch('devtool.launcher_contract_v3.prepare_worktrees',return_value=(root,root)), \
+             patch('devtool.launcher_contract_v3.apply_package') as apply:
+            with self.assertRaisesRegex(lc.Refused,'WATCH_CI_REQUIRES_APPROVE_REMOTE'):
+                lc.runtime_command(args,self.root/'pkg.pyz')
+            apply.assert_not_called()
+
+    def test_3109_one_step_passes_native_watch_policy(self):
+        args=lc.make_parser(False).parse_args(['apply','--approve-remote','--watch-ci','--checks','7','--interval','2'])
+        root=fixture(self.root,'sample')
+        with patch('devtool.launcher_contract_v3.read_embedded_package',return_value=(self.manifest,{})), \
+             patch('devtool.launcher_contract_v3.resolve_target_path',return_value=root), \
+             patch('devtool.launcher_contract_v3.discover_runtime',return_value=root), \
+             patch('devtool.launcher_contract_v3.prepare_worktrees',return_value=(root,root)), \
+             patch('devtool.launcher_contract_v3.apply_package',return_value=0) as apply:
+            self.assertEqual(lc.runtime_command(args,self.root/'pkg.pyz'),0)
+            self.assertEqual(apply.call_args.kwargs,dict(watch_ci=True,checks=7,interval=2))
+            self.assertTrue(apply.call_args.args[-1])
+
+    def test_3110_generated_bootstrap_autodiscovers_and_imports_exact(self):
+        target=fixture(self.root,'sample')
+        dev=fixture(self.root,'devtool')
+        (dev/'devtool').mkdir()
+        (dev/'devtool/__init__.py').write_text('')
+        (dev/'devtool/launcher_contract_v3.py').write_text(
+            "import os,sys\n"
+            "def main():\n"
+            " print('V31_STUB_ARGS',repr(sys.argv[1:]))\n"
+            " print('V31_STUB_UI',os.getenv('DEVTOOL_EXECUTION_PRESENTATION'))\n"
+            " return 0\n")
+        (dev/'devtool/core_cli_schema.json').write_text('{}\n')
+        g(dev,'add','.');g(dev,'commit','-m','native fixture')
+        pins=lc.repo_identity(dev,clean=True)
+        pins['module_blob']=g(dev,'rev-parse','HEAD:devtool/launcher_contract_v3.py')
+        manifest={'source':lc.repo_identity(target,clean=True)}
+        pkg=self.root/'v31.pyz'
+        pkg.write_bytes(lc.zip_bytes({'__main__.py':lc.bootstrap_content(pins).encode(),
+                 'manifest.json':json.dumps(manifest).encode()}))
+        env=dict(os.environ,DEVTOOL_REPO=str(dev),PYTHONDONTWRITEBYTECODE='1')
+        run=subprocess.run([sys.executable,'-B',str(pkg),'apply','--approve-remote'],
+                           cwd=target,env=env,text=True,capture_output=True,timeout=30)
+        self.assertEqual(run.returncode,0,run.stderr+'\n'+run.stdout)
+        self.assertIn('V31_STUB_ARGS',run.stdout)
+        self.assertIn("'--repo'",run.stdout)
+        self.assertIn("'--devtool-repo'",run.stdout)
+        self.assertIn("'--approve-remote'",run.stdout)
+        self.assertIn('V31_STUB_UI plain',run.stdout)
+        # The same archive must not import Devtool or mutate Git from wrong cwd.
+        alien=fixture(self.root,'alien')
+        bad=subprocess.run([sys.executable,'-B',str(pkg),'apply','--approve-remote'],
+                           cwd=alien,env=env,text=True,capture_output=True,timeout=30)
+        self.assertNotEqual(bad.returncode,0)
+        self.assertIn('cd into exact target worktree',bad.stderr)
+        self.assertNotIn('V31_STUB_ARGS',bad.stdout)
+
+
+class MachineReceiptColorTests(unittest.TestCase):
+    def test_3111_machine_capture_never_forces_color(self):
+        with patch.dict(os.environ,{'FORCE_COLOR':'1','TERM':'xterm-256color'},clear=True):
+            with patch('devtool.launcher_contract_v3.sys.stdout') as stream:
+                stream.isatty.return_value=True
+                machine=lc.safe_env(color_output=False)
+                live=lc.safe_env(color_output=True)
+        self.assertNotIn('FORCE_COLOR',machine)
+        self.assertEqual(machine['NO_COLOR'],'1')
+        self.assertEqual(live['FORCE_COLOR'],'1')
+        self.assertNotIn('NO_COLOR',live)
