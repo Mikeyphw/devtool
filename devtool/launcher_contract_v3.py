@@ -6,18 +6,23 @@ client, a scheduler, or a release authority. Devtool owns those operations.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import io
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shlex
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import traceback
 import uuid
 import zipfile
+from typing import Callable
 from typing import Any
 
 SCHEMA = 'devtool.launcher-contract.v3'
@@ -40,12 +45,172 @@ except ImportError:
     _RichText = None
 
 
+class _FailureTranscript:
+    """Private, non-truncated transcript; never triggers a clipboard write.
+
+    This records launcher messages, captured machine child streams, and both
+    native streams without changing the semantic authority of Devtool output.
+    """
+    def __init__(self, path: Path, fd: int):
+        self.path = path
+        self.fd = fd
+        self.lock = threading.Lock()
+
+    def append(self, value: bytes | str) -> None:
+        raw = value.encode('utf-8', errors='replace') if isinstance(value, str) else value
+        if not raw:
+            return
+        with self.lock:
+            try:
+                view = memoryview(raw)
+                while view:
+                    count = os.write(self.fd, view)
+                    if count <= 0:
+                        raise OSError('short transcript write')
+                    view = view[count:]
+            except OSError:
+                # Logging is supplemental and must not alter native transaction
+                # outcomes. The caller will not claim the log is complete.
+                self.failed = True
+
+    failed = False
+
+    def close(self) -> None:
+        os.close(self.fd)
+
+
+_ACTIVE_TRANSCRIPT: _FailureTranscript | None = None
+
+
+def _new_failure_transcript() -> _FailureTranscript | None:
+    """Never put potentially sensitive raw diagnostics in external storage."""
+    root = Path.home() / '.local' / 'state' / 'devtool' / 'launcher-logs'
+    try:
+        if root.is_symlink():
+            return None
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if (root.is_symlink() or not root.is_dir() or
+                root.stat().st_uid != os.getuid() or root.stat().st_mode & 0o077):
+            return None
+        fd, name = tempfile.mkstemp(prefix='launcher-', suffix='.log', dir=root)
+        return _FailureTranscript(Path(name), fd)
+    except OSError:
+        return None
+
+
+class _TranscriptTee:
+    """Tee in-process Python text; native subprocess streams use byte relay."""
+    def __init__(self, stream: Any, transcript: _FailureTranscript):
+        self.underlying = stream
+        self.transcript = transcript
+
+    def write(self, value: str) -> int:
+        written = self.underlying.write(value)
+        self.transcript.append(value)
+        return written
+
+    def flush(self) -> None:
+        self.underlying.flush()
+
+    def isatty(self) -> bool:
+        return bool(self.underlying.isatty())
+
+    def __getattr__(self, attr: str) -> Any:
+        return getattr(self.underlying, attr)
+
+
+def _stream_native_and_log(argv: list[str], *, cwd: Path | None,
+                           env: dict[str,str], timeout: float) -> int:
+    """Pass through the real native byte streams, recording each byte.
+
+    No Textual, terminal emulator, command substitution or output filtering.
+    A bounded child timeout is preserved. Inherited stdin is unchanged.
+    """
+    transcript = _ACTIVE_TRANSCRIPT
+    assert transcript is not None
+    with subprocess.Popen(argv,cwd=cwd,env=env,
+                          stdout=subprocess.PIPE,stderr=subprocess.PIPE) as proc:
+        def relay(pipe: Any, display: Any) -> None:
+            try:
+                base = display.underlying if isinstance(display,_TranscriptTee) else display
+                dest = getattr(base, 'buffer', None)
+                while True:
+                    chunk = pipe.read1(65536)
+                    if not chunk:
+                        break
+                    # Real subprocess stdout/stderr, streamed unchanged in full.
+                    if dest is not None:
+                        dest.write(chunk)
+                        dest.flush()
+                    else:
+                        base.write(chunk.decode('utf-8',errors='replace'))
+                        base.flush()
+                    transcript.append(chunk)
+            except (OSError, ValueError, RuntimeError):
+                transcript.failed = True
+        out_thread=threading.Thread(target=relay,args=(proc.stdout,sys.stdout),daemon=True)
+        err_thread=threading.Thread(target=relay,args=(proc.stderr,sys.stderr),daemon=True)
+        out_thread.start();err_thread.start()
+        try:
+            rc=proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill();proc.wait()
+            raise
+        finally:
+            out_thread.join(timeout=10);err_thread.join(timeout=10)
+            if out_thread.is_alive() or err_thread.is_alive():
+                # Grandchildren that retain stdout pipes can prevent EOF.
+                # Never claim an incomplete transcript contains the full log.
+                transcript.failed = True
+    return rc
+
+
+def _with_failure_transcript(action: Callable[[],int]) -> int:
+    """Report a copy command only for failures, never copy automatically."""
+    global _ACTIVE_TRANSCRIPT
+    transcript=_new_failure_transcript()
+    original=_ACTIVE_TRANSCRIPT
+    rc=2
+    if transcript is None:
+        try:
+            return action()
+        finally:
+            # Do not suggest a nonexistent complete log.
+            pass
+    _ACTIVE_TRANSCRIPT=transcript
+    try:
+        with contextlib.redirect_stdout(_TranscriptTee(sys.stdout,transcript)), \
+             contextlib.redirect_stderr(_TranscriptTee(sys.stderr,transcript)):
+            try:
+                rc=action()
+                return rc
+            except BaseException:
+                transcript.append('LAUNCHER_V3_UNHANDLED_EXCEPTION\n'+traceback.format_exc())
+                raise
+    finally:
+        _ACTIVE_TRANSCRIPT=original
+        transcript.close()
+        if rc == 0:
+            # Successful sessions require neither a clipboard prompt nor a
+            # retained copy of potentially sensitive native output.
+            transcript.path.unlink(missing_ok=True)
+        elif transcript.failed:
+            print('LAUNCHER_V3_FULL_FAILURE_LOG_UNAVAILABLE (transcript write failed)',file=sys.stderr,flush=True)
+        else:
+            print('LAUNCHER_V3_FULL_FAILURE_LOG '+str(transcript.path),file=sys.stderr,flush=True)
+            print('LAUNCHER_V3_COPY_SUGGESTION (optional, no automatic clipboard write):',file=sys.stderr,flush=True)
+            print('  termux-clipboard-set < '+shlex.quote(str(transcript.path)),file=sys.stderr,flush=True)
+            print('Review the full log for credentials before copying or sharing.',file=sys.stderr,flush=True)
+
+
 def banner(command: str, *, builder: bool = False) -> None:
     role = 'BUILDER' if builder else 'NATIVE DELIVERY'
     message = (f'Devtool Launcher v3 | {role} | {command}\n'
                'Source/tree/CLI bound; Devtool owns validation and sessions\n'
                'No auto merge, force push, local Gradle, device writes or release claims')
     if _RICH is not None and _RichPanel is not None and 'NO_COLOR' not in os.environ and os.environ.get('CLICOLOR') != '0' and os.environ.get('TERM') != 'dumb':
+        if _ACTIVE_TRANSCRIPT is not None:
+            _ACTIVE_TRANSCRIPT.append(message+'\n')
         _RICH.print(_RichPanel(message, title='Devtool Python Launcher Contract', expand=False))
     else:
         say(message)
@@ -81,6 +246,8 @@ def say(*args: Any) -> None:
         style=('bold red' if 'REFUSED' in msg or 'FAILED' in msg else
                'bold green' if any(x in msg for x in ('_PASS', '_READY', '_DELIVERED', '_COMMITTED', '_VALIDATED')) else
                'cyan' if any(x in msg for x in ('LAUNCHER_NATIVE_BEGIN', '_AUTO_FETCH', '_SESSION_ID')) else 'dim')
+        if _ACTIVE_TRANSCRIPT is not None:
+            _ACTIVE_TRANSCRIPT.append(msg+'\n')
         _RICH.print(_RichText(msg, style=style))
     else:
         print(msg, flush=True)
@@ -172,11 +339,14 @@ def exec_cmd(argv: list[str], *, stage: str, cwd: Path | None = None,
         # `gh watch` output. Do not print argv, which might contain secrets.
         say('LAUNCHER_NATIVE_BEGIN stage='+stage)
         try:
-            cp = subprocess.run(argv, cwd=cwd, env=env, timeout=timeout, check=False)
+            if _ACTIVE_TRANSCRIPT is not None:
+                rc = _stream_native_and_log(argv,cwd=cwd,env=env,timeout=timeout)
+            else:
+                rc = subprocess.run(argv,cwd=cwd,env=env,timeout=timeout,check=False).returncode
         except (OSError, subprocess.TimeoutExpired) as e:
             raise Refused(f'COMMAND_UNAVAILABLE_OR_TIMED_OUT stage={stage} cause={type(e).__name__}') from e
-        if cp.returncode:
-            raise Refused(f'NATIVE_COMMAND_FAILED stage={stage} rc={cp.returncode} (native output above)')
+        if rc:
+            raise Refused(f'NATIVE_COMMAND_FAILED stage={stage} rc={rc} (native output above)')
         say('LAUNCHER_NATIVE_END stage='+stage+' rc=0')
         return ''
     try:
@@ -184,6 +354,12 @@ def exec_cmd(argv: list[str], *, stage: str, cwd: Path | None = None,
                             text=True, errors='replace', timeout=timeout, check=False)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise Refused(f'COMMAND_UNAVAILABLE_OR_TIMED_OUT stage={stage} cause={type(e).__name__}') from e
+    if _ACTIVE_TRANSCRIPT is not None:
+        _ACTIVE_TRANSCRIPT.append('LAUNCHER_NATIVE_CAPTURE stage='+stage+' stdout:\n')
+        _ACTIVE_TRANSCRIPT.append(cp.stdout)
+        _ACTIVE_TRANSCRIPT.append('\nLAUNCHER_NATIVE_CAPTURE stage='+stage+' stderr:\n')
+        _ACTIVE_TRANSCRIPT.append(cp.stderr)
+        _ACTIVE_TRANSCRIPT.append('\n')
     if cp.returncode:
         diagnostic = cp.stderr.strip()
         if not diagnostic:
@@ -745,7 +921,11 @@ def runtime_probe(repo:Path,devtool_root:Path,m:dict[str,Any])->None:
 
 def native(repo:Path,devtool_root:Path,*parts:str,stage:str,timeout:float=120,
            live:bool=False)->str:
-    return exec_cmd([sys.executable,'-B','-m','devtool','--repo',str(repo),*parts],
+    # The supported native global flag prevents both the post-run copy prompt
+    # and automatic copying. Only Devtool CLI children receive this option;
+    # never replace internal overlay file transactions with clipboard controls.
+    return exec_cmd([sys.executable,'-B','-m','devtool','--repo',str(repo),
+                     '--no-clipboard',*parts],
                     stage=stage,cwd=devtool_root,devtool_root=devtool_root,target_root=repo,timeout=timeout,live=live)
 
 
@@ -826,6 +1006,43 @@ def observe_delivery_ci(repo:Path,devtool_root:Path,sid:str,*,checks:int=25,inte
     return 0 if ci in ('REQUIRED_CHECKS_PASSED','required_checks_passed') else 3
 
 
+def required_ci_preflight(repo:Path,devtool_root:Path,m:dict[str,Any])->dict[str,Any]:
+    """Use Devtool's *own* committed policy authority before any mutation.
+
+    This does not infer workflows from observed CI runs, inject a policy,
+    approve a release, or interpret the policy as a substitute for hosted CI.
+    An absent/uncommitted/dirty or wrong-repository policy refuses before
+    scaffolding, atomic application, push, and PR creation. Explicitly local
+    apply without CI watching retains its existing behavior.
+    """
+    code=(
+        'import json,sys; from pathlib import Path; '
+        'from devtool.delivery_ci_policy import load_policy; '
+        'p=load_policy(Path(sys.argv[1]),expected_repository=sys.argv[2],'
+        'expected_base=sys.argv[3]); '
+        'print(json.dumps(p.receipt(),sort_keys=True))'
+    )
+    output=exec_cmd([sys.executable,'-B','-c',code,str(repo),
+                     m['source']['repository'],m['delivery']['base']],
+                    stage='native-required-ci-preflight',cwd=devtool_root,
+                    devtool_root=devtool_root,target_root=repo,timeout=40)
+    try:
+        receipt=json.loads(output)
+    except ValueError as exc:
+        raise Refused('NATIVE_REQUIRED_CI_PREFLIGHT_INVALID_JSON') from exc
+    rows=receipt.get('required_workflows') if isinstance(receipt,dict) else None
+    if (not isinstance(rows,list) or not rows or
+            not isinstance(receipt.get('policy_sha256'),str) or
+            not re.fullmatch(r'[0-9a-f]{64}',receipt['policy_sha256']) or
+            not all(isinstance(row,dict) and isinstance(row.get('name'),str)
+                        and row['name'] and type(row.get('workflow_id')) is int
+                        and row['workflow_id']>0 for row in rows)):
+        raise Refused('NATIVE_REQUIRED_CI_PREFLIGHT_RECEIPT_UNVERIFIED')
+    say('LAUNCHER_V3_REQUIRED_CI_PREFLIGHT_PASS policy='+
+        receipt['policy_sha256'][:12]+' workflows='+str(len(rows)))
+    return receipt
+
+
 def verify_postcommit_status(repo:Path)->None:
     """Preserve native LIFE cleanup receipts; never delete operator evidence.
 
@@ -856,6 +1073,8 @@ def verify_postcommit_status(repo:Path)->None:
 def apply_package(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,bytes],approve_remote:bool,
                   *,watch_ci:bool=False,checks:int=25,interval:int=8)->int:
     check_source(repo,m);runtime_probe(repo,devtool_root,m)
+    if watch_ci:
+        required_ci_preflight(repo,devtool_root,m)
     archive=scaffold(repo,devtool_root,m,payload)
     native(repo,devtool_root,'apply','overlay',str(archive),'--yes','--commit',
            m['delivery']['commit_message'],'--commit-mode','new','--static-validate',
@@ -1158,6 +1377,10 @@ def make_parser(is_builder:bool)->argparse.ArgumentParser:
 
 
 def main()->int:
+    return _with_failure_transcript(_main_impl)
+
+
+def _main_impl()->int:
     package=Path(sys.argv[0]).resolve()
     try:
         if zipfile.is_zipfile(package):
