@@ -32,6 +32,7 @@ from .validation_control import status_api_payload
 from .validation_sessions import load_active_session, write_control_request
 from .transactions import list_active_transaction_records, rollback_transaction, resume_transaction_result_publication
 from .xdg import state_dir
+from .textual_github_view import create_github_workspace_widget
 from .textual_ux import (
     ArtifactActivityTracker, ApplyStageTracker, TEXTUAL_SHARED_CSS, artifact_display_progress,
     artifact_review_text, artifact_running_summary, artifact_stage_compact_line,
@@ -652,6 +653,7 @@ def create_textual_control_center_app(
     from textual.widgets import Button, ContentSwitcher, DataTable, Footer, Header, Input, Label, ListItem, ListView, ProgressBar, RichLog, Static, Tree  # type: ignore
 
     root = Path(repo_root).expanduser().resolve(strict=False)
+    GithubWorkspace = create_github_workspace_widget(root)
     normalized_page, alias_notice = normalize_tui_page(page)
     startup_artifact = str(artifact or "").strip()
     if startup_artifact and normalized_page == "dashboard":
@@ -743,10 +745,12 @@ def create_textual_control_center_app(
                 ("run:resume", "Resume selected run"),
                 ("help", "Open shortcut help"),
             ]
+            self.visible_commands = list(self.commands)
 
         def compose(self) -> ComposeResult:
             with Vertical(id="palette-box"):
                 yield Label("Command palette", id="palette-title")
+                yield Input(placeholder="Search commands and pages…", id="palette-search")
                 yield ListView(
                     *[ListItem(Label(label), id=f"palette-{index}") for index, (_intent, label) in enumerate(self.commands)],
                     id="palette-list",
@@ -759,10 +763,25 @@ def create_textual_control_center_app(
                 return
             try:
                 index = int(item_id[len("palette-"):])
-                intent = self.commands[index][0]
+                intent = self.visible_commands[index][0]
             except (ValueError, IndexError):
                 return
             self.dismiss(intent)
+
+        def on_mount(self) -> None:
+            self.query_one("#palette-search",Input).focus()
+
+        async def on_input_changed(self,event:Input.Changed) -> None:
+            if event.input.id != "palette-search":
+                return
+            needle = str(event.value or "").casefold().strip()
+            self.visible_commands = [entry for entry in self.commands
+                if all(word in entry[1].casefold() for word in needle.split())]
+            view = self.query_one("#palette-list",ListView)
+            await view.clear()
+            await view.extend([ListItem(Label(label),id=f"palette-{index}")
+                for index,(_intent,label) in enumerate(self.visible_commands)])
+            event.stop()
 
         def action_dismiss_palette(self) -> None:
             self.dismiss(None)
@@ -1151,6 +1170,7 @@ def create_textual_control_center_app(
         """
         PAGE_CONTEXT = {
             "dashboard": "Overview · live runs, validation and worker health",
+            "github": "GitHub Actions · workflows, runs, jobs, steps and explicit logs",
             "runs": "Runs · select a run, inspect nodes and request canonical controls",
             "logs": "Logs · bounded canonical output for the selected run",
             "diagnostics": "Diagnostics · actionable failures and remediation evidence",
@@ -1197,6 +1217,8 @@ def create_textual_control_center_app(
             # Screen during App.exit()/run_test() teardown, so every render
             # boundary gates itself on this lifecycle bit.
             self._projection_live = False
+            self._table_fingerprints: dict[str, Any] = {}
+            self._provider_busy = False
 
         def compose(self) -> ComposeResult:
             yield Header()
@@ -1208,6 +1230,7 @@ def create_textual_control_center_app(
                 with Vertical(id="content"):
                     yield Static("Dashboard · canonical overview", id="page-context", classes="ux-context")
                     with ContentSwitcher(initial=self.current_page, id="page-switcher"):
+                        yield GithubWorkspace(id="github")
                         with Vertical(id="dashboard", classes="page"):
                             yield Label("Dashboard", classes="page-title")
                             yield Static("Runs — · Attention — · Validation — · Workers —", id="dashboard-summary", classes="ux-summary")
@@ -1280,7 +1303,7 @@ def create_textual_control_center_app(
             self.action_page(self.current_page)
             self.refresh_from_provider()
             if self._projection_live:
-                self._refresh_timer = self.set_interval(self._refresh_interval, self.refresh_from_provider)
+                self._refresh_timer = self.set_interval(self._refresh_interval, self._schedule_provider_refresh)
             if startup_notice:
                 self.notify(startup_notice, severity="information")
 
@@ -1384,6 +1407,47 @@ def create_textual_control_center_app(
             self._projection_live = False
             self._stop_refresh()
 
+        def _schedule_provider_refresh(self) -> None:
+            if not self._projection_live or self._provider_busy:
+                return
+            self._provider_busy = True
+            selected_run, selected_node = self.selected_run, self.selected_node
+            try:
+                self.run_worker(lambda: self._background_provider(selected_run,selected_node),
+                                thread=True,exclusive=True,group="canonical-projection")
+            except Exception:
+                self._provider_busy = False
+
+        def _background_provider(self, selected_run: str, selected_node: str) -> None:
+            try:
+                data = self.provider.snapshot(selected_run=selected_run, selected_node=selected_node)
+                error = ""
+            except Exception as exc:
+                data, error = {}, "Canonical read failed ("+type(exc).__name__+")"
+            try:
+                self.call_from_thread(self._complete_provider, selected_run, data, error)
+            except (RuntimeError, AttributeError):
+                pass
+
+        def _complete_provider(self, selected_run: str, data: Mapping[str,Any], error: str) -> None:
+            self._provider_busy = False
+            if not self._projection_live:
+                return
+            if error:
+                try:self.query_one("#status-line", Static).update(error)
+                except NoMatches:self._detach_projection()
+                return
+            if selected_run != self.selected_run:
+                return
+            try:
+                self.snapshot_data = dict(data)
+                self._render_snapshot()
+                ipc = data.get("ipc") if isinstance(data.get("ipc"),Mapping) else {}
+                self.query_one("#status-line", Static).update(
+                    f"LIVE · {'IPC connected' if ipc.get('ok') else 'IPC degraded'} · run {self.selected_run or '-'} · renderer only")
+            except NoMatches:
+                self._detach_projection()
+
         def refresh_from_provider(self) -> None:
             # Textual can deliver one final interval tick while run_test()/App.exit()
             # is tearing down the default Screen. Table replacement can also queue
@@ -1419,7 +1483,17 @@ def create_textual_control_center_app(
 
         def _replace_table(self, widget_id: str, rows: Sequence[Sequence[Any]], keys: Sequence[str]) -> None:
             table = self.query_one(f"#{widget_id}", DataTable)
+            fingerprint = (tuple(str(k) for k in keys),
+                           tuple(tuple(_text(v) for v in row) for row in rows))
+            if self._table_fingerprints.get(widget_id) == fingerprint:
+                return
             cursor = int(getattr(table, "cursor_row", 0) or 0)
+            selected_key = ""
+            try:
+                if table.row_count:
+                    selected_key = str(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value)
+            except Exception:
+                pass
             table.clear(columns=False)
             for index, row in enumerate(rows):
                 key = keys[index] if index < len(keys) else str(index)
@@ -1429,9 +1503,12 @@ def create_textual_control_center_app(
                     table.add_row(*[_text(value) for value in row])
             if rows:
                 try:
-                    table.move_cursor(row=min(cursor, len(rows) - 1), column=0, animate=False)
+                    chosen = keys.index(selected_key) if selected_key in keys else min(cursor, len(rows)-1)
+                    table.move_cursor(row=chosen, column=0, animate=False)
                 except Exception:
                     pass
+
+            self._table_fingerprints[widget_id] = fingerprint
 
         def _render_snapshot(self) -> None:
             runs = self._rows(self.snapshot_data.get("runs"))
@@ -1513,10 +1590,14 @@ def create_textual_control_center_app(
             except NoMatches:
                 self._detach_projection()
                 return
-            tree.clear()
-            tree.root.set_label(f"Nodes · {self.selected_run or 'select a run'}")
             nodes_by_run = self.snapshot_data.get("nodes_by_run") if isinstance(self.snapshot_data.get("nodes_by_run"), Mapping) else {}
             nodes = nodes_by_run.get(self.selected_run, []) if self.selected_run else []
+            fingerprint = repr((self.selected_run, nodes))
+            if getattr(self,"_node_tree_fingerprint",None) == fingerprint:
+                return
+            tree.clear()
+            tree.root.set_label(f"Nodes · {self.selected_run or 'select a run'}")
+            self._node_tree_fingerprint = fingerprint
             if isinstance(nodes, list):
                 by_id = {str(item.get("node_id") or ""): item for item in nodes if isinstance(item, Mapping) and item.get("node_id")}
                 tree_nodes: dict[str, Any] = {}
@@ -1689,6 +1770,7 @@ def create_textual_control_center_app(
                 return
             selectors = {
                 "dashboard": "#dashboard-runs",
+                "github": "#github-runs",
                 "runs": "#run-table",
                 "logs": "#log-follow-toggle",
                 "diagnostics": "#diagnostics-table",
@@ -1722,6 +1804,8 @@ def create_textual_control_center_app(
             try:
                 switcher = self.query_one("#page-switcher", ContentSwitcher)
                 switcher.current = target
+                if target == "github":
+                    self.query_one("#github", GithubWorkspace).activate()
                 nav = self.query_one("#navigation", ListView)
                 try:
                     nav.index = CONTROL_CENTER_PAGES.index(target)

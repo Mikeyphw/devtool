@@ -20,6 +20,7 @@ TERMINAL_STATES = {"passed", "failed", "cancelled", "blocked", "error", "complet
 
 PANEL_AUTHORITIES: dict[str, str] = {
     "dashboard": "RUN/PRES",
+    "github": "GitHub Actions API / read-only",
     "runs": "RUN/EXO",
     "logs": "RUN",
     "diagnostics": "EXO",
@@ -89,6 +90,7 @@ ACTION_SPECS: dict[str, OperatorActionSpec] = {
 # delegates to those authorities rather than reimplementing lifecycle logic.
 PAGE_ACTIONS: dict[str, tuple[str, ...]] = {
     "dashboard": (),
+    "github": (),
     "runs": ("cancel", "retry", "rerun", "resume"),
     "logs": ("logs.open",),
     "diagnostics": ("logs.open",),
