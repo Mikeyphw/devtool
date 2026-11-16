@@ -52,7 +52,7 @@ NAVIGATION_REGISTRY: tuple[NavigationSpec, ...] = (
     _nav("projects", "nav.projects", 60, routes=(("desktop", "repositories"), ("android", "repos"), ("machine", "projects"))),
     _nav("targets", "nav.targets", 70, routes=(("desktop", "targets"), ("tui", "targets"), ("machine", "targets")), shortcuts=(("tui", "t"),)),
     _nav("validation", "nav.validation", 80, routes=(("desktop", "run"), ("tui", "validation"), ("android", "run"), ("machine", "validation")), shortcuts=(("tui", "v"),)),
-    _nav("workflows", "nav.workflows", 90, routes=(("machine", "workflows"),)),
+    _nav("workflows", "nav.workflows", 90, routes=(("machine", "workflows"), ("tui", "github")), shortcuts=(("tui", "a"),)),
     _nav("logs", "nav.logs", 100, routes=(("tui", "logs"), ("android", "logs"), ("machine", "logs")), shortcuts=(("tui", "l"),)),
     _nav("environment", "nav.environment", 110, routes=(("machine", "environment"),)),
     _nav("settings", "nav.settings", 120, section="secondary", routes=(("desktop", "settings"), ("android", "settings"), ("machine", "settings"))),

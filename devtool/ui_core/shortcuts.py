@@ -13,6 +13,7 @@ from typing import Iterable
 
 TUI_PAGES: tuple[str, ...] = (
     "dashboard",
+    "github",
     "runs",
     "logs",
     "diagnostics",
@@ -31,6 +32,8 @@ TUI_PAGES: tuple[str, ...] = (
 TUI_PAGE_ALIASES: dict[str, str] = {
     "build": "runs",
     "run": "runs",
+    "actions": "github",
+    "github-actions": "github",
     "log": "logs",
     "diagnostic": "diagnostics",
     "worker": "workers",
@@ -43,6 +46,7 @@ TUI_PAGE_CHOICES: tuple[str, ...] = (*TUI_PAGES, *TUI_PAGE_ALIASES.keys())
 
 TUI_NAV_SHORTCUTS: dict[str, str] = {
     "d": "dashboard",
+    "a": "github",
     "u": "runs",
     "l": "logs",
     "g": "diagnostics",

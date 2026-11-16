@@ -65,7 +65,7 @@ def _payload() -> dict:
 
 def test_r02_runtime_declares_all_concrete_control_center_pages() -> None:
     assert CONTROL_CENTER_PAGES == (
-        "dashboard", "runs", "logs", "diagnostics", "history", "targets", "workers",
+        "dashboard", "github", "runs", "logs", "diagnostics", "history", "targets", "workers",
         "validation", "artifacts", "overlays", "evidence",
     )
 

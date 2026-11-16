@@ -128,7 +128,7 @@ def test_r03_tui_artifact_argument_is_consumed_by_once_projection(monkeypatch: p
 
 def test_r03_static_completion_matches_cli_page_contract() -> None:
     root = Path(__file__).resolve().parents[1]
-    expected = "dashboard runs logs diagnostics history targets workers validation artifacts overlays evidence build run log diagnostic worker ssh artifact overlay"
+    expected = "dashboard github runs logs diagnostics history targets workers validation artifacts overlays evidence build run actions github-actions log diagnostic worker ssh artifact overlay"
     for rel in ("devtool/completion.py", "completions/_devtool"):
         text = (root / rel).read_text(encoding="utf-8")
         assert f"({expected})" in text
