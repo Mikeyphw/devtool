@@ -2499,6 +2499,14 @@ def _load_command_config(args: argparse.Namespace) -> ProjectConfig:
             project_override=project,
             kind_override=str(getattr(args, "project_type", "auto") or "auto"),
             allow_ambiguous_target=args.command in {"targets", "tg", "groups", "gr", "jobs", "jb", "workflows", "wf", "plan", "pl", "affected", "aff", "preflight", "pf", "doctor", "dr", "completion-state"} or allow_bundle_bootstrap or workspace_selection,
+            # Archive inspection does not run a project toolchain. An atomic
+            # overlay with --static-validate likewise uses the native artifact
+            # validator, not a guessed Android/Rust/Make runner. Preserve the
+            # ambiguous-project refusal for real build/test/validate commands.
+            allow_ambiguous_project_kind=(
+                _is_artifact_validation_args(args)
+                or (args.command in APPLY_COMMANDS and bool(getattr(args, "static_validate", False)))
+            ),
             allow_missing_federation_repositories=(
                 args.command in {"federation", "fed"}
                 and str(getattr(args, "federation_command", "") or "") in {"bootstrap", "sync"}
