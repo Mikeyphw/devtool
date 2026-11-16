@@ -1879,12 +1879,13 @@ def artifact_confirmation_text(manifest: dict) -> Text:
     return text
 
 
-def render_artifact_manifest(manifest: dict, *, console_obj: Console | None = None) -> None:
+def render_artifact_manifest(manifest: dict, *, console_obj: Console | None = None,
+                             compact: bool = False) -> None:
     """Render an artifact review with a phone-first compact layout on Termux."""
     if not manifest:
         return
     target_console = console_obj or console
-    if is_narrow_console(target_console) or target_console.width <= 72:
+    if compact or is_narrow_console(target_console) or target_console.width <= 72:
         target_console.print(_compact_artifact_manifest_panel(manifest))
         return
     renderables: list[object] = [_artifact_headline_panel(manifest, target_console)]

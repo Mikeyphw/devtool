@@ -25,7 +25,7 @@ Keyboard when a real local POSIX terminal is available:
 
 - `j/k` or arrows: select observed workflow/job
 - `Enter`: expand or collapse details/steps
-- `l`: expand already available diagnostics and source-linked run details
+- `l`: explicitly fetch source-verified remote logs and open paged viewer
 - `v`: toggle metadata verbosity
 - `r`: request the next native CI or individual-run poll immediately within its original bounded checks
 - `q`: detach from the foreground monitor, preserving session and remote run
@@ -89,7 +89,24 @@ not a launcher-side interception or log suppression. The CI/runs monitor,
 however, uses a bounded Rich Live view with the existing native poll/receipt
 engine on a genuine TTY. Redirected output stays plain even with FORCE_COLOR.
 
-`l` toggles existing, verified bounded diagnostic excerpts and the current
-source-bound run URL. It does **not** silently fetch remote signed log archives.
-Use Devtool's existing explicit GitHub log retrieval action separately if
-needed; this is deliberately distinct from visual CI qualification.
+`l` is an explicit on-demand log fetch, not a silent/automatic download.
+This is distinct from CI qualification and never changes its verdict.
+
+## UX-RICH01 completion: on-demand log archive and native compact manifest
+
+On an interactive terminal, pressing `l` now requests the selected run's
+current, exact-attempt GitHub log archive via the existing native
+`actions_runs.remote_logs` operation, following explicit user input.
+The archive is saved in the native private log store; the Rich panel
+offers redacted, bounded text pages. `[` / `]` navigate pages; `l`
+closes the log pane. GitHub run/source/attempt/workflow identity is
+independently rechecked before download. Invalid/mismatched archives
+fail closed; no signed URLs, tokens, or automatic clipboard writes.
+Failed CI/run monitors remain inspectable until `q` exits, without
+additional workflow polling or remote writes.
+
+The native apply engine now uses its *own* existing compact Rich
+artifact renderer in ordinary non-verbose terminal apply; `--verbose`
+retains full panels. Native stdout/stderr and durable transaction
+logs remain unchanged; no launcher-side output filtering. CI JSON,
+non-TTY, no-color, and legacy package source-pin semantics remain.

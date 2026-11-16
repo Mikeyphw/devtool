@@ -55,6 +55,13 @@ def run_delivery_command(args: Any) -> int:
                 rich_monitor = NativeRichMonitor(kind='ci',
                     enabled=False if bool(getattr(args,'json',False) or
                                           getattr(args,'_devtool_json',False)) else None)
+                if rich_monitor.enabled:
+                    from .github_actions import GitHubActionsClient, resolve_token
+                    from .delivery_remote_logs import fetch_selected_run_logs
+                    def _fetch_logs(run):
+                        token,_=resolve_token(str(getattr(args,'auth','auto') or 'auto'))
+                        return fetch_selected_run_logs(GitHubActionsClient(token),repo_name,run)
+                    rich_monitor.log_fetcher=_fetch_logs
                 def progress(s:dict[str,Any])->None:
                     if rich_monitor.enabled:
                         rich_monitor.observe(s)
@@ -78,6 +85,7 @@ def run_delivery_command(args: Any) -> int:
                                          auth=str(getattr(args,'auth','auto') or 'auto'),
                                          progress=progress,
                                          sleep=rich_monitor.wait_interval)
+                    rich_monitor.review_failed()
                 guard()
                 assert_observation(payload, policy)
         else:

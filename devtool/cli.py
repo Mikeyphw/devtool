@@ -8714,7 +8714,11 @@ def _format_artifact_exception(exc: BaseException, *, artifact: str, artifact_ty
 def _show_and_confirm_artifact_manifest(args: argparse.Namespace, manifest: dict, *, confirm: bool = True, ui_config: dict[str, Any] | None = None) -> None:
     if not manifest:
         return
-    render_artifact_manifest(manifest, console_obj=console)
+    # Native apply selects the existing compact Rich manifest; --verbose
+    # retains the complete artifact panels. No launcher stream filtering.
+    render_artifact_manifest(manifest, console_obj=console,
+        compact=bool(getattr(args, "_devtool_apply_terminal_stream", False))
+        and not bool(getattr(args, "verbose", False)))
     if not confirm or getattr(args, "yes", False) or getattr(args, "force", False):
         return
     from .ui_core.confirmations import confirmation_decision

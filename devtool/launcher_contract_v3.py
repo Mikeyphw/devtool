@@ -220,7 +220,7 @@ def banner(command: str, *, builder: bool = False) -> None:
 CLI_CONTRACT = (
     ('delivery', 'adoption', 'audit'),
     ('delivery', 'adoption', 'scaffold'),
-    ('validate', 'overlay'),
+    ('validate-overlay',),
     ('apply', 'overlay'),
     ('delivery', 'session', 'start'),
     ('delivery', 'session', 'status'),
@@ -954,7 +954,7 @@ def runtime_probe(repo:Path,devtool_root:Path,m:dict[str,Any])->None:
                     cwd=devtool_root,devtool_root=devtool_root,target_root=repo,timeout=30).strip()
         expected=str((devtool_root/'devtool/__init__.py').resolve())
         if actual!=expected:raise Refused('WRONG_PYTHON_DEVTOOL_MODULE expected='+expected+' actual='+actual)
-        for command in (('delivery','adoption','scaffold'),('validate','overlay')):
+        for command in (('delivery','adoption','scaffold'),('validate-overlay',)):
             native(repo,devtool_root,*command,'--help',stage='cli-help-'+'-'.join(command),timeout=45)
         say('LAUNCHER_V3_RUNTIME_COMPAT_PASS version='+runtime['version']+
             ' expected=>='+m['devtool']['runtime_compatibility']['minimum']+
@@ -981,7 +981,7 @@ def runtime_probe(repo:Path,devtool_root:Path,m:dict[str,Any])->None:
     # process 15 times and can turn a read-only preflight into a 2-minute hang.
     # Probe a minimal representative set; every requested native operation is
     # independently parsed by its real CLI at invocation time.
-    for command in (('delivery','adoption','scaffold'),('validate','overlay')):
+    for command in (('delivery','adoption','scaffold'),('validate-overlay',)):
         native(repo,devtool_root,*command,'--help',stage='cli-help-'+'-'.join(command),timeout=45)
     say('LAUNCHER_V3_DEVTOOL_BOUND module='+actual+' schema_pinned=yes native_probes=2')
 
@@ -1032,7 +1032,7 @@ def scaffold(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,bytes]
         if (info.get('source_sha') != m['source']['source_sha'] or
                 info.get('applied') is not False or not archive.is_file()):
             raise Refused('NATIVE_SCAFFOLD_RECEIPT_MISMATCH')
-    native(repo,devtool_root,'validate','overlay',str(archive),stage='native-validate-overlay',timeout=330,live=True)
+    native(repo,devtool_root,'validate-overlay',str(archive),stage='native-validate-overlay',timeout=330,live=True)
     say('LAUNCHER_V3_NATIVE_OVERLAY_VALIDATED '+str(archive))
     return archive
 

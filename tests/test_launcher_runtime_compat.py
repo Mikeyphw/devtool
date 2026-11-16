@@ -204,6 +204,35 @@ class CompatibilityTests(unittest.TestCase):
                 reused=launcher.resolve_compatible_runtime(p,p,{'runtime_compatibility':MINIMUM})
                 self.assertEqual(dest,reused)
 
+    def test_native_cli_contract_matches_canonical_schema(self):
+        # This is a real checked-in schema projection, not a synthetic stub.
+        from devtool.core_parser import parser_identity_projection
+        available=parser_identity_projection()['commands']
+        expected=set(launcher.CLI_CONTRACT)
+        self.assertIn(('validate-overlay',), expected)
+        self.assertNotIn(('validate','overlay'), expected)
+        self.assertTrue(expected <= available,
+                        'Native launcher contract drift: '+repr(sorted(expected-available)))
+
+    def test_scaffold_invokes_flat_native_validation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            archive_calls=[]
+            def fake_json(repo,devtool_root,*parts,stage):
+                self.assertEqual(parts[:3],('delivery','adoption','scaffold'))
+                output=Path(parts[parts.index('--output')+1]);output.write_bytes(b'validated by mock')
+                return {'source_sha':'a'*40,'applied':False}
+            def fake_native(repo,devtool_root,*parts,stage,timeout,live):
+                archive_calls.append((parts,stage,timeout,live))
+            with patch.object(launcher,'private_store',return_value=root),                  patch.object(launcher,'native_json',side_effect=fake_json),                  patch.object(launcher,'native',side_effect=fake_native):
+                result=launcher.scaffold(root,root,{'name':'abi-fix','source':{'source_sha':'a'*40},'plan':{}}, {})
+            self.assertEqual(result.parent,root)
+            self.assertEqual(len(archive_calls),1)
+            parts,stage,timeout,live=archive_calls[0]
+            self.assertEqual(parts[:2],('validate-overlay',str(result)))
+            self.assertEqual(stage,'native-validate-overlay')
+            self.assertTrue(live)
+
     def test_native_probe_rejects_removed_cli_command_even_when_version_matches(self):
         from types import SimpleNamespace
         import sys

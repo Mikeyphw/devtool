@@ -87,3 +87,7 @@ DEVTOOL_TEXTUAL_EXECUTION_HOST=0
 Rich monitor rendering is terminal-only. Redirected output, `NO_COLOR`,
 `CLICOLOR=0`, `TERM=dumb`, machine JSON, full real native stdout/stderr,
 no automatic clipboard writes and immutable session recovery remain intact.
+
+## Canonical CLI ABI recovery (UX-RICH01)
+
+The authoritative CLI parser defines `validate-overlay` as a flat top-level command. The earlier launcher mistakenly checked `('validate', 'overlay')`, rejecting valid compatible runtimes. The native runtime ABI inventory, read-only `--help` probe and native overlay validation invocation now all use `validate-overlay`. The compiled parser projection is checked in regression tests, alongside negative tests for genuinely missing commands. This does not waive immutable package source/HEAD/tree/blobs, CI policy or same-major 3.x compatibility requirements. Existing packages retain their original pins and are never rewritten.
