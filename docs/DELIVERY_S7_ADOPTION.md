@@ -80,3 +80,23 @@ overwriting someone else's artifact. Ordinary write errors remove only the
 newly created inode; a hard-killed process can leave a partial output, which
 must be inspected/removed explicitly before retrying (never auto-overwritten).
 The generated artifact remains data-only and no consumer repository is edited.
+
+
+## V3.2 validation-aware scaffold extension
+
+The S7 data-only scaffold now accepts optional `validation`, `preflight`, and
+`finalize` plan objects alongside `changes`. Metadata scripts under
+`.devtool-artifact/` must have exact SHA-256 pins and are copied as metadata,
+not tracked repository payload. The native artifact validator, not S7, owns
+execution. Existing two-key schema-v1 plans produce the same disabled static
+manifest and are retained solely for backwards compatibility.
+
+New native launcher packages should declare `delivery_validation_mode: full`
+and a required executable validation policy. The launcher then calls native
+`apply overlay --validate`. With no policy it warns that only legacy static
+validation is available. A `static` plan containing declarative tasks/tests is
+refused because they would otherwise be skipped. Deferred mode requires a
+separate, explicitly resumable native validation session and is not enabled by
+the launcher in this milestone.
+
+See [validation-aware launcher delivery](LAUNCHER_VALIDATION_DELIVERY_V32.md).
