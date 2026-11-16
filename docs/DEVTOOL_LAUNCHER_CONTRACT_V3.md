@@ -111,6 +111,15 @@ This private runtime survives the feature commit and remains available to
 while observing those later stages. The operator sees what was fetched, moved
 or created; native Git and Devtool remain responsible for transactions.
 
+**Detached-HEAD invariant (HF01):** Only the target worktree is required to
+have the manifest's named branch. Clean Devtool *runtime* worktrees (including
+cached detached worktrees and explicit detached checkouts) are accepted only
+after proving canonical origin, exact SHA/tree, committed module/schema blobs,
+correct imported module, and worktree status. The builder likewise accepts a
+clean detached Devtool runtime while requiring its target feature branch.
+Detached runtimes are never automatically fast-forwarded or switched to a
+branch. This also applies when inspecting native delivery sessions after commit.
+
 There is no automatic `git worktree prune`, reset, rebase, forced update, or
 change to tracking configuration. A cached runtime that is dirty or no longer
 pinned is a hard refusal, never silently cleaned or replaced.

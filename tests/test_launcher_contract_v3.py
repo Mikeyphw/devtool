@@ -63,6 +63,72 @@ class ContractTests(unittest.TestCase):
         root=fixture(self.root);g(root,'checkout','--detach')
         with self.assertRaises(lc.Refused):lc.repo_identity(root,clean=True)
 
+    def test_hf01_detached_runtime_identity_optional_but_target_strict(self):
+        root=fixture(self.root,'devtool')
+        g(root,'checkout','--detach')
+        identity=lc.repo_identity(root,clean=True,branch_required=False)
+        self.assertEqual(identity['repository'],'Mikeyphw/devtool')
+        self.assertEqual(identity['source_sha'],g(root,'rev-parse','HEAD'))
+        with self.assertRaisesRegex(lc.Refused,'git-branch'):
+            lc.repo_identity(root,clean=True)
+        (root/'untracked').write_text('unreviewed')
+        with self.assertRaisesRegex(lc.Refused,'DIRTY_WORKTREE'):
+            lc.repo_identity(root,clean=True,branch_required=False)
+
+    def test_hf02_detached_exact_runtime_probe_accepts_and_checks_blobs(self):
+        root=fixture(self.root,'devtool')
+        (root/'devtool').mkdir()
+        (root/'devtool/__init__.py').write_text('')
+        (root/'devtool/launcher_contract_v3.py').write_text('module-source\n')
+        (root/'devtool/core_cli_schema.json').write_text('{}\n')
+        g(root,'add','.');g(root,'commit','-m','exact pinned runtime')
+        g(root,'checkout','--detach')
+        actual=lc.repo_identity(root,clean=True,branch_required=False)
+        manifest={'devtool':{'repository':'Mikeyphw/devtool',
+                             'source_sha':actual['source_sha'],
+                             'source_tree':actual['source_tree'],
+                             'module_blob':g(root,'rev-parse','HEAD:devtool/launcher_contract_v3.py'),
+                             'schema_blob':g(root,'rev-parse','HEAD:devtool/core_cli_schema.json')}}
+        original=lc.exec_cmd
+        def dispatch(argv, **kwargs):
+            if kwargs.get('stage')=='runtime-source-import':
+                return str((root/'devtool/__init__.py').resolve())+'\n'
+            return original(argv,**kwargs)
+        with patch.object(lc,'exec_cmd',side_effect=dispatch), patch.object(lc,'native') as native:
+            lc.runtime_probe(root,root,manifest)
+        self.assertEqual(native.call_count,2)
+        bad=json.loads(json.dumps(manifest))
+        bad['devtool']['module_blob']='a'*40
+        with self.assertRaisesRegex(lc.Refused,'DEVTOOL_LAUNCHER_MODULE_DRIFT'):
+            lc.runtime_probe(root,root,bad)
+
+    def test_hf03_builder_accepts_detached_runtime_not_detached_target(self):
+        runtime=fixture(self.root,'devtool')
+        (runtime/'devtool').mkdir()
+        (runtime/'devtool/launcher_contract_v3.py').write_text('module-source\n')
+        (runtime/'devtool/core_cli_schema.json').write_text('{}\n')
+        g(runtime,'add','.');g(runtime,'commit','-m','runtime source')
+        g(runtime,'checkout','--detach')
+        target=fixture(self.root,'consumer')
+        payload=self.root/'payload';payload.mkdir()
+        (payload/'added.txt').write_text('new payload\n')
+        plan=self.root/'plan.json'
+        plan.write_text(json.dumps({'schema_version':1,'changes':[{'path':'added.txt','action':'add'}]}))
+        package=self.root/'hf03.pyz'
+        args=argparse.Namespace(repo=str(target),devtool_repo=str(runtime),
+             plan=str(plan),payload=str(payload),output=str(package),
+             name='detached-runtime-hf03',commit_message='test: detached runtime',
+             pr_title='Detached runtime',pr_body='fixture',base='main')
+        lc.build_package(args)
+        manifest,body=lc.read_embedded_package(package)
+        self.assertEqual(manifest['devtool']['source_sha'],g(runtime,'rev-parse','HEAD'))
+        self.assertEqual(body['payload/added.txt'],b'new payload\n')
+        g(target,'checkout','--detach')
+        args.output=str(self.root/'should-not-build.pyz')
+        with self.assertRaisesRegex(lc.Refused,'git-branch'):
+            lc.build_package(args)
+        self.assertFalse(Path(args.output).exists())
+
     def test_a06_symlink_payload_refused(self):
         root=fixture(self.root);folder=self.root/'payload';folder.mkdir()
         (folder/'alias').symlink_to(root/'original.txt')
@@ -462,6 +528,17 @@ class AutoWorktreeContractTests(unittest.TestCase):
         self.assertEqual(g(self.target,'symbolic-ref','--short','HEAD'),'feature/old')
         self.assertEqual(runtime,lc.resolve_runtime(consumer,self.target,self.pin()))
 
+    def test_hf04_detached_old_checkout_can_seed_pinned_runtime(self):
+        g(self.target,'checkout','--detach')
+        old=g(self.target,'rev-parse','HEAD')
+        consumer=fixture(self.root,'consumer')
+        runtime=lc.resolve_runtime(consumer,self.target,self.pin())
+        self.assertNotEqual(runtime,self.target)
+        self.assertEqual(g(runtime,'rev-parse','HEAD'),self.last)
+        self.assertEqual(g(self.target,'rev-parse','HEAD'),old)
+        self.assertNotEqual(subprocess.run(['git','-C',str(runtime),'symbolic-ref','-q','HEAD'],
+                                             capture_output=True).returncode,0)
+
     def test_ff07_after_commit_no_rewind_during_session_status(self):
         g(self.target,'branch','--unset-upstream')
         lc._safe_fast_forward(self.target,self.pin(),label='target-source')
@@ -654,6 +731,34 @@ class ContractV31Tests(unittest.TestCase):
         self.assertNotEqual(bad.returncode,0)
         self.assertIn('cd into exact target worktree',bad.stderr)
         self.assertNotIn('V31_STUB_ARGS',bad.stdout)
+
+
+    def test_hf05_generated_zipapp_imports_detached_runtime(self):
+        target=fixture(self.root,'sample')
+        dev=fixture(self.root,'devtool')
+        (dev/'devtool').mkdir()
+        (dev/'devtool/__init__.py').write_text('')
+        (dev/'devtool/launcher_contract_v3.py').write_text(
+            "import sys\n"
+            "def main():\n"
+            " print('HF05_DETACHED_IMPORT_PASS',repr(sys.argv[1:]))\n"
+            " return 0\n")
+        (dev/'devtool/core_cli_schema.json').write_text('{}\n')
+        g(dev,'add','.');g(dev,'commit','-m','detached native runtime')
+        pins=lc.repo_identity(dev,clean=True)
+        pins['module_blob']=g(dev,'rev-parse','HEAD:devtool/launcher_contract_v3.py')
+        manifest={'source':lc.repo_identity(target,clean=True)}
+        pkg=self.root/'hf05.pyz'
+        pkg.write_bytes(lc.zip_bytes({'__main__.py':lc.bootstrap_content(pins).encode(),
+             'manifest.json':json.dumps(manifest).encode()}))
+        g(dev,'checkout','--detach')
+        env=dict(os.environ,DEVTOOL_REPO=str(dev),PYTHONDONTWRITEBYTECODE='1')
+        run=subprocess.run([sys.executable,'-B',str(pkg),'apply','--approve-remote'],
+                           cwd=target,env=env,text=True,capture_output=True,timeout=30)
+        self.assertEqual(run.returncode,0,run.stderr+'\n'+run.stdout)
+        self.assertIn('HF05_DETACHED_IMPORT_PASS',run.stdout)
+        self.assertIn("'--devtool-repo'",run.stdout)
+        self.assertIn(str(dev),run.stdout)
 
 
 class MachineReceiptColorTests(unittest.TestCase):

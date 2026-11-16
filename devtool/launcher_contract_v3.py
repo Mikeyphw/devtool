@@ -377,7 +377,9 @@ def build_package(args:argparse.Namespace)->None:
     source_repo=Path(args.repo).expanduser().absolute()
     devtool_repo=Path(args.devtool_repo).expanduser().absolute()
     target=repo_identity(source_repo,clean=True)
-    devtool=repo_identity(devtool_repo,clean=True)
+    # The Devtool builder runtime is pinned by SHA/tree/blobs, not by a branch.
+    # A detached, clean exact-pinned worktree is a valid build runtime.
+    devtool=repo_identity(devtool_repo,clean=True,branch_required=False)
     if devtool['repository']!='Mikeyphw/devtool':raise Refused('WRONG_DEVTOOL_REPOSITORY')
     devtool['module_blob']=validate_sha(git(devtool_repo,'rev-parse','HEAD:devtool/launcher_contract_v3.py'), 'devtool.module_blob')
     schema_blob=validate_sha(git(devtool_repo,'rev-parse','HEAD:devtool/core_cli_schema.json'), 'schema_blob')
@@ -601,7 +603,13 @@ def resolve_runtime(target:Path, requested:Path,
     try:
         old=repo_identity(requested,clean=True)
     except (Refused,OSError,ValueError):
-        old=None
+        # A clean detached checkout is a trusted fetch/worktree *source*, but
+        # never eligible for a named-branch fast-forward. Continue proving
+        # origin, root, SHA, tree and cleanliness without requiring HEAD ref.
+        try:
+            old=repo_identity(requested,clean=True,branch_required=False)
+        except (Refused,OSError,ValueError):
+            old=None
     if old is not None and old['repository']==pinned['repository']:
         base=requested
     elif _same_pinned_checkout(target,pinned):
@@ -705,7 +713,9 @@ def prepare_worktrees(repo:Path,devtool_root:Path,m:dict[str,Any],
 
 
 def runtime_probe(repo:Path,devtool_root:Path,m:dict[str,Any])->None:
-    dev=repo_identity(devtool_root,clean=False)
+    # The *target* must retain a named branch. An independently pinned native
+    # Devtool runtime may have detached HEAD, as created by resolve_runtime().
+    dev=repo_identity(devtool_root,clean=False,branch_required=False)
     # Native LIFE receipts are retained, not deleted or silently ignored.
     verify_postcommit_status(devtool_root)
     if dev['repository'] != 'Mikeyphw/devtool':raise Refused('DEVTOOL_ORIGIN_MISMATCH')
