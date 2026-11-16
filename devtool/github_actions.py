@@ -9,7 +9,8 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-from typing import Any, Mapping
+import time
+from typing import Any, Mapping, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -461,7 +462,8 @@ def actions_baseline() -> dict[str, Any]:
     }
 
 
-def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None) -> dict[str, Any]:
+def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None,
+                watch_sleep: Callable[[float], Any] | None = None) -> dict[str, Any]:
     action = str(getattr(args, "actions_command", "") or "")
     if action == 'overview':
         from .actions_control_center import overview
@@ -943,9 +945,13 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
 
             return snapshot(client,selected,identity,location,receipt,with_jobs=action=="jobs")
         if action == "watch":
+            # Read-only foreground polling remains owned by actions_runs.watch.
+            # A Rich key may shorten *sleep* but cannot increase max_checks,
+            # bypass source binding, or create a second GitHub observer.
             return watch(client,selected,identity,location,receipt,
                          max_checks=int(getattr(args,"max_checks",10)),
                          interval=float(getattr(args,"interval",3)),
+                         sleep=watch_sleep or time.sleep,
                          on_observation=observation_callback)
         if action == "logs":
             return {"phase":"ACTIONS-03","logs":remote_logs(client,selected,identity)}

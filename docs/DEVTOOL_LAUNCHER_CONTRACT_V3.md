@@ -193,3 +193,21 @@ pinned is a hard refusal, never silently cleaned or replaced.
 - The new source-owned GitHub workflow runs tests on the exact PR head. It does not dispatch other workflows, approve releases, or assert formal external qualification.
 - Source-dependent launchers are intentionally *not portable between arbitrary Devtool versions*. After a reviewed Devtool update, rebuild a new package; do not silently repin old packages.
 - Delivery module is a Python `-m` entrypoint in v3; `core_cli_schema.json` remains unchanged and native CLI subcommands retain their original owners. A future explicit CLI schema registration may be done with generated surface synchronization when that is beneficial.
+
+## UX-RICH01 native Rich observability
+
+A real TTY (including a launcher-verified native stdout relay) uses a
+Rich Live **inline**, never Textual or alternate-screen, view for
+source-bound `delivery session ci` and interactive `actions watch`.
+Machine JSON, CI, dumb terminals, redirects and NO_COLOR/CLICOLOR=0
+remain plain. Rich changes only presentation; native receipts,
+raw child stdout/stderr, error exit codes and source evidence
+are authoritative. See [Rich monitoring](RICH_DELIVERY_MONITOR.md).
+
+## Versioned native runtime compatibility
+
+New packages built by UX-RICH01+ use independently committed Git-source-attested
+Devtool Launcher 3.x >= package builder version, never 4.x, while exact source
+and immutable original build-runtime SHA/tree/blob pins remain in the manifest.
+Legacy packages remain exact-runtime pinned. See
+[runtime ABI compatibility](LAUNCHER_RUNTIME_COMPATIBILITY.md).

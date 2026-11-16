@@ -6,18 +6,27 @@ import sys
 from pathlib import Path
 from typing import Any
 from .github_actions import GitHubActionsError, actions_cli
+from .delivery_rich import NativeRichMonitor, MonitorDetached, terminal_rich_enabled
 
 
 def run_actions_command(args: Any) -> int:
     command = str(getattr(args, 'actions_command', '') or '')
     subcommand = str(getattr(args, 'android_command', '') or '')
-    streaming = (os.environ.get('DEVTOOL_ACTIONS_STREAM') == '1'
+    explicit_streaming = (os.environ.get('DEVTOOL_ACTIONS_STREAM') == '1'
                  and (command == 'watch' or (command == 'android' and subcommand == 'unsigned-run')))
+    rich_watch = (command == 'watch' and not explicit_streaming and
+                  not bool(getattr(args,'json',False) or getattr(args,'_devtool_json',False)) and
+                  terminal_rich_enabled())
+    streaming = explicit_streaming or rich_watch
+    monitor = NativeRichMonitor(kind='run') if rich_watch else None
     callback = None
     if streaming:
         from .actions_live_progress import encode_observation
         def callback(observation: dict[str, Any]) -> None:
-            print(encode_observation(observation), flush=True)
+            if monitor is not None:
+                monitor.observe(observation)
+            else:
+                print(encode_observation(observation), flush=True)
     try:
         root = Path(str(getattr(args, "repo", "") or Path.cwd()))
         if command == 'adoption-doctor':
@@ -78,8 +87,16 @@ def run_actions_command(args: Any) -> int:
                 return 1
             print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
             return 0
-        payload = (actions_cli(args, root, observation_callback=callback) if streaming
-                   else actions_cli(args, root))
+        if monitor is not None:
+            with monitor:
+                payload = actions_cli(args, root, observation_callback=callback,
+                                      watch_sleep=monitor.wait_interval)
+        else:
+            payload = (actions_cli(args, root, observation_callback=callback) if streaming
+                       else actions_cli(args, root))
+    except MonitorDetached as exc:
+        print('GitHub Actions: '+str(exc), file=sys.stderr, flush=True)
+        return 2
     except GitHubActionsError as exc:
         from .actions_control_center import error_info, diagnostic_text
         info=error_info(str(exc),operation=command,state='BLOCKED')

@@ -7,11 +7,13 @@ import sys
 from typing import Any
 
 from .delivery_session import DeliverySessionError, plan, start, status, resume, report
+from .delivery_rich import NativeRichMonitor, MonitorDetached
 
 
 def run_delivery_command(args: Any) -> int:
     operation = str(getattr(args, 'delivery_session_command', '') or '')
     root = Path(str(getattr(args, 'repo', None) or Path.cwd())).expanduser().resolve(strict=False)
+    rich_monitor = None
     try:
         if operation in ('plan', 'start'):
             options = {'base':str(getattr(args,'base','main') or 'main'),
@@ -50,7 +52,13 @@ def run_delivery_command(args: Any) -> int:
                                         expected_base=base_branch)
                     if again.sha256 != policy.sha256:
                         raise DeliverySessionError('Committed CI policy changed during observation')
+                rich_monitor = NativeRichMonitor(kind='ci',
+                    enabled=False if bool(getattr(args,'json',False) or
+                                          getattr(args,'_devtool_json',False)) else None)
                 def progress(s:dict[str,Any])->None:
+                    if rich_monitor.enabled:
+                        rich_monitor.observe(s)
+                        return
                     if bool(getattr(args,'json',False) or getattr(args,'_devtool_json',False)):
                         return
                     print(f"DEVTOOL_DELIVERY_CI_CHECK poll={s['poll']} state={s['state']} "
@@ -60,18 +68,23 @@ def run_delivery_command(args: Any) -> int:
                         print(f"  run={row['id']} attempt={row['attempt']} "
                               f"workflow={row['name']} status={row['status']} "
                               f"conclusion={row['conclusion']} {row['url']}", flush=True)
-                payload = observe_ci(identity,required=policy.names,
-                                     workflow_ids=policy.workflow_ids, required_event="pull_request",
-                                     policy_sha256=policy.sha256,policy_guard=guard,
-                                     strict_registration=True,
-                                     checks=int(getattr(args,'checks',1)),
-                                     interval=float(getattr(args,'interval',5)),
-                                     auth=str(getattr(args,'auth','auto') or 'auto'),
-                                     progress=progress)
+                with rich_monitor:
+                    payload = observe_ci(identity,required=policy.names,
+                                         workflow_ids=policy.workflow_ids, required_event="pull_request",
+                                         policy_sha256=policy.sha256,policy_guard=guard,
+                                         strict_registration=True,
+                                         checks=int(getattr(args,'checks',1)),
+                                         interval=float(getattr(args,'interval',5)),
+                                         auth=str(getattr(args,'auth','auto') or 'auto'),
+                                         progress=progress,
+                                         sleep=rich_monitor.wait_interval)
                 guard()
                 assert_observation(payload, policy)
         else:
             raise DeliverySessionError('Unsupported delivery session command')
+    except MonitorDetached as exc:
+        print(f'Devtool delivery: {exc}',file=sys.stderr,flush=True)
+        return 2
     except (DeliverySessionError, OSError, ValueError) as exc:
         print(f'Devtool delivery: {exc}',file=sys.stderr,flush=True)
         return 2
@@ -85,6 +98,11 @@ def run_delivery_command(args: Any) -> int:
         print(json.dumps(payload,indent=2,sort_keys=True,ensure_ascii=False))
     elif operation in ('push','pr','ci'):
         print(f'Devtool delivery {operation}: {payload["state"]}',flush=True)
+        if operation == 'ci' and rich_monitor is not None and rich_monitor.enabled:
+            print('Session: '+identity+' · source-bound native CI receipt retained',flush=True)
+            print('Release qualification: NOT PERFORMED',flush=True)
+            return 0 if (payload.get('state') == 'REQUIRED_CHECKS_PASSED' and
+                         payload.get('checks_qualified') is True) else (1 if payload.get('state') == 'CHECKS_FAILED' else 2)
         if payload.get('url'):
             print('PR: '+payload['url'],flush=True)
         for run in payload.get('runs',[]):
