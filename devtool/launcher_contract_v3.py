@@ -450,6 +450,9 @@ def make_manifest(name: str, identity: dict[str,str], devtool: dict[str,str],
         raise Refused('BAD_COMMIT_MESSAGE')
     if not base or not re.fullmatch(r'[A-Za-z0-9_./-]{1,120}',base) or '..' in base:
         raise Refused('BAD_BASE_BRANCH')
+    if identity.get('branch') == base:
+        raise Refused('DELIVERY_BASE_BRANCH_REFUSED branch='+base+
+                      '; build the package from a clean named feature worktree; no changes made')
     if not 1<=len(pr_title)<=160 or len(pr_body)>8000:
         raise Refused('PR_METADATA_INVALID')
     return {'schema':SCHEMA,'name':name,'source':{k:identity[k] for k in ('repository','branch','source_sha','source_tree')},
@@ -553,6 +556,9 @@ def build_package(args:argparse.Namespace)->None:
     source_repo=Path(args.repo).expanduser().absolute()
     devtool_repo=Path(args.devtool_repo).expanduser().absolute()
     target=repo_identity(source_repo,clean=True)
+    if target['branch']==args.base:
+        raise Refused('DELIVERY_BASE_BRANCH_REFUSED branch='+args.base+
+                      '; build from a clean named feature worktree, not the PR base')
     # The Devtool builder runtime is pinned by SHA/tree/blobs, not by a branch.
     # A detached, clean exact-pinned worktree is a valid build runtime.
     devtool=repo_identity(devtool_repo,clean=True,branch_required=False)
@@ -581,6 +587,22 @@ def build_package(args:argparse.Namespace)->None:
     say('LAUNCHER_V3_PACKAGE_PASS',str(output.resolve()),'sha256='+digest(raw))
     say('LAUNCHER_V3_PIN',manifest['source']['source_sha'],manifest['source']['source_tree'])
     say('LAUNCHER_V3_NO_GITHUB_MUTATION; next: cd TARGET && python3 -B package.pyz apply --approve-remote')
+
+
+def require_feature_delivery_branch(m:dict[str,Any])->None:
+    """Prevent native apply/commit on a PR base before any target mutation.
+
+    The package pins a named target branch. A legacy package whose source is
+    the PR base can still be inspected and its durable session investigated,
+    but never newly applied or pushed; it must not silently change its pinned
+    source branch. Branch creation is an explicit operator preparation step.
+    """
+    branch=m['source']['branch']
+    base=m['delivery']['base']
+    if branch==base:
+        raise Refused('DELIVERY_BASE_BRANCH_REFUSED branch='+branch+
+                      ' base='+base+'; no overlay applied or committed; '+
+                      'create a clean named feature branch and rebuild an exact-pinned package')
 
 
 def check_source(repo:Path,m:dict[str,Any])->dict[str,str]:
@@ -980,6 +1002,7 @@ def session_check(repo:Path,devtool_root:Path,sid:str)->dict[str,Any]:
 
 
 def push_pr(repo:Path,devtool_root:Path,m:dict[str,Any],sid:str)->None:
+    require_feature_delivery_branch(m)
     bound=session_check(repo,devtool_root,sid)
     if bound.get('head_sha') != git(repo,'rev-parse','HEAD'):
         raise Refused('SESSION_HEAD_DRIFT; inspect native delivery session report')
@@ -1006,15 +1029,39 @@ def observe_delivery_ci(repo:Path,devtool_root:Path,sid:str,*,checks:int=25,inte
     return 0 if ci in ('REQUIRED_CHECKS_PASSED','required_checks_passed') else 3
 
 
-def required_ci_preflight(repo:Path,devtool_root:Path,m:dict[str,Any])->dict[str,Any]:
+def _missing_committed_ci_policy(repo: Path) -> bool:
+    """Only a genuinely absent policy is optional; never excuse dirty files.
+
+    A tracked-but-deleted file, untracked policy, symlink or mutated committed
+    policy must still reach Devtool's strict committed-policy validation.
+    """
+    relative='config/delivery-required-ci.json'
+    stored=git(repo,'ls-tree','--name-only','HEAD','--',relative,
+               stage='native-ci-policy-source-tree')
+    if stored not in ('',relative):
+        raise Refused('CI_POLICY_SOURCE_TREE_AMBIGUOUS')
+    policy_file=repo/relative
+    if (repo/'config').is_symlink():
+        raise Refused('CI_POLICY_PARENT_SYMLINK_REFUSED')
+    return not stored and not policy_file.exists() and not policy_file.is_symlink()
+
+
+def required_ci_preflight(repo:Path,devtool_root:Path,m:dict[str,Any])->dict[str,Any] | None:
     """Use Devtool's *own* committed policy authority before any mutation.
 
     This does not infer workflows from observed CI runs, inject a policy,
     approve a release, or interpret the policy as a substitute for hosted CI.
-    An absent/uncommitted/dirty or wrong-repository policy refuses before
-    scaffolding, atomic application, push, and PR creation. Explicitly local
-    apply without CI watching retains its existing behavior.
+    When *absent from both the source HEAD and worktree*, the policy is
+    optional: report a warning and skip formal CI observation. This never
+    qualifies hosted CI or a release. Existing malformed, uncommitted, dirty,
+    symlinked or mismatched policies still refuse through Devtool's own strict
+    policy authority; no existing security gate is bypassed.
     """
+    if _missing_committed_ci_policy(repo):
+        say('LAUNCHER_V3_WARNING REQUIRED_CI_POLICY_ABSENT '
+            'path=config/delivery-required-ci.json; native required-CI watching '
+            'will be skipped; hosted CI NOT QUALIFIED; delivery may continue')
+        return None
     code=(
         'import json,sys; from pathlib import Path; '
         'from devtool.delivery_ci_policy import load_policy; '
@@ -1072,9 +1119,9 @@ def verify_postcommit_status(repo:Path)->None:
 
 def apply_package(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,bytes],approve_remote:bool,
                   *,watch_ci:bool=False,checks:int=25,interval:int=8)->int:
+    require_feature_delivery_branch(m)
     check_source(repo,m);runtime_probe(repo,devtool_root,m)
-    if watch_ci:
-        required_ci_preflight(repo,devtool_root,m)
+    ci_policy=required_ci_preflight(repo,devtool_root,m) if watch_ci else None
     archive=scaffold(repo,devtool_root,m,payload)
     native(repo,devtool_root,'apply','overlay',str(archive),'--yes','--commit',
            m['delivery']['commit_message'],'--commit-mode','new','--static-validate',
@@ -1099,6 +1146,11 @@ def apply_package(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,b
     if approve_remote:
         push_pr(repo,devtool_root,m,sid)
         if watch_ci:
+            if ci_policy is None:
+                say('LAUNCHER_V3_WARNING REQUIRED_CI_SKIPPED_NO_POLICY '
+                    'session='+sid+'; PR delivery succeeded; hosted CI NOT QUALIFIED; '
+                    'inspect GitHub checks separately')
+                return 0  # Remote delivery succeeded; never assert CI passed.
             return observe_delivery_ci(repo,devtool_root,sid,checks=checks,interval=interval)
     else:say('LAUNCHER_V3_LOCAL_ONLY; no push or PR was attempted')
     return 0
@@ -1107,6 +1159,12 @@ def apply_package(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,b
 def runtime_command(args:argparse.Namespace,package:Path)->int:
     m,payload=read_embedded_package(package)
     op=args.command
+    if op=='apply' and getattr(args,'watch_ci',False) and not getattr(args,'approve_remote',False):
+        raise Refused('WATCH_CI_REQUIRES_APPROVE_REMOTE')
+    if op in ('check','apply'):
+        # A legacy base-branch package must refuse before auto-fetch, scaffold,
+        # native atomic apply, commit or session creation. Inspect/recovery stay available.
+        require_feature_delivery_branch(m)
     if op=='inspect':
         say(json.dumps({'name':m['name'],'schema':m['schema'],'source':m['source'],
                         'devtool':m['devtool'],'paths':[c['path'] for c in m['inventory']],
@@ -1120,8 +1178,6 @@ def runtime_command(args:argparse.Namespace,package:Path)->int:
         archive=scaffold(repo,devtool_root,m,payload)
         say('LAUNCHER_V3_READ_ONLY_NATIVE_VALIDATION_PASS archive='+str(archive));return 0
     if op=='apply':
-        if getattr(args,'watch_ci',False) and not args.approve_remote:
-            raise Refused('WATCH_CI_REQUIRES_APPROVE_REMOTE')
         return apply_package(repo,devtool_root,m,payload,args.approve_remote,
                              watch_ci=getattr(args,'watch_ci',False),
                              checks=getattr(args,'checks',25),interval=getattr(args,'interval',8))
@@ -1169,8 +1225,14 @@ def runtime_command(args:argparse.Namespace,package:Path)->int:
                    stage='native-saved-report',timeout=90,live=True)
             return 0
         if op=='deliver':
+            require_feature_delivery_branch(m)
             if not args.approve_remote:raise Refused('REMOTE_DELIVERY_REQUIRES_EXPLICIT_APPROVAL')
             push_pr(repo,devtool_root,m,sid);return 0
+        if required_ci_preflight(repo,devtool_root,m) is None:
+            say('LAUNCHER_V3_WARNING REQUIRED_CI_SKIPPED_NO_POLICY '
+                'session='+sid+'; hosted CI NOT QUALIFIED; '
+                'inspect GitHub checks separately')
+            return 0
         return observe_delivery_ci(repo,devtool_root,sid,checks=args.checks,interval=args.interval)
     raise Refused('UNKNOWN_RUNTIME_OPERATION')
 

@@ -442,7 +442,8 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
                 item, registration_horizon_seconds,
                 now=clock() if clock is not None else None)
             try:
-                raw = registrar.collect_runs(client, item['repository'])
+                raw = registrar.collect_runs(client, item['repository'],
+                                             window=window, event=required_event)
             except GitHubActionsError:
                 return provider_unavailable('workflow-run-pages', i+1)
             def registration_match(row: dict[str, Any], source: Mapping[str, Any],

@@ -51,8 +51,60 @@ def registration_window(session: Mapping[str, Any], horizon_seconds: int,
             'horizon_seconds': horizon_seconds}
 
 
-def collect_runs(client: Any, slug: str) -> list[dict[str, Any]]:
-    """Bounded complete pagination. Never interpret a truncated list as empty."""
+def collect_runs(client: Any, slug: str, *, window: Mapping[str, Any] | None = None,
+                 event: str = '') -> list[dict[str, Any]]:
+    """Exhaustive, session-window/event-scoped GitHub CI registration scan.
+
+    Repository-wide runs are NOT a meaningful bound: a popular repo may have
+    >500 older runs unrelated to this session. For real GitHub clients, filter
+    the trusted API inventory by the fixed registration window and event,
+    validate total_count and EVERY page, and refuse on any truncation or drift.
+    Fake/legacy test clients retain the previous conservative interface.
+    """
+    from .github_actions import GitHubActionsClient
+    if window is not None and isinstance(client, GitHubActionsClient):
+        from urllib.parse import urlencode
+        if event not in _EVENTS:
+            raise DeliverySessionError('Invalid scoped CI event')
+        start = window['began'] - timedelta(seconds=_CLOCK_SKEW_SECONDS)
+        end = min(window['deadline'], window['now']) + timedelta(seconds=_CLOCK_SKEW_SECONDS)
+        if end < start:
+            raise DeliverySessionError('Invalid scoped CI registration time window')
+        def utc_stamp(value: datetime) -> str:
+            return value.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        date_filter = utc_stamp(start) + '..' + utc_stamp(end)
+        rows: list[dict[str, Any]] = []
+        ids: set[int] = set()
+        count: int | None = None
+        for page in range(1, 1 + (MAX_RESULTS + 99) // 100):
+            query = urlencode({'event': event, 'created': date_filter,
+                               'per_page': 100, 'page': page})
+            result = client._get(f'/repos/{slug}/actions/runs?{query}')
+            total = result.get('total_count')
+            items = result.get('workflow_runs')
+            if (type(total) is not int or total < 0 or total >= MAX_RESULTS or
+                    (count is not None and count != total) or
+                    not isinstance(items, list) or len(items) > 100):
+                raise DeliverySessionError('CI registration pagination totals are incomplete or inconsistent')
+            count = total
+            for item in items:
+                if not isinstance(item, dict) or item.get('event') != event:
+                    raise DeliverySessionError('CI registration API event filter was not honored')
+                rid = item.get('id')
+                if type(rid) is not int or rid <= 0 or rid in ids:
+                    raise DeliverySessionError('CI registration pagination duplicate or invalid run ID')
+                ids.add(rid)
+                created = _date(item.get('created_at'))
+                if not start <= created <= end:
+                    raise DeliverySessionError('CI registration API created filter was not honored')
+            rows.extend(items)
+            if len(rows) > total:
+                raise DeliverySessionError('CI registration pagination exceeded declared total')
+            if len(rows) == total:
+                return rows
+            if len(items) != 100:
+                raise DeliverySessionError('CI registration pagination ended before declared total')
+        raise DeliverySessionError('CI registration pagination exceeded bounded session window capacity')
     if callable(getattr(client, '_paged', None)):
         rows = client._paged(slug, f'/repos/{slug}/actions/runs', 'workflow_runs',
                              max_results=MAX_RESULTS)
