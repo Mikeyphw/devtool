@@ -21,8 +21,8 @@ def ws(tmp_path, *, tab='actions'):
     return mod.Workspace(repo, HEAD, slug='Mikeyphw/devtool',tab=tab)
 
 
-def test_four_tabs_are_native_and_stable():
-    assert mod.TABS==('actions','runs','validation','ssh')
+def test_five_tabs_are_native_and_stable():
+    assert mod.TABS==('actions','runs','validation','ssh','events')
 
 
 def test_preferences_only_saved_outside_repo(tmp_path, monkeypatch):
@@ -76,7 +76,7 @@ def test_no_ssh_network_on_automatic_default(tmp_path,monkeypatch):
     calls=[]
     readers={t:lambda t=t:(calls.append(t) or {'state':'observed','items':[]}) for t in mod.TABS}
     assert obj.maybe_refresh(now=3,readers=readers)
-    assert calls==['actions','runs','validation']
+    assert calls==['actions','runs','validation','events']
     assert 'ssh' not in obj.snapshots
 
 
@@ -86,9 +86,9 @@ def test_live_local_refresh_is_bounded(tmp_path,monkeypatch):
     readers={t:lambda t=t:(calls.append(t) or {'items':[]}) for t in mod.TABS}
     obj.maybe_refresh(now=10,readers=readers)
     assert not obj.maybe_refresh(now=11.99,readers=readers)
-    assert len(calls)==3
+    assert len(calls)==4
     obj.maybe_refresh(now=12.01,readers=readers)
-    assert len(calls)==6
+    assert len(calls)==8
 
 
 def test_explicit_ssh_get_only_and_optional_bounded_auto(tmp_path,monkeypatch):

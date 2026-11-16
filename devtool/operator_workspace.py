@@ -30,8 +30,10 @@ from rich.text import Text
 
 from .operator_rich import (build_operator_view, operator_enabled, operator_items,
                             _secure)
+from .operator_event_feed import (DOMAIN_FILTERS, STATE_FILTERS, native_events,
+                                  visible_events, event_key, event_view)
 
-TABS = ('actions', 'runs', 'validation', 'ssh')
+TABS = ('actions', 'runs', 'validation', 'ssh', 'events')
 _MIN_LOCAL_REFRESH = 2.0
 _MIN_SSH_REFRESH = 12.0
 _MAX_UI_STATE = 4096
@@ -208,7 +210,7 @@ def _row_key(item: object) -> str:
             value=src.get(key)
             if value not in (None,''):
                 # Reused IDs across kinds must never retain unrelated selections.
-                scope=str(src.get('kind') or item.get('kind') or '')
+                scope=str(src.get('domain') or src.get('kind') or item.get('kind') or '')
                 return scope + ':' + key + ':' + str(value)
     return ''
 
@@ -231,6 +233,13 @@ class Workspace:
     last_source_check: float = float('-inf')
     source_issue: str = ''
     ssh_pending: bool = False
+    events_pending: bool = False
+    event_highlights: set[str] = field(default_factory=set)
+    event_domain: str = 'all'
+    event_state: str = 'all'
+    event_query: str = ''
+    event_editing: bool = False
+    event_draft: str = ''
 
     def __post_init__(self) -> None:
         self.root = _safe_root(self.root)
@@ -260,17 +269,34 @@ class Workspace:
         self.source_issue=''
         return True
 
+    def _selection_rows(self, tab: str, snapshot: Mapping[str,Any]) -> list[Any]:
+        if tab == 'events':
+            return visible_events(snapshot,domain=self.event_domain,
+                                  state=self.event_state,query=self.event_query)
+        return operator_items(snapshot)
+
     def _accept_snapshot(self, tab: str, new: Mapping[str,Any], *, now: float | None = None) -> None:
         if not isinstance(new,Mapping):raise TypeError('Invalid native snapshot')
         if new.get('read_only') is False:raise ValueError('Native read-only contract refused')
-        old_rows=operator_items(self.snapshots.get(tab,{}))
+        old_rows=self._selection_rows(tab,self.snapshots.get(tab,{}))
         index=self.selections.get(tab,0)
         key=_row_key(old_rows[index]) if 0 <= index < len(old_rows) else ''
-        new_rows=operator_items(new)
+        new_rows=self._selection_rows(tab,new)
         keys=[_row_key(x) for x in new_rows]
         # Only a unique exact native identity may survive refresh.
         self.selections[tab]=(keys.index(key) if key and keys.count(key)==1 and
                               sum(_row_key(x)==key for x in old_rows)==1 else 0)
+        if tab=='events':
+            previous=self.snapshots.get('events',{})
+            old_versions={event_key(row):(row.get('update_count'),row.get('revision'),row.get('status'))
+                          for row in previous.get('events',()) if isinstance(row,Mapping)
+                          and event_key(row)}
+            # First attach is a snapshot, not a stream of newly emitted events.
+            self.event_highlights=({event_key(row) for row in new.get('events',())
+                    if isinstance(row,Mapping) and event_key(row)
+                    and old_versions.get(event_key(row)) != (
+                       row.get('update_count'),row.get('revision'),row.get('status'))}
+                    if 'events' in self.snapshots else set())
         self.snapshots[tab]=new
         self.refreshed_at[tab]=time.monotonic() if now is None else now
         self.errors.pop(tab,None)
@@ -292,6 +318,7 @@ class Workspace:
             'runs':lambda:native_runs(self.root),
             'validation':lambda:native_validation(self.root),
             'ssh':lambda:native_ssh(self.root),
+            'events':lambda:native_events(self.root),
         }
         try:
             observed=providers[tab]()
@@ -308,11 +335,13 @@ class Workspace:
 
     def maybe_refresh(self, *, now: float | None = None,
                       readers: Mapping[str,Callable[[],Mapping[str,Any]]] | None = None,
-                      include_ssh: bool = True) -> bool:
+                      include_ssh: bool = True, include_events: bool = True) -> bool:
         moment=time.monotonic() if now is None else now
         # Even manual mode must monitor provenance; no silent stale green.
         if not self.check_source(now=moment) or not self.automatic:return False
-        tabs=(TABS if self.ssh_auto_consent and include_ssh else TABS[:-1])
+        tabs=tuple(tab for tab in TABS if
+                   (tab != 'ssh' or (self.ssh_auto_consent and include_ssh))
+                   and (tab != 'events' or include_events))
         changed=False
         for tab in tabs:
             interval=_MIN_SSH_REFRESH if tab=='ssh' else _MIN_LOCAL_REFRESH
@@ -324,19 +353,50 @@ class Workspace:
     def press(self,key: str, *,readers: Mapping[str,Callable[[],Mapping[str,Any]]] | None = None
               ) -> bool:
         """Deterministic key transition, always non-mutating to Devtool authorities."""
+        if key=='\x03':return False
+        if self.tab=='events' and self.event_editing:
+            if key in ('\r','\n'):
+                self.event_query=self.event_draft[:64]
+                self.event_editing=False
+                self.selections['events']=0
+            elif key=='\x1b':
+                self.event_editing=False
+            elif key in ('\x7f','\b'):
+                self.event_draft=self.event_draft[:-1]
+            elif len(key)==1 and key.isprintable() and len(self.event_draft)<64:
+                self.event_draft += key
+            return True
         if key in ('q','\x03'):return False
-        if key and key in '1234' and len(key)==1:
+        if key and key in '12345' and len(key)==1:
             self.remote_detail=None
             self.tab=TABS[int(key)-1]
             save_ui_state(self.root,self.head,self.tab)
         elif key=='j':
-            rows=operator_items(self.snapshots.get(self.tab,{}))
+            rows=self._selection_rows(self.tab,self.snapshots.get(self.tab,{}))
             self.selections[self.tab]=min(max(0,len(rows)-1),self.selections.get(self.tab,0)+1)
         elif key=='k':
             self.selections[self.tab]=max(0,self.selections.get(self.tab,0)-1)
         elif key in ('\r','\n'):
             if self.tab in self.details:self.details.remove(self.tab)
             else:self.details.add(self.tab)
+        elif self.tab=='events' and key in ('f','s','/','c'):
+            if key=='f':
+                index=DOMAIN_FILTERS.index(self.event_domain)
+                self.event_domain=DOMAIN_FILTERS[(index+1)%len(DOMAIN_FILTERS)]
+                self.selections['events']=0
+            elif key=='s':
+                index=STATE_FILTERS.index(self.event_state)
+                self.event_state=STATE_FILTERS[(index+1)%len(STATE_FILTERS)]
+                self.selections['events']=0
+            elif key=='/':
+                self.event_editing=True
+                self.event_draft=self.event_query
+            elif key=='c':
+                self.event_domain='all'
+                self.event_state='all'
+                self.event_query=''
+                self.event_draft=''
+                self.selections['events']=0
         elif key=='a':
             if self.tab=='ssh':
                 # Only an explicit SSH-tab keypress can grant periodic SSH GETs.
@@ -394,7 +454,9 @@ class Workspace:
         heading=Text('DEVTOOL · UX-RICH03  '+(' · '.join(tabs)),style='bold cyan')
         status=Text('Source '+self.head[:12]+'  • '+('AUTO' if self.automatic else 'MANUAL')+
             ('  • SSH AUTO OPT-IN' if self.ssh_auto_consent else '  • SSH MANUAL')+
-            ('  • SSH GET PENDING' if self.ssh_pending else '')+'  • read-only',style='dim')
+            ('  • SSH GET PENDING' if self.ssh_pending else '')+
+            ('  • EVENT READ PENDING' if self.events_pending else '')+
+            '  • read-only',style='dim')
         snapshot=self.snapshots.get(self.tab)
         if snapshot is None:
             snapshot={'state':'not-observed','message':'Press r to refresh, or g on SSH to query the worker'}
@@ -407,9 +469,17 @@ class Workspace:
         if self.tab=='actions' and self.remote_detail is not None:
             snapshot=self.remote_detail
             selected=0
-        panel=build_operator_view(self.tab,snapshot,width=width,selected=selected,
-                                  detail=self.tab in self.details)
-        footer=Text('1–4 tabs · j/k select · Enter details · r refresh · a auto toggle'
+        if self.tab=='events':
+            panel=event_view(snapshot,width=width,selected=selected,
+                             domain=self.event_domain,state=self.event_state,
+                             query=self.event_query,editing=self.event_editing,
+                             draft=self.event_draft,detail=self.tab in self.details,
+                             recent=self.event_highlights)
+        else:
+            panel=build_operator_view(self.tab,snapshot,width=width,selected=selected,
+                                      detail=self.tab in self.details)
+        footer=Text('1–5 tabs · j/k select · Enter details · r refresh · a auto toggle'
+                    ' · events: f/s filters / search c clear'
                     ' · g SSH/Actions GET · w/l Actions GET · b back · q detach',style='dim')
         return Group(heading,status,warning,panel,footer)
 
@@ -421,7 +491,10 @@ class SSHReadObserver:
     cannot be launched again. Late results are rechecked against source identity.
     The 12-second interval is a *minimum cadence*, not an SSH timeout.
     """
-    def __init__(self) -> None:
+    def __init__(self, *, tab: str = 'ssh') -> None:
+        if tab not in ('ssh', 'events'):
+            raise ValueError('Only native read-only SSH/event observation is supported')
+        self.tab=tab
         self._lock=threading.Lock()
         self._pending=False
         self._results: Queue[tuple[bool,object]] = Queue(maxsize=1)
@@ -445,17 +518,19 @@ class SSHReadObserver:
         except Empty:
             return False
         with self._lock:self._pending=False
-        workspace.ssh_pending=False
+        if self.tab=='ssh':workspace.ssh_pending=False
+        else:workspace.events_pending=False
         workspace.last_source_check=float('-inf')
         if not workspace.check_source(now=now):
-            workspace.errors['ssh']=workspace.source_issue
+            workspace.errors[self.tab]=workspace.source_issue
             return True
         if not ok:
-            workspace.errors['ssh']='SSH observation failed ('+str(result)+'); prior state unverified'
+            workspace.errors[self.tab]=(('SSH' if self.tab=='ssh' else 'Native event')+
+                ' observation failed ('+str(result)+'); prior state unverified')
         else:
-            try:workspace._accept_snapshot('ssh',result,now=now)
+            try:workspace._accept_snapshot(self.tab,result,now=now)
             except (TypeError,ValueError) as exc:
-                workspace.errors['ssh']='SSH response refused ('+type(exc).__name__+')'
+                workspace.errors[self.tab]='Native observation refused ('+type(exc).__name__+')'
         return True
 
 
@@ -478,8 +553,11 @@ def run_operator_workspace(root: Path, slug: str | None, *, initial: Mapping[str
     if initial is not None and isinstance(initial,Mapping):
         ws.snapshots['actions']=initial
         ws.refreshed_at['actions']=time.monotonic()
-    ws.maybe_refresh(readers=readers,include_ssh=False)
+    ws.maybe_refresh(readers=readers,include_ssh=False,include_events=False)
     ssh_observer=SSHReadObserver()
+    events_observer=SSHReadObserver(tab='events')
+    events_reader=(readers or {}).get('events') or (lambda:native_events(root))
+    events_last_request=float('-inf')
     # Source-scoped reader function from canonical native SSH authority.
     ssh_reader=(readers or {}).get('ssh') or (lambda:native_ssh(root))
     ssh_last_request=float('-inf')
@@ -494,7 +572,15 @@ def run_operator_workspace(root: Path, slug: str | None, *, initial: Mapping[str
                 # Continuous local projection refresh, never run/SSH command execution.
                 ready,_,_=select.select([fd],[],[],0.2)
                 now=time.monotonic()
-                changed=ws.maybe_refresh(now=now,readers=readers,include_ssh=False)
+                changed=ws.maybe_refresh(now=now,readers=readers,
+                                         include_ssh=False,include_events=False)
+                changed=events_observer.consume(ws,now=now) or changed
+                if (ws.automatic and not ws.source_drift and not ws.source_issue
+                    and now-events_last_request>=_MIN_LOCAL_REFRESH):
+                    if events_observer.request(events_reader):
+                        ws.events_pending=True
+                        events_last_request=now
+                        changed=True
                 changed=ssh_observer.consume(ws,now=now) or changed
                 if (ws.ssh_auto_consent and ws.automatic and not ws.source_drift
                     and not ws.source_issue and now-ssh_last_request>=_MIN_SSH_REFRESH):
@@ -509,8 +595,16 @@ def run_operator_workspace(root: Path, slug: str | None, *, initial: Mapping[str
                     if key=='\x1b':
                         more,_,_=select.select([fd],[],[],0.025)
                         key=os.read(fd,2).decode('utf-8','ignore') if more else ''
-                        key='j' if key=='[B' else 'k' if key=='[A' else ''
-                    if key=='g' and ws.tab=='ssh' and not ws.source_drift:
+                        key='j' if key=='[B' else 'k' if key=='[A' else '\x1b'
+                    if key=='r' and ws.tab=='events' and not ws.source_drift:
+                        if ws.check_source(now=now) and events_observer.request(events_reader):
+                            ws.events_pending=True
+                            events_last_request=now
+                        elif ws.source_issue:
+                            ws.errors['events']=ws.source_issue
+                        else:
+                            ws.errors['events']='Event observation already pending'
+                    elif key=='g' and ws.tab=='ssh' and not ws.source_drift:
                         if ws.check_source(now=now) and ssh_observer.request(ssh_reader):
                             ws.ssh_pending=True
                             ssh_last_request=now
@@ -529,4 +623,4 @@ def run_operator_workspace(root: Path, slug: str | None, *, initial: Mapping[str
 
 __all__=['Workspace','SSHReadObserver','run_operator_workspace',
          'load_ui_state','save_ui_state',
-         'native_runs','native_validation','native_ssh','native_actions','TABS']
+         'native_runs','native_validation','native_ssh','native_actions','native_events','TABS']
