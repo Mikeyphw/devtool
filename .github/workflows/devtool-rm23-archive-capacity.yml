@@ -1,0 +1,31 @@
+name: Devtool RM23 bounded JVM archive verification
+on:
+  pull_request:
+    paths:
+      - devtool/actions_rm12_jvm.py
+      - devtool/actions_rm21_hosted_native.py
+      - tests/test_rm23_archive_capacity.py
+      - .github/workflows/devtool-rm23-archive-capacity.yml
+permissions:
+  contents: read
+jobs:
+  archive-security-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Exact PR source checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+      - name: Capacity and hostile archive tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          PYTHONPATH="$PWD" python -B tests/test_rm23_archive_capacity.py
+          PYTHONPATH="$PWD" python -B tests/test_rm21_hosted_native.py
+          echo RM23_ARCHIVE_SECURITY_REGRESSION_PASS

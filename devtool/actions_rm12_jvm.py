@@ -361,7 +361,7 @@ def inspect_jvm_job(root:Path,argv:list[str],meta:dict[str,Any]) -> dict[str,Any
             'output_role':'local-bytes-only','report_adapter':'junit-xml','release_qualified':False}
 
 
-def _checked_archive(z:zipfile.ZipFile, *,limit:int=256) -> zipfile.ZipFile:
+def _checked_archive(z:zipfile.ZipFile, *,limit:int=4096) -> zipfile.ZipFile:
     """Apply the same bounded ZIP contract to disk archives and nested JAR bytes."""
     try:
         names=set();total=0
@@ -387,7 +387,7 @@ def _checked_archive(z:zipfile.ZipFile, *,limit:int=256) -> zipfile.ZipFile:
         raise
 
 
-def _archive(path:Path, *,limit:int=256) -> zipfile.ZipFile:
+def _archive(path:Path, *,limit:int=4096) -> zipfile.ZipFile:
     if path.is_symlink() or not path.is_file() or path.stat().st_size>128*1024*1024:
         raise JvmError('RM-12 missing/unbounded regular JVM artifact')
     try:z=zipfile.ZipFile(path)
