@@ -52,6 +52,18 @@ without it, `apply` stays local. `--watch-ci` is optional and requires approval;
 without it, the local apply/push still occur but CI must be checked later.
 If required CI is still non-green, it returns a nonzero exit code and retains
 the session; do not replay `apply` after a commit.
+For `apply --approve-remote --watch-ci`, **before** native scaffolding,
+validation, atomic apply, commit, push or PR, the launcher invokes the
+source-bound Devtool `delivery_ci_policy.load_policy` authority. The current
+**target HEAD** must already contain a valid committed
+`config/delivery-required-ci.json`, including explicit required workflow names
+and GitHub workflow IDs matching the target origin and PR base. Missing, staged,
+modified or invalid policy fails before mutation, not after a successful push.
+The launcher never invents required checks, adds the policy implicitly, or
+waives a policy simply because observed runs are green. A policy-onboarding
+overlay must be applied without `--watch-ci`; once committed, establish a new
+native delivery session/CI observation for its new HEAD (do not replay any
+older committed package or drifted session).
 
 `inspect`, `check`, `status`, `resume`, `report`, `ci`, `diagnose`, `plan`,
 `capabilities`, and `verify-artifact` remain native optional controls. E.g.:
@@ -74,6 +86,34 @@ of ancestry, never forced or rebased.
 Every native Devtool child receives the supported Devtool switches:
 `DEVTOOL_EXECUTION_PRESENTATION=plain`, `DEVTOOL_JOB_UI=plain`,
 `DEVTOOL_TEXTUAL_APPLY_HOST=0`, and `DEVTOOL_TEXTUAL_EXECUTION_HOST=0`.
+The launcher also uses Devtool's supported global `--no-clipboard` CLI flag
+for **every** native Devtool subprocess. This disables end-of-run clipboard
+prompts and automatic copying even in an interactive Termux terminal. It does
+not alter Devtool's atomic application, internal file I/O, Git operations,
+or durable evidence receipts. Non-Devtool shell/terminal clipboard behavior is
+outside the launcher's scope.
+
+### Failure-only full diagnostic transcript
+
+Each launcher operation creates a private temporary transcript under
+`~/.local/state/devtool/launcher-logs/` (directory mode 0700, file 0600).
+It records launcher steps and complete stdout/stderr from its actual native
+Devtool subprocesses. Machine output is captured *without* truncating long
+errors; live subprocess output is forwarded to the operator while being
+recorded, not replaced by synthetic status messages. No full-screen Textual
+host or clipboard backend is used. Successful runs remove the transcript.
+
+**Only on nonzero exit**, the launcher preserves the log and prints a manual
+Termux opt-in suggestion: `termux-clipboard-set < PRIVATE_LOG_PATH`.
+It never copies, prompts for clipboard confirmation, or sends a log anywhere
+automatically. Review sensitive information before copying/sharing a full
+unredacted log. This is separate from native Devtool receipts and does not
+turn skipped tests into successful tests. When the private transcript cannot
+be created or written, the launcher must not claim a complete log.
+
+This covers test/contract refusals, failed native overlay validation/apply,
+and CI failure while running the launcher; previously committed packages
+remain immutable and must be rebuilt to inherit the new behavior.
 This **selects Devtool's own Rich-capable terminal mode**—the launcher does
 not implement a Textual alternative or capture/rewrite live native output.
 Launcher status lines use Rich styling on a real terminal; colors are permitted

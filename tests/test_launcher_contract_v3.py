@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -759,6 +761,157 @@ class ContractV31Tests(unittest.TestCase):
         self.assertIn('HF05_DETACHED_IMPORT_PASS',run.stdout)
         self.assertIn("'--devtool-repo'",run.stdout)
         self.assertIn(str(dev),run.stdout)
+
+
+class NativeDeliveryClipboardAndCITests(unittest.TestCase):
+    """Current native-path constraints; no historical/phase-gate wrappers."""
+
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name)
+        self.manifest=ContractTests.fake_manifest(ContractTests)
+        self.manifest['source']['repository']='Mikeyphw/sample'
+        self.repo=fixture(self.root,'sample')
+        self.runtime=self.root/'devtool-runtime';self.runtime.mkdir()
+
+    def test_native_cli_always_sets_supported_no_clipboard(self):
+        with patch('devtool.launcher_contract_v3.exec_cmd',return_value='') as run:
+            lc.native(self.repo,self.runtime,'apply','overlay','pkg.zip',
+                      '--yes',stage='native-atomic-apply',live=True)
+        argv=run.call_args.args[0]
+        self.assertEqual(argv[:8],[sys.executable,'-B','-m','devtool','--repo',
+                                   str(self.repo),'--no-clipboard','apply'])
+        self.assertEqual(argv[-3:],['overlay','pkg.zip','--yes'])
+        self.assertTrue(run.call_args.kwargs['live'])
+
+    def test_native_machine_receipts_also_disable_clipboard(self):
+        with patch('devtool.launcher_contract_v3.exec_cmd',return_value='{"ok":true}') as run:
+            self.assertEqual(lc.native_json(self.repo,self.runtime,'delivery','session',
+                                            'status','--id','a'*32,stage='session-status'),
+                             {'ok':True})
+        argv=run.call_args.args[0]
+        self.assertEqual(argv[6],'--no-clipboard')
+        self.assertEqual(argv[-1],'--json')
+        self.assertFalse(run.call_args.kwargs['live'])
+
+    def test_policy_preflight_uses_native_committed_policy_authority(self):
+        data={'policy_path':'config/delivery-required-ci.json',
+              'policy_sha256':'a'*64,
+              'required_workflows':[{'name':'Current CI','workflow_id':1234}],
+              'release_qualified':False}
+        with patch('devtool.launcher_contract_v3.exec_cmd',return_value=json.dumps(data)) as run:
+            self.assertEqual(lc.required_ci_preflight(self.repo,self.runtime,
+                                                     self.manifest)['policy_sha256'],'a'*64)
+        argv=run.call_args.args[0]
+        self.assertEqual(argv[:3],[sys.executable,'-B','-c'])
+        self.assertIn('from devtool.delivery_ci_policy import load_policy',argv[3])
+        self.assertIn('p.receipt()',argv[3])
+        self.assertEqual(argv[4:],[str(self.repo),'Mikeyphw/sample','main'])
+        self.assertEqual(run.call_args.kwargs['stage'],'native-required-ci-preflight')
+
+    def test_policy_preflight_invalid_receipts_fail_closed(self):
+        for payload in ('not json','{}',json.dumps({'required_workflows':[],
+                                                   'policy_sha256':'a'*64}),
+                        json.dumps({'required_workflows':[{'name':'Bad','workflow_id':0}],
+                                    'policy_sha256':'a'*64})):
+            with self.subTest(payload=payload), \
+                 patch('devtool.launcher_contract_v3.exec_cmd',return_value=payload):
+                with self.assertRaisesRegex(lc.Refused,'PREFLIGHT'):
+                    lc.required_ci_preflight(self.repo,self.runtime,self.manifest)
+
+    def test_missing_policy_prevents_scaffold_commit_and_remote_delivery(self):
+        with patch('devtool.launcher_contract_v3.check_source'), \
+             patch('devtool.launcher_contract_v3.runtime_probe'), \
+             patch('devtool.launcher_contract_v3.required_ci_preflight',
+                   side_effect=lc.Refused('NATIVE_COMMAND_FAILED stage=native-required-ci-preflight rc=1')), \
+             patch('devtool.launcher_contract_v3.scaffold') as scaffold, \
+             patch('devtool.launcher_contract_v3.native') as native, \
+             patch('devtool.launcher_contract_v3.push_pr') as push:
+            with self.assertRaisesRegex(lc.Refused,'native-required-ci-preflight'):
+                lc.apply_package(self.repo,self.runtime,self.manifest,{},True,watch_ci=True)
+            scaffold.assert_not_called();native.assert_not_called();push.assert_not_called()
+
+    def test_local_policy_onboarding_avoids_ci_policy_gate(self):
+        sentinel=lc.Refused('NEXT_STAGE_NATIVE_SCAFFOLD')
+        with patch('devtool.launcher_contract_v3.check_source'), \
+             patch('devtool.launcher_contract_v3.runtime_probe'), \
+             patch('devtool.launcher_contract_v3.required_ci_preflight') as policy, \
+             patch('devtool.launcher_contract_v3.scaffold',side_effect=sentinel) as scaffold:
+            with self.assertRaisesRegex(lc.Refused,'NEXT_STAGE_NATIVE_SCAFFOLD'):
+                lc.apply_package(self.repo,self.runtime,self.manifest,{},False,watch_ci=False)
+            policy.assert_not_called();scaffold.assert_called_once()
+
+    def test_real_policy_subprocess_error_is_diagnostic_and_safe(self):
+        # The actual native policy checker is imported by a read-only Python
+        # child, not approximated by the launcher. Missing module never passes.
+        with self.assertRaisesRegex(lc.Refused,'native-required-ci-preflight'):
+            lc.required_ci_preflight(self.repo,self.runtime,self.manifest)
+
+
+class FailureOnlyFullLogTests(unittest.TestCase):
+    """One current contract for failure-only full launcher+native diagnostics."""
+
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name)
+
+    def log_files(self):
+        return list((self.root/'.local/state/devtool/launcher-logs').glob('*.log'))
+
+    def test_success_has_no_clipboard_suggestion_or_retained_log(self):
+        stdout=io.StringIO();stderr=io.StringIO()
+        with patch.dict(os.environ,{'HOME':str(self.root)}), \
+             patch('devtool.launcher_contract_v3._RICH',None), \
+             contextlib.redirect_stdout(stdout),contextlib.redirect_stderr(stderr):
+            self.assertEqual(lc._with_failure_transcript(lambda: (lc.say('SUCCESS'),0)[1]),0)
+        self.assertEqual(self.log_files(),[])
+        self.assertNotIn('COPY_SUGGESTION',stdout.getvalue()+stderr.getvalue())
+
+    def test_failure_suggests_manual_copy_and_contains_full_native_streams(self):
+        stdout=io.StringIO();stderr=io.StringIO()
+        def failing():
+            lc.say('LAUNCHER_SOURCE_AND_CONTRACT_CHECK')
+            with self.assertRaisesRegex(lc.Refused,'stage=native-validation'):
+                lc.exec_cmd([sys.executable,'-B','-c',
+                    "import sys;print('NATIVE_STDOUT_123');print('NATIVE_STDERR_456',file=sys.stderr);sys.exit(9)"],
+                    stage='native-validation',live=True)
+            return 2
+        with patch.dict(os.environ,{'HOME':str(self.root)}), \
+             patch('devtool.launcher_contract_v3._RICH',None), \
+             contextlib.redirect_stdout(stdout),contextlib.redirect_stderr(stderr):
+            self.assertEqual(lc._with_failure_transcript(failing),2)
+        logs=self.log_files();self.assertEqual(len(logs),1)
+        text=logs[0].read_text()
+        self.assertIn('LAUNCHER_SOURCE_AND_CONTRACT_CHECK',text)
+        self.assertIn('NATIVE_STDOUT_123',text)
+        self.assertIn('NATIVE_STDERR_456',text)
+        self.assertIn('LAUNCHER_NATIVE_BEGIN stage=native-validation',text)
+        self.assertIn('termux-clipboard-set < ',stderr.getvalue())
+        self.assertNotIn('copied to clipboard',stderr.getvalue())
+        self.assertEqual(logs[0].stat().st_mode&0o077,0)
+        self.assertEqual(logs[0].parent.stat().st_mode&0o077,0)
+
+    def test_captured_contract_diagnostics_not_truncated_in_log(self):
+        long_error='CONTRACT_FAILED_DIAGNOSTICS_'+'Z'*9500
+        stdout=io.StringIO();stderr=io.StringIO()
+        def failing():
+            with self.assertRaisesRegex(lc.Refused,'native-contract'):
+                lc.exec_cmd([sys.executable,'-B','-c',
+                    'import sys;sys.stderr.write('+repr(long_error)+');sys.exit(3)'],
+                    stage='native-contract')
+            return 2
+        with patch.dict(os.environ,{'HOME':str(self.root)}), \
+             contextlib.redirect_stdout(stdout),contextlib.redirect_stderr(stderr):
+            self.assertEqual(lc._with_failure_transcript(failing),2)
+        logs=self.log_files();self.assertEqual(len(logs),1)
+        self.assertIn(long_error,logs[0].read_text())
+
+    def test_disabled_log_does_not_offer_fictitious_copy_command(self):
+        stdout=io.StringIO();stderr=io.StringIO()
+        with patch('devtool.launcher_contract_v3._new_failure_transcript',return_value=None), \
+             contextlib.redirect_stdout(stdout),contextlib.redirect_stderr(stderr):
+            self.assertEqual(lc._with_failure_transcript(lambda:2),2)
+        self.assertNotIn('COPY_SUGGESTION',stdout.getvalue()+stderr.getvalue())
 
 
 class MachineReceiptColorTests(unittest.TestCase):
