@@ -10,6 +10,12 @@ on:
       - tests/test_delivery_ci_window_pagination.py
       - docs/DEVTOOL_LAUNCHER_CONTRACT_V3.md
       - devtool/delivery_rich.py
+      - devtool/operator_rich.py
+      - devtool/actions_pipeline.py
+      - devtool/actions_presentation.py
+      - tests/test_actions_pipeline_projection.py
+      - tests/test_operator_rich.py
+      - docs/UX_RICH02_OPERATOR_WORKSPACE.md
       - devtool/delivery_remote_logs.py
       - devtool/summary.py
       - devtool/cli.py
@@ -54,6 +60,10 @@ jobs:
         run: python3 -B -m unittest discover -s tests -p 'test_delivery_remote_logs.py' -v
       - name: Verify source-attested forward 3.x launcher ABI contracts
         run: python3 -B -m unittest discover -s tests -p 'test_launcher_runtime_compat.py' -v
+      - name: Verify unified Rich operator view contracts
+        run: python3 -B -m unittest discover -s tests -p 'test_operator_rich.py' -v
+      - name: Verify native pipeline dependency projection and legacy journal compatibility
+        run: python3 -B -m unittest discover -s tests -p 'test_actions_pipeline_projection.py' -v
       - name: Verify package import and builder CLI
         run: |
           python3 -B -m devtool.launcher_contract_v3 --help

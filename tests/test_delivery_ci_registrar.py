@@ -198,9 +198,9 @@ def test_required_not_expected_branch_blocks_not_skips(ctx):
     assert source=={'Required Test Workflow':'expected'}
 
 
-def test_unsupported_conditional_paths_not_falsely_skipped(ctx,monkeypatch):
+def test_conditional_paths_without_run_block_but_exact_registered_run_qualifies(ctx,monkeypatch):
     item,_,_=ctx
-    cli=Client(item,[row(item)])
+    cli=Client(item,[])
     original=reg._workflow_yaml
     def filtered(*a):
         doc=deepcopy(original(*a))
@@ -210,7 +210,93 @@ def test_unsupported_conditional_paths_not_falsely_skipped(ctx,monkeypatch):
     monkeypatch.setattr(reg,'_workflow_yaml',filtered)
     result=strict(ctx,cli)
     assert result['state']=='BLOCKED_CONDITIONAL'
+    assert result['registration']['indeterminate']==['Required Test Workflow']
+    assert result['missing']==['Required Test Workflow']
     assert not result['checks_qualified']
+    # The actual provider registration is stronger evidence than an
+    # inconclusive static path-filter prediction. Full CI evidence still runs.
+    cli.rows=[row(item)]
+    result=strict(ctx,cli)
+    assert result['state']=='REQUIRED_CHECKS_PASSED'
+    assert result['registration']['indeterminate']==[]
+    assert result['missing']==[]
+    assert result['checks_qualified'] is True
+    assert result['exact_run_evidence']['verified'] is True
+
+
+@pytest.mark.parametrize('filter_name,filter_value',[
+    ('types',['opened','synchronize']),
+    ('paths-ignore',['docs/**']),
+    ('paths',['src/**']),
+])
+def test_conditional_pr_filter_registered_run_is_accepted(ctx,monkeypatch,filter_name,filter_value):
+    item,_,_=ctx
+    cli=Client(item,[row(item)])
+    original=reg._workflow_yaml
+    def filtered(*a):
+        doc=deepcopy(original(*a))
+        doc.get('on',doc.get(True))['pull_request'][filter_name]=filter_value
+        return doc
+    monkeypatch.setattr(reg,'_workflow_yaml',filtered)
+    result=strict(ctx,cli)
+    assert result['state']=='REQUIRED_CHECKS_PASSED'
+    assert result['registration']['indeterminate']==[]
+    assert result['exact_run_evidence']['verified'] is True
+
+
+@pytest.mark.parametrize('invalid',[
+    'wrong-workflow-id','wrong-event','wrong-source','wrong-pr','stale','future',
+])
+def test_conditional_filter_never_accepts_uncorrelated_run(ctx,monkeypatch,invalid):
+    item,_,_=ctx
+    original=reg._workflow_yaml
+    def filtered(*a):
+        doc=deepcopy(original(*a))
+        doc.get('on',doc.get(True))['pull_request']['types']=['synchronize']
+        return doc
+    monkeypatch.setattr(reg,'_workflow_yaml',filtered)
+    candidate=row(item)
+    if invalid=='wrong-workflow-id': candidate['workflow_id']=99
+    elif invalid=='wrong-event': candidate['event']='push'
+    elif invalid=='wrong-source': candidate['head_sha']='d'*40
+    elif invalid=='wrong-pr': candidate['pull_requests']=[{'number':999,'head':{'sha':item['head_sha']}}]
+    elif invalid=='stale': candidate['created_at']=(reg._date(item['created_at'])-timedelta(hours=3)).isoformat()
+    elif invalid=='future': candidate['created_at']=(reg._date(item['created_at'])+timedelta(hours=3)).isoformat()
+    cli=Client(item,[candidate])
+    result=strict(ctx,cli)
+    assert result['state']=='BLOCKED_CONDITIONAL'
+    assert result['registration']['indeterminate']==['Required Test Workflow']
+    assert result['missing']==['Required Test Workflow']
+    assert result['checks_qualified'] is False
+
+
+def test_conditional_filter_multiple_correlated_runs_remain_ambiguous(ctx,monkeypatch):
+    item,_,_=ctx
+    original=reg._workflow_yaml
+    def filtered(*a):
+        doc=deepcopy(original(*a))
+        doc.get('on',doc.get(True))['pull_request']['paths']=['src/**']
+        return doc
+    monkeypatch.setattr(reg,'_workflow_yaml',filtered)
+    cli=Client(item,[row(item,rid=101),row(item,rid=102)])
+    result=strict(ctx,cli)
+    assert result['state']=='BLOCKED_AMBIGUOUS'
+    assert result['registration']['ambiguous']==['Required Test Workflow']
+    assert result['checks_qualified'] is False
+
+
+def test_conditional_filter_registered_failure_is_not_success(ctx,monkeypatch):
+    item,_,_=ctx
+    original=reg._workflow_yaml
+    def filtered(*a):
+        doc=deepcopy(original(*a))
+        doc.get('on',doc.get(True))['pull_request']['types']=['opened']
+        return doc
+    monkeypatch.setattr(reg,'_workflow_yaml',filtered)
+    cli=Client(item,[row(item,conclusion='failure')])
+    result=strict(ctx,cli)
+    assert result['state']=='CHECKS_FAILED'
+    assert result['checks_qualified'] is False
 
 
 def test_paginated_but_truncated_and_rate_limit_fail_closed(ctx):

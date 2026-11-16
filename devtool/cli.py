@@ -6242,6 +6242,13 @@ def _validation_expected_revision(args: argparse.Namespace) -> int | None:
     return value if value >= 0 else None
 
 
+def _operator_view(kind: str, payload: dict, args: argparse.Namespace) -> bool:
+    # Shared UX-RICH02 presentation only; native status/CI/transaction verdict
+    # remains owned by the existing CLI. JSON/pipe/no-color remain unchanged.
+    from .operator_rich import render_operator
+    return render_operator(kind, payload, args=args)
+
+
 def _handle_validation_status(config: ProjectConfig, args: argparse.Namespace, *, machine: bool) -> int:
     session = _validation_management_session(config, args, recover=False)
     if machine or _validation_json_requested(args):
@@ -6262,7 +6269,8 @@ def _handle_validation_status(config: ProjectConfig, args: argparse.Namespace, *
         _emit_validation_control_payload(payload, args)
     elif bool(getattr(args, "_devtool_validation_checkpoint", False)):
         print(validation_checkpoint_text(session))
-    else:
+    elif not _operator_view("validation", validation_status_api_payload(session,
+                   include_events=False), args):
         print(validation_status_text(session))
     return validation_control_exit_code(session) if _validation_json_requested(args) else 0
 
@@ -6282,7 +6290,8 @@ def _handle_validation_plan(config: ProjectConfig, args: argparse.Namespace) -> 
             ),
             args,
         )
-    else:
+    elif not _operator_view("validation", {"session_id": session.session_id,
+                     "revision": session.revision, "phases": data["phases"]}, args):
         print(f"Validation plan: {session.session_id} (revision {session.revision})")
         for phase in data["phases"]:
             deps = ",".join(phase["depends_on"]) or "-"
@@ -6315,7 +6324,8 @@ def _handle_validation_events(config: ProjectConfig, args: argparse.Namespace) -
     )
     if _validation_json_requested(args):
         _emit_validation_control_payload(payload, args)
-    else:
+    elif not _operator_view("validation", {"session_id": session.session_id,
+                     "events": events}, args):
         for event in events:
             print(f"{event.get('timestamp','')} {event.get('type','')} revision={event.get('revision','')}")
     return 0
@@ -6342,7 +6352,9 @@ def _handle_validation_report(config: ProjectConfig, args: argparse.Namespace) -
             "reason": "",
             "data": {"report": report, "report_path": session.report_path},
         }, args)
-    else:
+    elif not _operator_view("validation", {"session_id": session.session_id,
+                     "status": session.status, "data": {"report": report,
+                     "report_path": session.report_path}}, args):
         print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
@@ -13608,7 +13620,7 @@ def _main_after_parse(
             return 1
         if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
             print(json.dumps(payload, indent=2, ensure_ascii=False))
-        else:
+        elif not _operator_view("campaign", payload, args):
             print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0
 
@@ -13654,7 +13666,8 @@ def _main_after_parse(
         except (WorkflowRetryError,OSError,ValueError,RuntimeError) as exc:
             result={'schema_version':1,'kind':'devtool.workflow-retry.error',
                     'disposition':'BLOCKED','reason':str(exc),'original_run_id':str(args.run_id)}
-        print(json.dumps(result,ensure_ascii=False,sort_keys=True,indent=2))
+        if not _operator_view("retry", result, args):
+            print(json.dumps(result,ensure_ascii=False,sort_keys=True,indent=2))
         return 2 if result.get('disposition')=='BLOCKED' else (
             0 if result.get('execution_verified',True) else 1)
 
@@ -13717,7 +13730,8 @@ def _main_after_parse(
             result = {"schema_version": 1, "ok": False, "state": "BLOCKED",
                       "reason": str(exc), "trusted_producer_verified": False,
                       "formal_release_qualified": False}
-        print(json.dumps(result, sort_keys=True, indent=2, ensure_ascii=False))
+        if not _operator_view("evidence", result, args):
+            print(json.dumps(result, sort_keys=True, indent=2, ensure_ascii=False))
         return 2 if result.get("ok") is False else 0
 
     if args.command == "transaction":
@@ -13752,7 +13766,7 @@ def _main_after_parse(
                       "rollback_verified": False, "release_qualified": False}
         if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
             print(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
-        else:
+        elif not _operator_view("transaction", {**result, "transaction_id": txid}, args):
             print(f"transaction {action}: {result.get('state', result.get('classification', '-'))}")
             print(f"  id: {txid}")
             if result.get("reason") or result.get("blockers"):
@@ -14403,7 +14417,9 @@ def _main_after_parse(
         if bool(getattr(args, "json", False)):
             print(json.dumps(payload, indent=2, ensure_ascii=False))
         else:
-            if payload.get("kind") == "devtool.run-query":
+            if _operator_view("runs", payload, args):
+                pass
+            elif payload.get("kind") == "devtool.run-query":
                 rows = payload.get("runs", []) or []
                 if not rows:
                     print("No matching runs.")
@@ -14430,8 +14446,10 @@ def _main_after_parse(
         if logs_command in {"list", "ls"}:
             entries = list_log_entries()
             limit = max(1, int(getattr(args, "limit", 25) or 25))
-            for line in format_log_entries(entries[-limit:]):
-                print(line)
+            listing = format_log_entries(entries[-limit:])
+            if not _operator_view("logs", {"entries": listing}, args):
+                for line in listing:
+                    print(line)
             return 0
         if logs_command in {"open", "show"}:
             path = resolve_log_path(str(getattr(args, "selector", "") or ""), use_fzf=bool(getattr(args, "fzf", True)))
@@ -14636,6 +14654,9 @@ def _main_after_parse(
 
         if output_format == "json":
             print(json.dumps(payload, indent=2, ensure_ascii=False))
+        elif (action in {"sessions", "ls", "runs", "workspace", "ws", "doctor", "env"}
+              and _operator_view("ssh", payload, args)):
+            pass
         elif action in {"profiles", "list"}:
             records = payload.get("records", [])
             render_status_table([
@@ -15717,7 +15738,7 @@ def _main_after_parse(
             )
             if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
                 print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
-            else:
+            elif not _operator_view("overlay", payload, args):
                 rows = [("decision", payload["decision"]),
                         ("active transactions", str(len(payload["active_transactions"]))),
                         ("marker issues", str(len(payload["marker_issues"]))),
@@ -15735,7 +15756,7 @@ def _main_after_parse(
                 payload = {'read_only': True, 'decision': 'refuse', 'error': str(exc)[:240]}
             if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
                 print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
-            else:
+            elif not _operator_view("overlay", payload, args):
                 render_status_table([
                     ('decision', payload.get('decision', 'refuse')),
                     ('integrity', 'pass' if payload.get('integrity_ok') else 'not established'),
@@ -15757,7 +15778,7 @@ def _main_after_parse(
             payload = result.to_dict()
             if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
                 print(json.dumps(payload, indent=2, ensure_ascii=False))
-            else:
+            elif bool(getattr(args,"diff",False)) or not _operator_view("overlay", payload, args):
                 rows = [
                     ("artifact", result.artifact),
                     ("status", "ready" if result.ok else "conflict"),
@@ -15786,7 +15807,7 @@ def _main_after_parse(
             payload = {"ok": True, **result.to_dict()}
             if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
                 print(json.dumps(payload, indent=2, ensure_ascii=False))
-            else:
+            elif not _operator_view("overlay", payload, args):
                 render_status_table([
                     ("artifact", result.artifact),
                     ("status", result.status),
@@ -15887,7 +15908,7 @@ def _main_after_parse(
         payload = plan.as_dict()
         if bool(getattr(args, "json", False)) or bool(getattr(args, "_devtool_json", False)):
             print(json.dumps(payload, indent=2, ensure_ascii=False))
-        else:
+        elif not _operator_view("qualification", payload, args):
             q = payload["qualification"]
             render_status_table([
                 ("artifact", str(payload["artifact"]["artifact_id"])),

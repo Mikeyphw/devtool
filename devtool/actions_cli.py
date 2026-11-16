@@ -9,6 +9,27 @@ from .github_actions import GitHubActionsError, actions_cli
 from .delivery_rich import NativeRichMonitor, MonitorDetached, terminal_rich_enabled
 
 
+def _uxrich02_operator_view(args: Any, command: str, root: Path,
+                             payload: dict[str, Any]) -> bool:
+    # Pure representation for existing read-only Actions APIs. Pipeline run,
+    # dispatch, release mutation, retry/cancel/collection are unaffected.
+    from .operator_rich import render_operator, browse_operator, operator_enabled
+    if not operator_enabled(args=args):
+        return False
+    if command == 'ui':
+        from .actions_operator import operator_workflows, operator_review, operator_lineage
+        slug = str(payload['repository'])
+        return browse_operator('actions',payload,args=args,
+                               refresh=lambda: actions_cli(args,root),
+                               remote_views={
+                                 'w':lambda _item:operator_workflows(slug),
+                                 'g':lambda item:operator_review(item,slug),
+                                 'l':lambda item:operator_lineage(item,root,slug),
+                               })
+    kind = 'pipeline' if command == 'pipeline' else 'actions'
+    return render_operator(kind,payload,args=args)
+
+
 def run_actions_command(args: Any) -> int:
     command = str(getattr(args, 'actions_command', '') or '')
     subcommand = str(getattr(args, 'android_command', '') or '')
@@ -119,6 +140,12 @@ def run_actions_command(args: Any) -> int:
             print(f"Run: {remote['html_url']}")
         if last.get('source_binding') == 'not-confirmed':
             print('WARNING: run source SHA differs from dispatch receipt', file=sys.stderr)
+    elif ((command in ('recent','detail','ui','overview','lineage','runs','view','jobs','qualification')
+          or (command == 'pipeline' and str(getattr(args,'pipeline_command','') or '')
+              in ('status','plan'))
+          or (command == 'release' and str(getattr(args,'release_command','') or '')=='readiness'))
+          and _uxrich02_operator_view(args,command,root,payload)):
+        pass
     elif command in ('recent', 'detail', 'ui') and not (bool(getattr(args,'json',False)) or bool(getattr(args,'_devtool_json',False))):
         from .actions_workspace import screen_lines, create_actions_app
         interactive = command == 'ui' and sys.stdout.isatty() and sys.stdin.isatty() and not os.environ.get('CI')

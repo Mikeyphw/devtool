@@ -173,7 +173,7 @@ def _read(identity: str, *, state_root: Path | None = None) -> tuple[Path, dict[
 
 
 def _public(obj: dict[str, Any]) -> dict[str, Any]:
-    nodes = [{'id': k, **{x: v for x, v in entry.items() if x in ('state', 'kind', 'detail', 'run_id', 'request_id', 'artifact_id', 'workflow_id')}}
+    nodes = [{'id': k, **{x: v for x, v in entry.items() if x in ('state', 'kind', 'detail', 'run_id', 'request_id', 'artifact_id', 'workflow_id', 'needs')}}
              for k in obj['node_order'] for entry in (obj['nodes'][k],)]
     done = all(x['state'] == 'success' for x in nodes)
     return {'phase':'ACTIONS-06','pipeline_id': obj['id'],'name': obj['name'],
@@ -440,7 +440,8 @@ def pipeline_run(client: GitHubActionsClient, slug: str, root: Path, filename: s
                'repo_root':str(root.resolve()),'head_sha':plan['source_sha'],
                'manifest_file':filename,'manifest_sha256':digest,'created_at':_now(),
                'node_order':[x['id'] for x in manifest['nodes']],
-               'nodes':{x['id']:{'kind':x['kind'],'state':'pending','detail':''} for x in manifest['nodes']}}
+               'nodes':{x['id']:{'kind':x['kind'],'state':'pending','detail':'',
+                         'needs':list(x.get('needs',[]))} for x in manifest['nodes']}}
     # Create a durable journal BEFORE any mutable operation.
     _durable_record(path, journal)
     lock = _lock(path)

@@ -10,6 +10,13 @@ from .delivery_session import DeliverySessionError, plan, start, status, resume,
 from .delivery_rich import NativeRichMonitor, MonitorDetached
 
 
+def _uxrich02_delivery_view(payload: dict, args: Any) -> bool:
+    # Original durable receipt and CI authority remain unchanged. This is
+    # only a Rich presentation of the already returned native session record.
+    from .operator_rich import render_operator
+    return render_operator('delivery',payload,args=args)
+
+
 def run_delivery_command(args: Any) -> int:
     operation = str(getattr(args, 'delivery_session_command', '') or '')
     root = Path(str(getattr(args, 'repo', None) or Path.cwd())).expanduser().resolve(strict=False)
@@ -104,6 +111,8 @@ def run_delivery_command(args: Any) -> int:
         raise
     if bool(getattr(args,'json',False) or getattr(args,'_devtool_json',False)):
         print(json.dumps(payload,indent=2,sort_keys=True,ensure_ascii=False))
+    elif operation in ('status','resume','report') and _uxrich02_delivery_view(payload,args):
+        pass
     elif operation in ('push','pr','ci'):
         print(f'Devtool delivery {operation}: {payload["state"]}',flush=True)
         if operation == 'ci' and rich_monitor is not None and rich_monitor.enabled:
