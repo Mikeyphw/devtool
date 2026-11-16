@@ -1,4 +1,4 @@
-# Devtool Python/Rich Launcher Contract v3
+# Devtool Python/Rich Launcher Contract v3.1
 
 **Source implementation (non-release).** Devtool is the sole authority for CLI semantics, overlay validation, transactions/rollback, DAG planning, capability and host eligibility, durable delivery sessions, required CI, artifacts and recovery. The launcher is only an exact-source bootstrap, stage/approval coordinator, and result renderer.
 
@@ -6,7 +6,7 @@
 
 `python3 -B -m devtool.launcher_contract_v3 build ...` is the **canonical builder**. Generated `.pyz` files include only a small `__main__.py`, one immutable `manifest.json`, and the source-pinned payload. They do **not** bundle another Devtool, GitHub client, scheduler, overlay engine or copied launcher runtime. Each package binds the target origin/branch/HEAD/tree, every committed modify-preimage blob, payload SHA256, and **Devtool's full HEAD/tree, native CLI schema blob and shared v3 module blob**.
 
-Before any module import, the bootstrap checks Devtool's exact pinned HEAD and tree with Git replacement objects disabled. The v3 module then verifies selected worktree/origin/cleanliness, committed schema and module blobs, imported module path and the native CLI contract. The target and runtime worktrees should be **different**; use a clean, immutable Devtool runtime checkout (`~/Code/devtool`) to deliver a feature into `~/Code/devtool-v3-feature`. Never use stale source pins after a commit.
+Before any module import, the bootstrap checks Devtool's exact pinned HEAD and tree with Git replacement objects disabled. The v3 module then verifies selected worktree/origin/cleanliness, committed schema and module blobs, imported module path and the native CLI contract. The target and runtime execution worktrees are separated by the exact-runtime resolver before any native overlay mutation. A caller can run the launcher inside its target worktree, including a Devtool worktree; the runtime is resolved to a stable exact pinned checkout or detached cache. Never silently repin an existing immutable package after its commit.
 
 All mutation uses the native `delivery adoption scaffold` -> `validate overlay` -> `apply overlay --yes --commit ... --static-validate --keep-artifact` transaction, followed by a fresh source-bound `delivery session start`. `check` itself runs the **native scaffold plus validator** but does not apply the overlay, write Git refs or contact GitHub. Native RUN-V3/LIFE cleanup receipts are preserved and reported, not deleted or reinterpreted as release evidence. Remote push/PR must be requested with `--approve-remote`; CI uses the exact committed Devtool policy and session, never guessed workflow names. A non-green CI report returns exit code 3 even when native observation completed successfully.
 
@@ -30,33 +30,60 @@ python3 -B -m devtool.launcher_contract_v3 build \
 
 The output is exclusively created (`O_EXCL`) outside the target; it refuses overwrites, wrong source/remote, missing preimages, symlink traversal, unreviewed add/modify, and oversized/extra ZIP members. Archive SHA256 is an integrity check, **not a signature**.
 
-## Operate a generated package
+## One-command operation (v3.1)
+
+Run from anywhere **inside the exact target Git worktree**. No `--repo` or
+`--devtool-repo` is required in the normal case. The ZIP bootstrap verifies
+its target origin/branch from Git and finds a clean Devtool checkout at the
+manifest's pinned SHA/tree/module; it may create a private detached runtime.
+If autodiscovery cannot prove the origin or there is ambiguity, it refuses.
+`DEVTOOL_REPO=~/Code/devtool` or explicit `--devtool-repo` is a supported override.
 
 ```zsh
+cd "$HOME/Code/target-feature"
 pkg="$HOME/storage/downloads/FEATURE_V3.pyz"
-feature="$HOME/Code/target-feature"
-runtime="$HOME/Code/devtool"
-python3 -B "$pkg" inspect
-python3 -B "$pkg" check --repo "$feature" --devtool-repo "$runtime"
-python3 -B "$pkg" capabilities --repo "$feature" --devtool-repo "$runtime"
-python3 -B "$pkg" plan --repo "$feature" --devtool-repo "$runtime" --target go --workflow validate
-python3 -B "$pkg" apply --repo "$feature" --devtool-repo "$runtime"
+python3 -B "$pkg" apply --approve-remote --watch-ci
 ```
 
-`apply` writes only the local Git feature branch and creates a Devtool delivery session. Capture `LAUNCHER_V3_SESSION_ID` from the output; **do not reapply** after commit. Continue only with the saved session ID:
+This **one invocation** performs exact preflight and native scaffold/validation,
+atomic overlay commit, durable session creation, authorized native push/PR, and
+bounded native required-CI observation. `--approve-remote` is **always explicit**:
+without it, `apply` stays local. `--watch-ci` is optional and requires approval;
+without it, the local apply/push still occur but CI must be checked later.
+If required CI is still non-green, it returns a nonzero exit code and retains
+the session; do not replay `apply` after a commit.
+
+`inspect`, `check`, `status`, `resume`, `report`, `ci`, `diagnose`, `plan`,
+`capabilities`, and `verify-artifact` remain native optional controls. E.g.:
 
 ```zsh
-sid=EXACT_32_LOWERCASE_HEX_SESSION_ID
-python3 -B "$pkg" status --repo "$feature" --devtool-repo "$runtime" --session-id "$sid"
-python3 -B "$pkg" resume --repo "$feature" --devtool-repo "$runtime" --session-id "$sid"
-python3 -B "$pkg" diagnose --repo "$feature" --devtool-repo "$runtime"
-python3 -B "$pkg" report --repo "$feature" --devtool-repo "$runtime" --session-id "$sid"
-# Only after explicit review and approval:
-python3 -B "$pkg" deliver --repo "$feature" --devtool-repo "$runtime" --session-id "$sid" --approve-remote
-python3 -B "$pkg" ci --repo "$feature" --devtool-repo "$runtime" --session-id "$sid" --checks 25 --interval 8
+python3 -B "$pkg" inspect
+python3 -B "$pkg" check
+python3 -B "$pkg" apply  # explicitly local-only
+python3 -B "$pkg" ci --session-id EXACT_32_CHAR_ID
 ```
 
-No local Android Gradle, hidden Git ref rewriting, force push, auto-merge, CI redispatch, signing, root operations or device actions. Missing evidence stays `UNKNOWN`/`PENDING`, never auto-promoted. Stored sessions remain bound to original commit, worktree and repository. Native errors are displayed with original stage and bounded redaction; live native output is forwarded, not replaced with synthetic text.
+Inside a wrong worktree the bootstrap refuses before importing Devtool.
+Explicit `--repo PATH --devtool-repo PATH` remains for remote working
+locations, troubleshooting, and machines without standard checkout paths.
+Git fast-forward is still conditional on the exact manifest SHA and proof
+of ancestry, never forced or rebased.
+
+### Native, non-Textual and colored presentation
+
+Every native Devtool child receives the supported Devtool switches:
+`DEVTOOL_EXECUTION_PRESENTATION=plain`, `DEVTOOL_JOB_UI=plain`,
+`DEVTOOL_TEXTUAL_APPLY_HOST=0`, and `DEVTOOL_TEXTUAL_EXECUTION_HOST=0`.
+This **selects Devtool's own Rich-capable terminal mode**—the launcher does
+not implement a Textual alternative or capture/rewrite live native output.
+Launcher status lines use Rich styling on a real terminal; colors are permitted
+in native child output only for a real TTY and not when `NO_COLOR`,
+`CLICOLOR=0`, or `TERM=dumb` are explicit. Redirected/machine output stays plain.
+
+The immutable bootstrap applies the same presentation environment to the
+parent before source-bound module import. Existing v3.0 packages must be
+**rebuilt from v3.1**; the old immutable bootstrap cannot silently upgrade.
+
 
 ## Git fetch and fast-forward automation (HF01)
 
@@ -76,12 +103,22 @@ fast-forward that checkout only to the exact pinned `origin/main`. If the
 requested checkout is a separate older feature branch, it is left untouched.
 The runtime is instead reused or provisioned as a **detached, exact-pinned
 worktree** under `$XDG_STATE_HOME/devtool/launcher-runtimes` (or the standard
-private state directory). A missing pinned object is fetched only from
-`origin/main` and accepted only when the remote HEAD equals the pinned commit.
+private state directory). A missing pinned object is fetched from `origin/main` only when the exact
+pinned commit is proven to be an ancestor of the fetched main HEAD and its tree
+matches the manifest; moving main never upgrades the launcher source pin.
 This private runtime survives the feature commit and remains available to
 `status`, `resume`, `deliver` and `ci`. The source checkout is never rewound
 while observing those later stages. The operator sees what was fetched, moved
 or created; native Git and Devtool remain responsible for transactions.
+
+**Detached-HEAD invariant (HF01):** Only the target worktree is required to
+have the manifest's named branch. Clean Devtool *runtime* worktrees (including
+cached detached worktrees and explicit detached checkouts) are accepted only
+after proving canonical origin, exact SHA/tree, committed module/schema blobs,
+correct imported module, and worktree status. The builder likewise accepts a
+clean detached Devtool runtime while requiring its target feature branch.
+Detached runtimes are never automatically fast-forwarded or switched to a
+branch. This also applies when inspecting native delivery sessions after commit.
 
 There is no automatic `git worktree prune`, reset, rebase, forced update, or
 change to tracking configuration. A cached runtime that is dirty or no longer

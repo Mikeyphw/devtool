@@ -32,10 +32,12 @@ MAX_ONE = 2 * 1024 * 1024
 try:
     from rich.console import Console as _RichConsole
     from rich.panel import Panel as _RichPanel
+    from rich.text import Text as _RichText
     _RICH = _RichConsole()
 except ImportError:
     _RICH = None
     _RichPanel = None
+    _RichText = None
 
 
 def banner(command: str, *, builder: bool = False) -> None:
@@ -43,7 +45,7 @@ def banner(command: str, *, builder: bool = False) -> None:
     message = (f'Devtool Launcher v3 | {role} | {command}\n'
                'Source/tree/CLI bound; Devtool owns validation and sessions\n'
                'No auto merge, force push, local Gradle, device writes or release claims')
-    if _RICH is not None and _RichPanel is not None:
+    if _RICH is not None and _RichPanel is not None and 'NO_COLOR' not in os.environ and os.environ.get('CLICOLOR') != '0' and os.environ.get('TERM') != 'dumb':
         _RICH.print(_RichPanel(message, title='Devtool Python Launcher Contract', expand=False))
     else:
         say(message)
@@ -71,8 +73,17 @@ class Refused(RuntimeError):
 
 
 def say(*args: Any) -> None:
-    # Rich is optional for bootstrap; the native CLI remains source of truth.
-    print(*args, flush=True)
+    # Rich is presentation only: unmodified native output still owns the record.
+    msg=' '.join(str(item) for item in args)
+    if (_RICH is not None and _RichText is not None and _RICH.is_terminal
+            and 'NO_COLOR' not in os.environ and os.environ.get('CLICOLOR') != '0'
+            and os.environ.get('TERM') != 'dumb'):
+        style=('bold red' if 'REFUSED' in msg or 'FAILED' in msg else
+               'bold green' if any(x in msg for x in ('_PASS', '_READY', '_DELIVERED', '_COMMITTED', '_VALIDATED')) else
+               'cyan' if any(x in msg for x in ('LAUNCHER_NATIVE_BEGIN', '_AUTO_FETCH', '_SESSION_ID')) else 'dim')
+        _RICH.print(_RichText(msg, style=style))
+    else:
+        print(msg, flush=True)
 
 
 def digest(data: bytes) -> str:
@@ -105,11 +116,26 @@ def canonical_remote(remote: str) -> str:
     return m.group(1)
 
 
-def safe_env(*, devtool_root: Path | None = None, target_root: Path | None = None) -> dict[str, str]:
+def safe_env(*, devtool_root: Path | None = None, target_root: Path | None = None, color_output: bool = False) -> dict[str, str]:
     env = dict(os.environ)
     env['GIT_NO_REPLACE_OBJECTS'] = '1'
     env['GIT_TERMINAL_PROMPT'] = '0'
     env['PYTHONDONTWRITEBYTECODE'] = '1'
+    # Native Devtool presentation selectors. Do not emulate or replace its UI.
+    env.update({
+        'DEVTOOL_EXECUTION_PRESENTATION': 'plain',
+        'DEVTOOL_JOB_UI': 'plain',
+        'DEVTOOL_TEXTUAL_APPLY_HOST': '0',
+        'DEVTOOL_TEXTUAL_EXECUTION_HOST': '0',
+    })
+    # Keep an attached terminal colorful; never override explicit no-color or
+    # manufacture ANSI escape codes in machine/redirected streams.
+    if color_output and (sys.stdout.isatty() and env.get('TERM', '') != 'dumb'
+            and 'NO_COLOR' not in env and env.get('CLICOLOR') != '0'):
+        env.setdefault('FORCE_COLOR', '1')
+    elif not color_output:
+        env.pop('FORCE_COLOR', None)
+        env.setdefault('NO_COLOR', '1')
     if devtool_root is not None:
         # Important: --repo chooses the *target*, not the Python package.
         # Drop inherited PYTHONPATH so a stale installed checkout can't win.
@@ -140,7 +166,7 @@ def exec_cmd(argv: list[str], *, stage: str, cwd: Path | None = None,
              devtool_root: Path | None = None, timeout: float = 120,
              live: bool = False, target_root: Path | None = None) -> str:
     """Bounded native subprocess. Never strip useful exceptions or synthesize CI output."""
-    env = safe_env(devtool_root=devtool_root, target_root=target_root or cwd)
+    env = safe_env(devtool_root=devtool_root, target_root=target_root or cwd, color_output=live)
     if live:
         # Native stdout is attached to the operator terminal; cannot forge
         # `gh watch` output. Do not print argv, which might contain secrets.
@@ -351,7 +377,9 @@ def build_package(args:argparse.Namespace)->None:
     source_repo=Path(args.repo).expanduser().absolute()
     devtool_repo=Path(args.devtool_repo).expanduser().absolute()
     target=repo_identity(source_repo,clean=True)
-    devtool=repo_identity(devtool_repo,clean=True)
+    # The Devtool builder runtime is pinned by SHA/tree/blobs, not by a branch.
+    # A detached, clean exact-pinned worktree is a valid build runtime.
+    devtool=repo_identity(devtool_repo,clean=True,branch_required=False)
     if devtool['repository']!='Mikeyphw/devtool':raise Refused('WRONG_DEVTOOL_REPOSITORY')
     devtool['module_blob']=validate_sha(git(devtool_repo,'rev-parse','HEAD:devtool/launcher_contract_v3.py'), 'devtool.module_blob')
     schema_blob=validate_sha(git(devtool_repo,'rev-parse','HEAD:devtool/core_cli_schema.json'), 'schema_blob')
@@ -376,7 +404,7 @@ def build_package(args:argparse.Namespace)->None:
     exclusive_write(output,raw)
     say('LAUNCHER_V3_PACKAGE_PASS',str(output.resolve()),'sha256='+digest(raw))
     say('LAUNCHER_V3_PIN',manifest['source']['source_sha'],manifest['source']['source_tree'])
-    say('LAUNCHER_V3_NO_GITHUB_MUTATION; next: python3 -B package.pyz check --repo PATH --devtool-repo PATH')
+    say('LAUNCHER_V3_NO_GITHUB_MUTATION; next: cd TARGET && python3 -B package.pyz apply --approve-remote')
 
 
 def check_source(repo:Path,m:dict[str,Any])->dict[str,str]:
@@ -403,6 +431,65 @@ def check_source(repo:Path,m:dict[str,Any])->dict[str,str]:
     return actual
 
 
+
+
+def resolve_target_path(requested: str | None, manifest: dict[str,Any], *, cwd: Path | None = None) -> Path:
+    # Only resolve the current Git worktree; never guess among user projects.
+    location=Path(requested).expanduser().absolute() if requested else (cwd or Path.cwd()).absolute()
+    if location.is_symlink():raise Refused('TARGET_LOCATION_SYMLINK_REFUSED')
+    if requested:return location
+    if not location.is_dir():raise Refused('TARGET_WORKTREE_NOT_FOUND '+str(location))
+    root=Path(git(location,'rev-parse','--show-toplevel',stage='target-root')).resolve()
+    if requested and root!=location.resolve():
+        raise Refused('TARGET_EXPLICIT_PATH_NOT_WORKTREE_ROOT '+str(root))
+    identity=repo_identity(root,clean=False)
+    source=manifest['source']
+    if identity['repository']!=source['repository'] or identity['branch']!=source['branch']:
+        raise Refused('AUTO_TARGET_WRONG_REPOSITORY_OR_BRANCH expected='+source['repository']+
+                      '/'+source['branch']+' actual='+identity['repository']+'/'+identity['branch']+
+                      '; cd into the pinned worktree or pass --repo')
+    say('LAUNCHER_V3_TARGET_BOUND '+str(root))
+    return root
+
+
+def runtime_candidates(target:Path, pinned:dict[str,str], requested: str | None = None) -> list[Path]:
+    # Bounded read-only candidate inventory.
+    home=Path.home()
+    state=Path(os.environ.get('XDG_STATE_HOME') or str(home/'.local/state')).expanduser()
+    options=[]
+    if requested:options.append(Path(requested).expanduser())
+    if os.environ.get('DEVTOOL_REPO'):options.append(Path(os.environ['DEVTOOL_REPO']).expanduser())
+    options.extend([state/'devtool'/'launcher-runtimes'/('runtime-'+pinned['source_sha']),
+                    target,home/'Code'/'devtool',home/'Code'/'dev',home/'Code'/'devtool-launcher-v3'])
+    code=home/'Code'
+    if code.is_dir() and not code.is_symlink():
+        for entry in sorted(code.iterdir())[:96]:
+            if 'devtool' in entry.name.lower() and entry.is_dir() and not entry.is_symlink():
+                options.append(entry)
+    unique=[];seen=set()
+    for option in options:
+        path=option.absolute()
+        if path in seen or not path.is_dir() or path.is_symlink():continue
+        seen.add(path);unique.append(path)
+    return unique
+
+
+def discover_runtime(target:Path, pinned:dict[str,str], requested: str | None = None)->Path:
+    # Find a trusted checkout to feed the exact-runtime resolver.
+    if requested:return Path(requested).expanduser().absolute()
+    bases=runtime_candidates(target,pinned)
+    for base in bases:
+        if _same_pinned_checkout(base,pinned):
+            say('LAUNCHER_V3_DISCOVER_EXACT_RUNTIME '+str(base))
+            return base
+    for base in bases:
+        try:
+            candidate=repo_identity(base,clean=True,branch_required=False)
+        except (Refused,ValueError,OSError):continue
+        if candidate['repository']==pinned['repository']:
+            say('LAUNCHER_V3_DISCOVER_TRUSTED_RUNTIME '+str(base))
+            return base
+    raise Refused('NO_TRUSTED_DEVTOOL_CHECKOUT: set DEVTOOL_REPO or supply --devtool-repo; no source import')
 
 
 def _same_pinned_checkout(root: Path, pinned: dict[str, str]) -> bool:
@@ -516,7 +603,13 @@ def resolve_runtime(target:Path, requested:Path,
     try:
         old=repo_identity(requested,clean=True)
     except (Refused,OSError,ValueError):
-        old=None
+        # A clean detached checkout is a trusted fetch/worktree *source*, but
+        # never eligible for a named-branch fast-forward. Continue proving
+        # origin, root, SHA, tree and cleanliness without requiring HEAD ref.
+        try:
+            old=repo_identity(requested,clean=True,branch_required=False)
+        except (Refused,OSError,ValueError):
+            old=None
     if old is not None and old['repository']==pinned['repository']:
         base=requested
     elif _same_pinned_checkout(target,pinned):
@@ -562,8 +655,14 @@ def resolve_runtime(target:Path, requested:Path,
                   'origin','refs/heads/main'],stage='auto-fetch-pinned-runtime',
                  timeout=100,live=True)
         remote=validate_sha(git(base,'rev-parse','FETCH_HEAD',stage='pinned-fetched-head'),'FETCH_HEAD')
-        if remote!=pinned['source_sha'] or not pinned_commit_available():
-            raise Refused('PINNED_RUNTIME_REMOTE_MAIN_DRIFT: remote main does not equal frozen source; no checkout modified')
+        # main may have advanced after the launcher was built. Fetching it
+        # must not repin the launcher; accept only the original SHA/tree if
+        # Git proves that commit is reachable from freshly fetched main.
+        ancestry=subprocess.run(['git','-C',str(base),'merge-base','--is-ancestor',
+                                 pinned['source_sha'],remote],env=safe_env(),
+                                capture_output=True,timeout=20)
+        if not pinned_commit_available() or ancestry.returncode:
+            raise Refused('PINNED_RUNTIME_REMOTE_MAIN_DRIFT: pinned source is not in fetched main history; no checkout modified')
     say('LAUNCHER_V3_CREATE_PINNED_RUNTIME '+str(dest))
     exec_cmd(['git','-C',str(base),'worktree','add','--detach',str(dest),pinned['source_sha']],
              stage='native-pinned-runtime-worktree',timeout=90,live=True)
@@ -614,7 +713,9 @@ def prepare_worktrees(repo:Path,devtool_root:Path,m:dict[str,Any],
 
 
 def runtime_probe(repo:Path,devtool_root:Path,m:dict[str,Any])->None:
-    dev=repo_identity(devtool_root,clean=False)
+    # The *target* must retain a named branch. An independently pinned native
+    # Devtool runtime may have detached HEAD, as created by resolve_runtime().
+    dev=repo_identity(devtool_root,clean=False,branch_required=False)
     # Native LIFE receipts are retained, not deleted or silently ignored.
     verify_postcommit_status(devtool_root)
     if dev['repository'] != 'Mikeyphw/devtool':raise Refused('DEVTOOL_ORIGIN_MISMATCH')
@@ -711,6 +812,20 @@ def push_pr(repo:Path,devtool_root:Path,m:dict[str,Any],sid:str)->None:
     say('LAUNCHER_V3_REMOTE_DELIVERED; hosted CI and merge are NOT qualified')
 
 
+def observe_delivery_ci(repo:Path,devtool_root:Path,sid:str,*,checks:int=25,interval:int=8)->int:
+    if checks<1 or checks>120 or interval<1 or interval>120:
+        raise Refused('INVALID_BOUNDED_CI_POLLING')
+    native(repo,devtool_root,'delivery','session','ci','--id',sid,'--checks',str(checks),
+           '--interval',str(interval),stage='native-source-bound-ci',
+           timeout=max(120,checks*interval+180),live=True)
+    report=native_json(repo,devtool_root,'delivery','session','report','--id',sid,stage='native-ci-machine-receipt')
+    ci=(report.get('receipt') or {}).get('ci_state') or (report.get('ci') or {}).get('state')
+    say('LAUNCHER_V3_CI_STATE '+str(ci or 'UNKNOWN')+'; formal release NOT qualified')
+    native(repo,devtool_root,'delivery','session','report','--id',sid,
+           stage='native-saved-report',timeout=90,live=True)
+    return 0 if ci in ('REQUIRED_CHECKS_PASSED','required_checks_passed') else 3
+
+
 def verify_postcommit_status(repo:Path)->None:
     """Preserve native LIFE cleanup receipts; never delete operator evidence.
 
@@ -738,7 +853,8 @@ def verify_postcommit_status(repo:Path)->None:
         say('LAUNCHER_V3_PRESERVED_DEVTOOL_LIFE_RECEIPT path='+relative+' (untracked; not deleted)')
 
 
-def apply_package(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,bytes],approve_remote:bool)->None:
+def apply_package(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,bytes],approve_remote:bool,
+                  *,watch_ci:bool=False,checks:int=25,interval:int=8)->int:
     check_source(repo,m);runtime_probe(repo,devtool_root,m)
     archive=scaffold(repo,devtool_root,m,payload)
     native(repo,devtool_root,'apply','overlay',str(archive),'--yes','--commit',
@@ -761,8 +877,12 @@ def apply_package(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,b
         raise Refused('DELIVERY_SESSION_IDENTITY_MISMATCH; use native delivery session status/report to recover')
     say('LAUNCHER_V3_SESSION_ID '+sid)
     say('LAUNCHER_V3_RESUME_COMMAND: python3 -B PACKAGE.pyz status --repo PATH --devtool-repo PATH --session-id '+sid)
-    if approve_remote:push_pr(repo,devtool_root,m,sid)
+    if approve_remote:
+        push_pr(repo,devtool_root,m,sid)
+        if watch_ci:
+            return observe_delivery_ci(repo,devtool_root,sid,checks=checks,interval=interval)
     else:say('LAUNCHER_V3_LOCAL_ONLY; no push or PR was attempted')
+    return 0
 
 
 def runtime_command(args:argparse.Namespace,package:Path)->int:
@@ -772,8 +892,8 @@ def runtime_command(args:argparse.Namespace,package:Path)->int:
         say(json.dumps({'name':m['name'],'schema':m['schema'],'source':m['source'],
                         'devtool':m['devtool'],'paths':[c['path'] for c in m['inventory']],
                         'limitations':m['limitations']},indent=2,sort_keys=True));return 0
-    repo=Path(args.repo).expanduser().absolute()
-    devtool_root=Path(args.devtool_repo).expanduser().absolute()
+    repo=resolve_target_path(getattr(args,'repo',None),m)
+    devtool_root=discover_runtime(repo,m['devtool'],getattr(args,'devtool_repo',None))
     if op != 'inspect':
         repo,devtool_root=prepare_worktrees(repo,devtool_root,m,allow_ff=not getattr(args,'no_auto_ff',False),operation=op)
     if op=='check':
@@ -781,7 +901,11 @@ def runtime_command(args:argparse.Namespace,package:Path)->int:
         archive=scaffold(repo,devtool_root,m,payload)
         say('LAUNCHER_V3_READ_ONLY_NATIVE_VALIDATION_PASS archive='+str(archive));return 0
     if op=='apply':
-        apply_package(repo,devtool_root,m,payload,args.approve_remote);return 0
+        if getattr(args,'watch_ci',False) and not args.approve_remote:
+            raise Refused('WATCH_CI_REQUIRES_APPROVE_REMOTE')
+        return apply_package(repo,devtool_root,m,payload,args.approve_remote,
+                             watch_ci=getattr(args,'watch_ci',False),
+                             checks=getattr(args,'checks',25),interval=getattr(args,'interval',8))
     if op in ('diagnose','plan','capabilities','verify-artifact'):
         runtime_probe(repo,devtool_root,m)
         if op=='diagnose':
@@ -828,14 +952,7 @@ def runtime_command(args:argparse.Namespace,package:Path)->int:
         if op=='deliver':
             if not args.approve_remote:raise Refused('REMOTE_DELIVERY_REQUIRES_EXPLICIT_APPROVAL')
             push_pr(repo,devtool_root,m,sid);return 0
-        native(repo,devtool_root,'delivery','session','ci','--id',sid,'--checks',str(args.checks),
-               '--interval',str(args.interval),stage='native-source-bound-ci',timeout=max(120,args.checks*args.interval+180),live=True)
-        report=native_json(repo,devtool_root,'delivery','session','report','--id',sid,stage='native-ci-machine-receipt')
-        ci=(report.get('receipt') or {}).get('ci_state') or (report.get('ci') or {}).get('state')
-        say('LAUNCHER_V3_CI_STATE '+str(ci or 'UNKNOWN')+'; formal release NOT qualified')
-        native(repo,devtool_root,'delivery','session','report','--id',sid,
-               stage='native-saved-report',timeout=90,live=True)
-        return 0 if ci in ('REQUIRED_CHECKS_PASSED','required_checks_passed') else 3
+        return observe_delivery_ci(repo,devtool_root,sid,checks=args.checks,interval=args.interval)
     raise Refused('UNKNOWN_RUNTIME_OPERATION')
 
 
@@ -851,11 +968,14 @@ if argv == ['inspect']:
         data=json.loads(z.read('manifest.json'))
     print(json.dumps({k:data[k] for k in ('schema','name','source','devtool','inventory','limitations')},indent=2,sort_keys=True))
     raise SystemExit(0)
-if '--devtool-repo' not in argv or argv.index('--devtool-repo')+1>=len(argv):
-    raise SystemExit('LAUNCHER_V3_REFUSED: --devtool-repo required (except inspect)')
 no_auto_ff='--no-auto-ff' in argv
-root=pathlib.Path(argv[argv.index('--devtool-repo')+1]).expanduser().absolute()
+requested=argv[argv.index('--devtool-repo')+1] if '--devtool-repo' in argv and argv.index('--devtool-repo')+1<len(argv) else ''
+root=pathlib.Path(requested).expanduser().absolute() if requested else None
 env=dict(os.environ, GIT_NO_REPLACE_OBJECTS='1',GIT_TERMINAL_PROMPT='0', PYTHONDONTWRITEBYTECODE='1')
+env.update(DEVTOOL_EXECUTION_PRESENTATION='plain',DEVTOOL_JOB_UI='plain',
+           DEVTOOL_TEXTUAL_APPLY_HOST='0',DEVTOOL_TEXTUAL_EXECUTION_HOST='0')
+if sys.stdout.isatty() and 'NO_COLOR' not in env and env.get('CLICOLOR')!='0' and env.get('TERM')!='dumb':
+    env.setdefault('FORCE_COLOR','1')
 def git(path,*args,timeout=30):
     p=subprocess.run(['git','-C',str(path),*args],env=env,capture_output=True,text=True,timeout=timeout)
     if p.returncode:
@@ -884,6 +1004,46 @@ def exact(path):
                 git(path,'hash-object','devtool/launcher_contract_v3.py')==PINS['module_blob'])
     except (OSError,RuntimeError,subprocess.TimeoutExpired):
         return False
+# Source-bound target discovery is intentionally only from the caller's CWD.
+# An arbitrary repo cannot be silently chosen from $HOME/Code.
+if not zipfile.is_zipfile(sys.argv[0]):
+    raise SystemExit('LAUNCHER_V3_REFUSED: runtime source_sha drift or invalid launcher container; no module import')
+with zipfile.ZipFile(sys.argv[0]) as _package:
+    _manifest=json.loads(_package.read('manifest.json'))
+if '--repo' not in argv:
+    try:
+        target=pathlib.Path(git(pathlib.Path.cwd(),'rev-parse','--show-toplevel')).resolve()
+        origin=git(target,'remote','get-url','origin')
+        rm=re.fullmatch(r'(?:git@github[.]com:|https://github[.]com/|ssh://git@github[.]com/)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:[.]git)?/?',origin,re.I)
+        if not rm or rm.group(1)!=_manifest['source']['repository'] or git(target,'symbolic-ref','--quiet','--short','HEAD')!=_manifest['source']['branch']:
+            raise RuntimeError('wrong repository/branch')
+    except (OSError,KeyError,RuntimeError,subprocess.TimeoutExpired) as e:
+        raise SystemExit('LAUNCHER_V3_REFUSED: cd into exact target worktree or pass --repo ('+type(e).__name__+')')
+    argv.extend(['--repo',str(target)])
+else:
+    target=pathlib.Path(argv[argv.index('--repo')+1]).expanduser().absolute()
+if root is None:
+    home=pathlib.Path.home()
+    state=pathlib.Path(os.environ.get('XDG_STATE_HOME') or str(home/'.local/state')).expanduser()
+    locations=[state/'devtool'/'launcher-runtimes'/('runtime-'+PINS['source_sha']),
+               target,home/'Code'/'devtool',home/'Code'/'dev',home/'Code'/'devtool-launcher-v3']
+    if os.environ.get('DEVTOOL_REPO'):locations.insert(0,pathlib.Path(os.environ['DEVTOOL_REPO']).expanduser())
+    code=home/'Code'
+    if code.is_dir() and not code.is_symlink():
+        locations.extend(x for x in sorted(code.iterdir())[:96]
+                         if 'devtool' in x.name.lower() and x.is_dir() and not x.is_symlink())
+    seen=set();trusted=[]
+    for candidate in locations:
+        candidate=candidate.absolute()
+        if candidate in seen or candidate.is_symlink() or not candidate.is_dir():continue
+        seen.add(candidate)
+        if exact(candidate):root=candidate;break
+        if clean(candidate):trusted.append(candidate)
+    if root is None:
+        root=next((x for x in trusted if canonical(x)),None)
+    if root is None:
+        raise SystemExit('LAUNCHER_V3_REFUSED: cannot discover trusted Devtool runtime; set DEVTOOL_REPO or pass --devtool-repo')
+    argv.extend(['--devtool-repo',str(root)])
 if not exact(root):
     if not clean(root):
         raise SystemExit('LAUNCHER_V3_REFUSED: runtime source_sha drift or unclean/wrong checkout; no module import')
@@ -929,8 +1089,13 @@ if not exact(root):
                 if p.returncode and not no_auto_ff:
                     print('LAUNCHER_V3_AUTO_FETCH_PINNED branch=main',flush=True)
                     p=subprocess.run(['git','-C',str(root),'fetch','--no-tags','--no-recurse-submodules','origin','refs/heads/main'],env=env,timeout=100)
-                    if p.returncode or git(root,'rev-parse','FETCH_HEAD')!=PINS['source_sha']:
-                        raise SystemExit('LAUNCHER_V3_REFUSED: pinned main source unavailable or remote moved')
+                    if p.returncode:
+                        raise SystemExit('LAUNCHER_V3_REFUSED: cannot fetch pinned main source')
+                    remote=git(root,'rev-parse','FETCH_HEAD')
+                    reachable=subprocess.run(['git','-C',str(root),'merge-base','--is-ancestor',
+                                              PINS['source_sha'],remote],env=env,timeout=20)
+                    if reachable.returncode:
+                        raise SystemExit('LAUNCHER_V3_REFUSED: source pin absent from fetched main ancestry')
                 if git(root,'rev-parse',PINS['source_sha']+'^{tree}')!=PINS['source_tree']:
                     raise SystemExit('LAUNCHER_V3_REFUSED: pinned source tree mismatch')
                 print('LAUNCHER_V3_CREATE_PINNED_RUNTIME '+str(dest),flush=True)
@@ -942,6 +1107,13 @@ if not exact(root):
 if not exact(root):
     raise SystemExit('LAUNCHER_V3_REFUSED: runtime source_sha drift; no module import')
 argv[argv.index('--devtool-repo')+1]=str(root)
+# Ensure the source-bound parent import receives native presentation settings.
+# Devtool's own subprocesses enforce them again independently.
+for _key in ('DEVTOOL_EXECUTION_PRESENTATION','DEVTOOL_JOB_UI',
+             'DEVTOOL_TEXTUAL_APPLY_HOST','DEVTOOL_TEXTUAL_EXECUTION_HOST'):
+    os.environ[_key]=env[_key]
+if 'FORCE_COLOR' in env and 'FORCE_COLOR' not in os.environ:
+    os.environ['FORCE_COLOR']=env['FORCE_COLOR']
 sys.argv[1:]=argv
 sys.path.insert(0,str(root))
 from devtool.launcher_contract_v3 import main
@@ -963,16 +1135,18 @@ def make_parser(is_builder:bool)->argparse.ArgumentParser:
     sub.add_parser('inspect',help='Read-only embedded inventory, no local repo required')
     for command in ('check','apply','status','report','ci','deliver','resume','diagnose','plan','capabilities','verify-artifact'):
         q=sub.add_parser(command)
-        q.add_argument('--repo',required=True,help='Exact target Git worktree (never assumed)')
-        q.add_argument('--devtool-repo',required=True,help='Exact Devtool source worktree used for Python import')
+        q.add_argument('--repo',help='Optional target worktree (default: current Git worktree)')
+        q.add_argument('--devtool-repo',help='Optional trusted Devtool checkout (auto-discovered and exactly pinned)')
         q.add_argument('--no-auto-ff',action='store_true',help='Disable automatic source-bound Git fetch/fast-forward')
         if command in ('status','report','ci','deliver','resume'):
             q.add_argument('--session-id',required=True,help='32-character durable Devtool delivery session ID')
         if command in ('apply','deliver'):
             q.add_argument('--approve-remote',action='store_true',help='Explicit push/PR permission; no merge/dispatch')
-        if command=='ci':
+        if command in ('ci','apply'):
             q.add_argument('--checks',type=int,default=25)
             q.add_argument('--interval',type=int,default=8)
+        if command=='apply':
+            q.add_argument('--watch-ci',action='store_true',help='After approved push/PR, observe native required CI in this invocation')
         if command=='plan':
             q.add_argument('--target',required=False)
             q.add_argument('--workflow',default='validate')
@@ -1004,7 +1178,7 @@ def main()->int:
                 say('LAUNCHER_V3_SELF_TESTS_PASS count='+str(result.testsRun));return 0
             if args.command=='build':build_package(args);return 0
         else:
-            if args.command=='ci' and (args.checks<1 or args.checks>120 or args.interval<1 or args.interval>120):
+            if args.command in ('ci','apply') and (args.checks<1 or args.checks>120 or args.interval<1 or args.interval>120):
                 raise Refused('INVALID_BOUNDED_CI_POLLING')
             return runtime_command(args,package)
         raise Refused('UNKNOWN_OPERATION')
