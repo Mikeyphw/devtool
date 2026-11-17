@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .storage_layout import guarded_catalog_open, storage_writer_guard_for_path
+
 """CORE-X03 durable RUN V3 catalog primitives.
 
 The module is intentionally storage-light: it provides the canonical data model,
@@ -228,11 +230,14 @@ def write_bounded_stream(
     stored = data[:byte_limit]
     truncated = len(data) > byte_limit
     root = Path(run_root)
-    stream_dir = root / "streams" / node_id / process_id
-    stream_dir.mkdir(parents=True, exist_ok=True)
-    stream_id = _sha({"run_id": run_id, "kind": kind, "node_id": node_id, "process_id": process_id, "digest": hashlib.sha256(data).hexdigest()})[:32]
-    path = stream_dir / f"{kind}-{stream_id}.log"
-    path.write_bytes(stored)
+    with storage_writer_guard_for_path(root):
+        from .storage_layout import ensure_private_storage_dir
+        stream_dir = root / "streams" / node_id / process_id
+        ensure_private_storage_dir(stream_dir)
+        stream_id = _sha({"run_id": run_id, "kind": kind, "node_id": node_id, "process_id": process_id, "digest": hashlib.sha256(data).hexdigest()})[:32]
+        path = stream_dir / f"{kind}-{stream_id}.log"
+        path.write_bytes(stored)
+
     return StreamDescriptor(
         schema_version=1,
         stream_id=stream_id,
@@ -375,6 +380,7 @@ class RunCatalog:
     relations: dict[str, RunRelation] = field(default_factory=dict)
 
     @classmethod
+    @guarded_catalog_open
     def open(cls, root: str | Path, *, create: bool = True) -> "RunCatalog":
         """Open a run catalog.
 
@@ -385,7 +391,8 @@ class RunCatalog:
         """
         root_path = Path(root)
         if create:
-            root_path.mkdir(parents=True, exist_ok=True)
+            from .storage_layout import ensure_private_storage_dir
+            ensure_private_storage_dir(root_path)
         catalog = cls(root=root_path)
         index = root_path / "catalog.json"
         if index.exists():
@@ -399,11 +406,13 @@ class RunCatalog:
         return catalog
 
     def save(self) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
-        payload = self.to_dict(include_private_paths=True)
-        tmp = self.root / "catalog.json.tmp"
-        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, self.root / "catalog.json")
+        from .storage_layout import ensure_private_storage_dir
+        with storage_writer_guard_for_path(self.root):
+            ensure_private_storage_dir(self.root)
+            payload = self.to_dict(include_private_paths=True)
+            tmp = self.root / "catalog.json.tmp"
+            tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            os.replace(tmp, self.root / "catalog.json")
 
     def add_run(self, descriptor: Mapping[str, Any]) -> None:
         run_id = str(descriptor.get("run_id") or "")
@@ -881,60 +890,43 @@ def migrate_legacy_run_storage(
 
 
 def repository_storage_inventory(repo_root: str | Path, catalog_root: str | Path) -> dict[str, Any]:
-    """Classify known durable repository-local storage families.
+    """Read-only classification across local workspace and XDG authorities.
 
-    The inventory is intentionally ownership-oriented rather than a deletion
-    plan. Unknown top-level ``.devtool`` families are surfaced as unclassified
-    so CORE cannot silently acquire another durable state universe.
+    Unknown families remain visible and fail the doctor; ordinary Devtool
+    reports/builds/archives are classified by the shared storage registry.
     """
+    from .storage_layout import storage_inventory, LOCAL_OUTPUTS
     repo = Path(repo_root).resolve(strict=False)
     devtool_root = repo / ".devtool"
-    known = {
-        "private": ("state", "CORE"),
-        "logs": ("legacy", "CORE-migration"),
-        "test-runs": ("legacy", "CORE-migration"),
-        "evidence": ("legacy", "CORE-migration"),
-        "desktop": ("legacy", "CORE-migration"),
-        "transactions": ("state", "LIFE"),
-        "build-artifacts": ("published", "DIST"),
-        "cache": ("cache", "external/provider"),
-    }
+    layout = storage_inventory(repo)
     rows: list[dict[str, Any]] = [
-        {
-            "path": str(Path(catalog_root).resolve(strict=False)),
-            "classification": "state",
-            "owner": "CORE",
-            "family": "run-v3",
-            "exists": Path(catalog_root).exists(),
-        },
-        {
-            "path": str(repo / "share" / "core-generated"),
-            "classification": "projection",
-            "owner": "CORE",
-            "family": "core-generated",
-            "exists": (repo / "share" / "core-generated").exists(),
-        },
+        {"path": str(Path(catalog_root).resolve(strict=False)),
+         "classification": "state", "owner": "CORE", "family": "run-v3",
+         "exists": Path(catalog_root).exists()},
+        {"path": str(repo / "share" / "core-generated"),
+         "classification": "projection", "owner": "CORE", "family": "core-generated",
+         "exists": (repo / "share" / "core-generated").exists()},
     ]
-    if devtool_root.exists():
+    if devtool_root.is_dir() and not devtool_root.is_symlink():
         for child in sorted(devtool_root.iterdir(), key=lambda item: item.name):
-            classification, owner = known.get(child.name, ("unclassified", "unknown"))
-            rows.append(
-                {
-                    "path": str(child),
-                    "classification": classification,
-                    "owner": owner,
-                    "family": child.name,
-                    "exists": True,
-                }
-            )
+            classification, owner = LOCAL_OUTPUTS.get(child.name, ("unclassified", "unknown"))
+            rows.append({"path": str(child), "classification": classification,
+                         "owner": owner, "family": child.name, "exists": True})
+    for family in layout["families"]:
+        rows.append({"path": family["destination"],
+                     "classification": family["classification"],
+                     "owner": family["owner"], "family": family["family"],
+                     "exists": Path(family["destination"]).exists(),
+                     "status": family["status"]})
     unclassified = [row for row in rows if row["classification"] == "unclassified"]
-    return {
-        "schema_version": 1,
-        "kind": "devtool.repository-storage-inventory",
-        "paths": rows,
-        "unclassified": unclassified,
-        "status": "pass" if not unclassified else "fail",
-    }
+    if devtool_root.is_symlink():
+        unclassified.append({"path": str(devtool_root), "classification": "unclassified",
+                             "owner": "unknown", "family": ".devtool-symlink"})
+    conflicts = [row for row in layout["families"] if row["status"].startswith("conflict:")]
+    return {"schema_version": 1, "kind": "devtool.repository-storage-inventory",
+            "paths": rows, "unclassified": unclassified,
+            "storage_layout": layout,
+            "status": "pass" if not unclassified and not conflicts else "fail"}
 
 
 def run_storage_status(repo_root: str | Path, catalog: RunCatalog) -> dict[str, Any]:

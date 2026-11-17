@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .storage_layout import ensure_private_storage_dir, guarded_validation_write, guarded_validation_context, storage_writer_guard_for_path
+
 """Durable, resumable validation sessions.
 
 The session engine is intentionally independent from argparse and process
@@ -306,9 +308,9 @@ def _process_is_alive(pid: int, start_token: str = "") -> bool:
 
 
 def session_root(repo_root: Path) -> Path:
-    state_repo = str(os.environ.get("DEVTOOL_VALIDATION_STATE_REPO_ROOT") or "").strip()
-    root = Path(state_repo).expanduser().resolve() if state_repo else repo_root.expanduser().resolve()
-    return root / ".devtool" / "state" / "android-validation"
+    """Durable validation state with legacy-active-session precedence."""
+    from .storage_layout import validation_session_dir
+    return validation_session_dir(repo_root)
 
 
 def session_path(repo_root: Path, session_id: str) -> Path:
@@ -339,10 +341,11 @@ def validation_control_lock_path(repo_root: Path, session_id: str) -> Path:
     return session_root(repo_root) / session_id / "control.lock"
 
 
+@guarded_validation_context
 @contextmanager
 def _validation_control_lock(session: ValidationSession):
     path = validation_control_lock_path(Path(session.repo_root), session.session_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_storage_dir(path.parent)
     with path.open("a+", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
@@ -351,6 +354,7 @@ def _validation_control_lock(session: ValidationSession):
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+@guarded_validation_write
 def append_event(
     session: ValidationSession,
     event_type: str,
@@ -365,7 +369,7 @@ def append_event(
     """
 
     path = validation_event_log_path(Path(session.repo_root), session.session_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_storage_dir(path.parent)
     event = {
         "api_version": 1,
         "authority": "projection",
@@ -556,15 +560,16 @@ def _finite_float(value: Any) -> float | None:
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    safe_payload = _json_safe(payload)
-    with temporary.open("w", encoding="utf-8") as handle:
-        json.dump(safe_payload, handle, ensure_ascii=False, indent=2, allow_nan=False)
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, path)
+    with storage_writer_guard_for_path(path.parent):
+        ensure_private_storage_dir(path.parent)
+        temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        safe_payload = _json_safe(payload)
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(safe_payload, handle, ensure_ascii=False, indent=2, allow_nan=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
 
 
 def _json_safe(value: Any) -> Any:
@@ -990,6 +995,7 @@ def _migrate_session_payload(payload: dict[str, Any]) -> dict[str, Any]:
     migrated["schema_version"] = SESSION_SCHEMA_VERSION
     return migrated
 
+@guarded_validation_write
 def save_session(
     session: ValidationSession,
     *,

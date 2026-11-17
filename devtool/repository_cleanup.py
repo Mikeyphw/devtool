@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .storage_layout import guarded_backup_write
+
 """Safe repository housekeeping for historical Devtool backup files."""
 
 from dataclasses import dataclass, asdict
@@ -33,7 +35,17 @@ class CleanupMove:
 
 
 def _history_root(repo_root: Path) -> Path:
-    return repo_root / ".devtool" / "history" / "backups"
+    from .storage_layout import backup_history_dir
+    return backup_history_dir(repo_root)
+
+
+def _report_path(path: Path, repo_root: Path) -> str:
+    # Compatibility: repository-local history remains relative; new XDG
+    # destinations are absolute, so callers do not mistake their owner.
+    try:
+        return str(path.relative_to(repo_root))
+    except ValueError:
+        return str(path)
 
 
 def _is_backup_candidate(path: Path, repo_root: Path) -> bool:
@@ -249,6 +261,7 @@ def _unique_destination(base: Path) -> Path:
         counter += 1
 
 
+@guarded_backup_write
 def archive_backup_candidates(repo_root: Path, *, dry_run: bool = False, stamp: str | None = None) -> list[CleanupMove]:
     from .cleanup_lifecycle import (
         CleanupScope,
@@ -263,6 +276,9 @@ def archive_backup_candidates(repo_root: Path, *, dry_run: bool = False, stamp: 
     stamp = stamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     destination_root = _history_root(repo_root) / stamp
     sources = discover_backup_candidates(repo_root)
+    if sources and not dry_run:
+        from .storage_layout import ensure_private_storage_dir
+        ensure_private_storage_dir(destination_root.parent)
     if not sources:
         return []
     descriptors: list[GeneratedOutputDescriptor] = []
@@ -281,7 +297,7 @@ def archive_backup_candidates(repo_root: Path, *, dry_run: bool = False, stamp: 
         descriptors.append(descriptor)
         source_by_resource[descriptor.resource_id] = source
         destinations[descriptor.resource_id] = destination
-        moves.append(CleanupMove(str(relative), str(destination.relative_to(repo_root)), "directory" if source.is_dir() else "file"))
+        moves.append(CleanupMove(str(relative), _report_path(destination, repo_root), "directory" if source.is_dir() else "file"))
     ownership = build_cleanup_ownership_view(repo_root, descriptors, policy_generation="life-r03b-backup-archive-v1")
     plan = compile_cleanup_plan(ownership, scope=CleanupScope.PROJECT, destination="local")
     receipt = apply_cleanup_archive_plan(plan, ownership=ownership, destinations=destinations, dry_run=dry_run)
@@ -291,6 +307,7 @@ def archive_backup_candidates(repo_root: Path, *, dry_run: bool = False, stamp: 
     return [move for move, descriptor in zip(moves, descriptors) if descriptor.resource_id in allowed]
 
 
+@guarded_backup_write
 def prune_backup_history(repo_root: Path, *, older_than_days: float, dry_run: bool = False) -> list[str]:
     """Prune explicitly Devtool-owned history only after reference revalidation.
 
@@ -351,7 +368,7 @@ def prune_backup_history(repo_root: Path, *, older_than_days: float, dry_run: bo
     for candidate in plan.candidates:
         result = by_id.get(candidate.resource_id)
         if result is not None and result.status in {"planned", "applied"}:
-            selected.append(str(Path(candidate.path).relative_to(repo_root)))
+            selected.append(_report_path(Path(candidate.path), repo_root))
     return selected
 
 

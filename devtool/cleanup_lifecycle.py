@@ -527,17 +527,8 @@ def persist_cleanup_receipt(
     history database.
     """
     root = _canonical_path(repo_root)
-    directory = root / ".devtool" / "private" / "cleanup" / "receipts"
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / (receipt.receipt_id.replace(":", "-") + ".json")
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(receipt.as_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    if os.name == "posix":
-        try:
-            os.chmod(tmp, 0o600)
-        except OSError:
-            pass
-    os.replace(tmp, path)
+    from .storage_layout import persist_receipt_bytes
+    path = persist_receipt_bytes(root, receipt.receipt_id, receipt.as_dict())
     resolved_run = str(run_id or os.environ.get("DEVTOOL_RUN_ID") or "").strip()
     if resolved_run:
         from .core_runtime import private_run_root
@@ -839,6 +830,80 @@ def refresh_cleanup_ownership_view(ownership: CleanupOwnershipView, *, strict_au
     )
 
 
+def _native_verified_cross_device_archive(source: Path, destination: Path, expected: Mapping[str, Any]) -> None:
+    """Native LIFE-owned EXDEV copy/verify/retire, never silently drop evidence."""
+    import uuid
+    from .storage_layout import _fingerprint_dir as _raw_tree, StorageLayoutError
+    def _verified_tree(path: Path):
+        try:
+            return _raw_tree(path)
+        except StorageLayoutError as exc:
+            raise OSError("Unsafe cross-device source tree: " + str(exc)) from exc
+    if source.is_symlink() or destination.exists() or destination.is_symlink():
+        raise OSError("Cross-device archive source/destination unsafe")
+    if not _same_snapshot(expected, _path_snapshot(source)):
+        raise OSError("Cross-device archive source drift before copy")
+    token = uuid.uuid4().hex
+    staging = destination.with_name(".devtool-exdev-stage-" + token)
+    tombstone = source.with_name(".devtool-exdev-tombstone-" + token)
+    if staging.exists() or staging.is_symlink() or tombstone.exists() or tombstone.is_symlink():
+        raise OSError("Cross-device recovery staging already exists")
+    try:
+        if source.is_dir():
+            source_hash = _verified_tree(source)
+            shutil.copytree(source, staging, copy_function=shutil.copy2, symlinks=False)
+            if _verified_tree(staging) != source_hash:
+                raise OSError("Cross-device directory copy verification failed")
+        elif source.is_file():
+            source_hash = _sha256_path(source)
+            shutil.copy2(source, staging, follow_symlinks=False)
+            if _sha256_path(staging) != source_hash:
+                raise OSError("Cross-device file copy verification failed")
+        else:
+            raise OSError("Unsupported cross-device source type")
+        if not _same_snapshot(expected, _path_snapshot(source)):
+            raise OSError("Cross-device source changed during copy")
+        if staging.is_dir():
+            for base, dirs, files in os.walk(staging):
+                for name in files:
+                    p = Path(base) / name
+                    if p.is_symlink():
+                        raise OSError("Symlink in cross-device staging refused")
+                    with p.open("rb") as handle:
+                        os.fsync(handle.fileno())
+                fd = os.open(base, os.O_RDONLY)
+                try: os.fsync(fd)
+                finally: os.close(fd)
+        else:
+            with staging.open("rb") as handle:
+                os.fsync(handle.fileno())
+        os.replace(staging, destination)
+        fd = os.open(destination.parent, os.O_RDONLY)
+        try: os.fsync(fd)
+        finally: os.close(fd)
+        if not _same_snapshot(expected, _path_snapshot(source)):
+            raise OSError("Cross-device archive source drift before source retirement")
+        os.replace(source, tombstone)
+        valid = (_verified_tree(tombstone) == source_hash if tombstone.is_dir()
+                 else _sha256_path(tombstone) == source_hash)
+        if not valid:
+            os.replace(tombstone, source)
+            raise OSError("Cross-device source drift after rename; original restored")
+        if tombstone.is_dir():
+            shutil.rmtree(tombstone)
+        else:
+            tombstone.unlink()
+        fd = os.open(source.parent, os.O_RDONLY)
+        try: os.fsync(fd)
+        finally: os.close(fd)
+    finally:
+        # Never silently remove a published destination after an uncertain
+        # source retirement. Retain it as explicit recovery evidence.
+        if staging.is_dir() and not staging.is_symlink():
+            shutil.rmtree(staging)
+        elif staging.exists() and not staging.is_symlink():
+            staging.unlink()
+
 def apply_cleanup_archive_plan(
     plan: CleanupPlan,
     *,
@@ -891,8 +956,15 @@ def apply_cleanup_archive_plan(
             rows.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "planned", reason=f"archive->{destination}"))
             continue
         try:
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(source, destination)
+            from .storage_layout import ensure_private_storage_dir
+            ensure_private_storage_dir(destination.parent)
+            try:
+                os.replace(source, destination)
+            except OSError as cross_err:
+                import errno
+                if cross_err.errno != errno.EXDEV:
+                    raise
+                _native_verified_cross_device_archive(source, destination, original.source_snapshot)
         except OSError as exc:
             rows.append(CleanupActionResult(original.candidate_id, original.resource_id, original.path, "failed", reason=str(exc)))
             failed = True
@@ -1356,7 +1428,11 @@ def build_cleanup_ownership_view(
         if run_descriptors or run_refs:
             authority_sources.add("RUN/RER")
     except (OSError, ValueError, json.JSONDecodeError) as exc:
-        if (root / ".devtool" / "private" / "run-v3" / "catalog.json").exists():
+        # The canonical catalog may be XDG or legacy, never assume the
+        # worktree-relative path when deciding whether unreadable authority
+        # blocks destructive cleanup.
+        from .core_runtime import private_run_root
+        if (private_run_root(root) / "catalog.json").exists():
             authority_errors.append(f"RUN/RER: {type(exc).__name__}: {exc}")
 
     try:

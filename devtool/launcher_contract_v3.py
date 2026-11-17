@@ -1151,10 +1151,10 @@ def required_ci_preflight(repo:Path,devtool_root:Path,m:dict[str,Any])->dict[str
 def verify_postcommit_status(repo:Path)->None:
     """Preserve native LIFE cleanup receipts; never delete operator evidence.
 
-    Current Devtool persists a non-secret cleanup receipt under repo-local
-    .devtool/private/... even with external DEVTOOL_XDG_DIR. This can appear
-    as an untracked file after a successful apply. It is *not* an overlay source
-    change and cannot be silently removed. All other dirt fails closed.
+    Current LIFE cleanup receipts use XDG state and do not dirty the target.
+    Retain the historical worktree-receipt exception only for recovery of an
+    already-started native transaction; never delete a user-owned receipt or
+    waive unrelated worktree dirt.
     """
     porcelain=git(repo,'status','--porcelain','--untracked-files=all',stage='postcommit-status')
     if not porcelain:return

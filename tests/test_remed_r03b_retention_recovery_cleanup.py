@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from devtool.storage_layout import cleanup_receipt_write_dir
+
 from tests._rmp_c02_durable_fixture import attach_durable_apply_evidence
 
 import hashlib
@@ -162,7 +164,8 @@ def test_repository_pack_status_rejects_byte_drift(tmp_path: Path) -> None:
     assert status["current_sha256"] != status["sha256"]
 
 
-def test_repository_pack_prune_preserves_byte_drift_for_reconciliation(tmp_path: Path) -> None:
+def test_repository_pack_prune_preserves_byte_drift_for_reconciliation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
     repo = _repo(tmp_path)
     _commit(repo, "one\n")
     pack = tmp_path / "drifted.tar"
@@ -181,14 +184,16 @@ def test_repository_pack_prune_preserves_byte_drift_for_reconciliation(tmp_path:
     assert pack.is_file(), "unverified repository pack bytes must survive GC for manual reconciliation"
     row = next(item for item in list_repository_packs(repo, include_tombstoned=True) if item["pack_id"] == receipt.pack_id)
     assert row["state"] == "published"
-    receipts = list((repo / ".devtool" / "private" / "cleanup" / "receipts").glob("*.json"))
+    receipts = list(cleanup_receipt_write_dir(repo).glob("*.json"))
     assert receipts, "protected GC decision must persist a LIFE cleanup receipt"
     receipt_payload = json.loads(receipts[-1].read_text(encoding="utf-8"))
     reasons = [item.get("reason", "") for item in receipt_payload.get("results", [])]
     assert any("registered sha256" in reason for reason in reasons)
 
 
-def test_backup_shaped_user_data_is_not_archived_but_owned_backup_is(tmp_path: Path) -> None:
+def test_backup_shaped_user_data_is_not_archived_but_owned_backup_is(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path / 'data'))
     repo = _repo(tmp_path)
     _commit(repo, "one\n")
     user_backup = repo / ".personal-backup"
@@ -209,7 +214,7 @@ def test_backup_shaped_user_data_is_not_archived_but_owned_backup_is(tmp_path: P
     archived = repo / moves[0].destination
     assert archived.is_dir()
     assert (archived / "generated.txt").read_text(encoding="utf-8") == "devtool"
-    receipts = list((repo / ".devtool" / "private" / "cleanup" / "receipts").glob("*.json"))
+    receipts = list(cleanup_receipt_write_dir(repo).glob("*.json"))
     assert receipts, "canonical LIFE cleanup receipt must physically persist"
 
 
@@ -414,6 +419,7 @@ def test_ssh_provider_event_and_control_paths_use_remote_worker_evidence(tmp_pat
 
 
 def test_proot_stage_cleanup_releases_provider_resource_and_uses_life(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
     from devtool.models import CommandSpec
     from devtool.proot_distro_runner import _register_proot_stage_resource, cleanup_proot_staging
     from devtool.provider_resource_registry import provider_resource_registry_path
@@ -445,7 +451,7 @@ def test_proot_stage_cleanup_releases_provider_resource_and_uses_life(tmp_path: 
     assert not stage.exists(), "completed PRoot provider staging must be removed through LIFE"
     registry = json.loads(provider_resource_registry_path(repo).read_text(encoding="utf-8"))
     assert registry["resources"][resource_id]["state"] == "released"
-    receipts = list((repo / ".devtool" / "private" / "cleanup" / "receipts").glob("*.json"))
+    receipts = list(cleanup_receipt_write_dir(repo).glob("*.json"))
     assert receipts, "provider stage cleanup must persist a LIFE receipt"
 
 
