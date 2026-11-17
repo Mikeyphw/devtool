@@ -2618,23 +2618,20 @@ def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
             and not getattr(args, "validate_only", False)
         ):
             args.validate = True
-        if not cli_requested_validation:
+        _apply_declared_validation_tasks(args, manifest, active=_validation_is_requested_by_args(args))
+        # A caller's explicit --validate requests applicable checks; it must
+        # not override manifest-disabled built-in restore/build/test phases.
+        # An exclusive --task / validation.tasks plan is a separate execution
+        # contract: the built-in phase switches do not apply to those tasks.
+        # Never clear explicit CLI --skip-* flags; the native task/skip
+        # conflict validator owns rejection of an incompatible request.
+        if not _exclusive_validation_task_values(args):
             if not bool(validation.get("restore", True)):
                 args.skip_restore = True
             if not bool(validation.get("build", True)):
                 args.skip_build = True
             if not bool(validation.get("test", True)):
                 args.skip_test = True
-        _apply_declared_validation_tasks(args, manifest, active=_validation_is_requested_by_args(args))
-        # A manifest validation.tasks declaration is a complete exclusive plan.
-        # Phase booleans describe the built-in restore/build/test pipeline and
-        # must not disable an explicit task plan.  Bundle apply already follows
-        # this rule; keep single-overlay apply consistent. Explicit CLI skip
-        # flags still win by reaching the normal task/skip conflict validator.
-        if not cli_requested_validation and _exclusive_validation_task_values(args):
-            args.skip_restore = False
-            args.skip_build = False
-            args.skip_test = False
         _apply_declared_pytest_selection(args, manifest, active=_validation_is_requested_by_args(args))
     if getattr(args, "no_validate", False) or getattr(args, "defer_validate", False):
         args.validate = False
