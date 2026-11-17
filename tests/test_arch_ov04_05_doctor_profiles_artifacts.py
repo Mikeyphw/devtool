@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from devtool.storage_layout import artifact_registry_file
 
 import pytest
 
@@ -124,7 +125,7 @@ def test_artifact_registry_register_inspect_verify_and_prune(tmp_path: Path) -> 
     # append-only and intentionally cannot rewrite an existing production event.
     data = load_registry(tmp_path)
     data["items"][0]["registered_at"] = "2000-01-01T00:00:00Z"
-    registry_file = tmp_path / ".devtool" / "artifacts" / "registry.json"
+    registry_file = artifact_registry_file(tmp_path)
     registry_file.write_text(json.dumps(data), encoding="utf-8")
     result = prune_registry(tmp_path, older_than_days=30, delete_files=True)
     assert len(result["removed"]) == 1

@@ -294,9 +294,15 @@ def isolate_devtool_runtime_env(
     test_home = tmp_path / "home"
     test_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HOME", str(test_home))
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg-cache"))
+    # Isolate durable test state outside repositories that use tmp_path.
+    runtime = tmp_path.parent / f".{tmp_path.name}-devtool-runtime"
+    assert not runtime.is_symlink()
+    runtime.mkdir(mode=0o700, exist_ok=True)
+    assert runtime.stat().st_mode & 0o077 == 0
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(runtime / "state"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(runtime / "data"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(runtime / "cache"))
     monkeypatch.setenv("PREFIX", "/usr")
 
     path = Path(str(request.node.fspath))

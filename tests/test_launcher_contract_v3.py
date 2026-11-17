@@ -990,6 +990,32 @@ class FailureOnlyFullLogTests(unittest.TestCase):
         self.assertEqual(self.log_files(),[])
         self.assertNotIn('COPY_SUGGESTION',stdout.getvalue()+stderr.getvalue())
 
+    def test_successful_help_exit_does_not_create_failure_log(self):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        def help_exit():
+            raise SystemExit(0)
+
+        with (
+            patch.dict(os.environ, {"HOME": str(self.root)}),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            with self.assertRaises(SystemExit) as caught:
+                lc._with_failure_transcript(help_exit)
+
+        self.assertEqual(caught.exception.code, 0)
+        self.assertEqual(self.log_files(), [])
+        self.assertNotIn(
+            "LAUNCHER_V3_FULL_FAILURE_LOG",
+            stdout.getvalue() + stderr.getvalue(),
+        )
+        self.assertNotIn(
+            "COPY_SUGGESTION",
+            stdout.getvalue() + stderr.getvalue(),
+        )
+
     def test_failure_suggests_manual_copy_and_contains_full_native_streams(self):
         stdout=io.StringIO();stderr=io.StringIO()
         def failing():

@@ -2139,7 +2139,7 @@ Prune old registry entries
 
 Resolve and qualify canonical delivery artifacts
 
-**Subcommands:** `plan`
+**Subcommands:** `plan`, `adoption`, `session`
 
 ### `devtool delivery plan`
 
@@ -2152,6 +2152,123 @@ Resolve one artifact into the canonical LIFE delivery plan
 | `--isolation ISOLATION` | Choices: worktree, direct, none |
 | `--unsafe-authorize CODE[:REASON]` | Accepted by this command. |
 | `--json` | Emit canonical plan JSON |
+
+### `devtool delivery adoption`
+
+Source-bound consumer audit and overlay scaffolding
+
+**Subcommands:** `audit`, `scaffold`
+
+### `devtool delivery adoption audit`
+
+Inspect one consumer without modifying it
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--json` | Emit machine-readable adoption audit |
+
+### `devtool delivery adoption scaffold`
+
+Generate (but do not apply) an exact-tree consumer overlay
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--payload PAYLOAD` | Separate, trusted candidate payload directory Required. |
+| `--plan PLAN` | Bounded data-only JSON changes plan Required. |
+| `--output OUTPUT` | New output ZIP outside consumer/payload Required. |
+| `--expected-head EXPECTED_HEAD` | Exactly pinned consumer Git HEAD Required. |
+| `--json` | Emit machine-readable scaffold receipt |
+
+### `devtool delivery session`
+
+Delivery session journal and safe recovery
+
+**Subcommands:** `plan`, `start`, `status`, `resume`, `report`, `push`, `pr`, `ci`
+
+### `devtool delivery session plan`
+
+Read-only source-bound delivery session plan
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--base BASE` | Target base branch |
+| `--head HEAD` | Checked-out feature branch |
+| `--overlay OVERLAY` | Read-only overlay SHA-256 inventory |
+| `--json` | Emit machine-readable result |
+
+### `devtool delivery session start`
+
+Create a private PLANNED delivery session
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--base BASE` | Target base branch |
+| `--head HEAD` | Checked-out feature branch |
+| `--overlay OVERLAY` | Read-only overlay SHA-256 inventory |
+| `--json` | Emit machine-readable result |
+
+### `devtool delivery session status`
+
+Inspect delivery session without mutation
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--id DELIVERY_ID` | Exact 32-character session ID Required. |
+| `--json` | Emit machine-readable result |
+
+### `devtool delivery session resume`
+
+Inspect safe resumption; never retry a mutation
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--id DELIVERY_ID` | Exact 32-character session ID Required. |
+| `--json` | Emit machine-readable result |
+
+### `devtool delivery session report`
+
+Read-only delivery evidence report
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--id DELIVERY_ID` | Exact 32-character session ID Required. |
+| `--json` | Emit machine-readable result |
+
+### `devtool delivery session push`
+
+Source-bound, journaled, non-force Git push
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--id DELIVERY_ID` | Exact 32-character session ID Required. |
+| `--yes` | Explicitly approve remote mutation |
+| `--json` | Machine-readable output |
+
+### `devtool delivery session pr`
+
+Find or explicitly create one source-bound draft PR
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--id DELIVERY_ID` | Exact 32-character session ID Required. |
+| `--title TITLE` | New PR title |
+| `--body BODY` | New PR body |
+| `--auth AUTH` | GitHub authentication source Choices: auto, env, gh, none |
+| `--yes` | Explicitly approve remote mutation |
+| `--json` | Machine-readable output |
+
+### `devtool delivery session ci`
+
+Registration-aware, source-bound GitHub CI observation
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--id DELIVERY_ID` | Exact 32-character session ID Required. |
+| `--require-workflow REQUIRE_WORKFLOW` | Required workflow name (repeatable) |
+| `--checks CHECKS` | Maximum finite polling observations |
+| `--interval INTERVAL` | Seconds between CI observations |
+| `--auth AUTH` | GitHub authentication source Choices: auto, env, gh, none |
+| `--json` | Machine-readable output |
 
 ### `devtool repo-pack`
 
