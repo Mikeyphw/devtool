@@ -18,6 +18,7 @@ import sys
 import tempfile
 import zipfile
 from typing import Any
+from .launcher_validation_contract import inspect_delivery_plan, ValidationContractError
 
 _SOURCE = re.compile(r"[0-9a-f]{40}\Z")
 _REMOTE = re.compile(r"(?:git@github\.com:|ssh://git@github\.com/|https://github\.com/)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?:\.git)?/?\Z")
@@ -140,8 +141,13 @@ def _read_plan(path: Path) -> list[dict[str, str]]:
         obj = json.loads(path.read_text(encoding="utf-8"))
     except (ValueError, UnicodeError) as exc:
         raise AdoptionError("Invalid scaffold plan JSON") from exc
-    if not isinstance(obj, dict) or obj.get("schema_version") != 1 or set(obj) != {"schema_version", "changes"}:
-        raise AdoptionError("Expected only schema_version=1 and changes")
+    if (not isinstance(obj, dict) or obj.get("schema_version") != 1
+            or not {"schema_version", "changes"}.issubset(obj)):
+        raise AdoptionError("Expected schema_version=1 and changes")
+    try:
+        inspect_delivery_plan(obj)
+    except ValidationContractError as exc:
+        raise AdoptionError(str(exc)) from exc
     changes = obj["changes"]
     if not isinstance(changes, list) or not 1 <= len(changes) <= _MAX_CHANGES:
         raise AdoptionError("Scaffold plan requires 1..32 changes")
@@ -223,6 +229,11 @@ def scaffold_overlay(repo: Path, payload: Path, plan: Path, output: Path, *,
     if not source.is_dir() or source == root or source.is_relative_to(root) or root.is_relative_to(source):
         raise AdoptionError("Payload directory must be separate from the consumer repository")
     changes = _read_plan(Path(plan).expanduser())
+    try:
+        plan_obj = json.loads(Path(plan).read_text(encoding="utf-8"))
+        extension, hook_files = inspect_delivery_plan(plan_obj, source)
+    except (ValidationContractError, OSError, UnicodeError, ValueError) as exc:
+        raise AdoptionError("Invalid immutable validation contract: " + str(exc)) from exc
     target = Path(output).expanduser().absolute()
     if (target.is_relative_to(root) or target.is_relative_to(source) or target.exists()
             or target.is_symlink() or target.parent.is_symlink() or not target.parent.is_dir()):
@@ -257,10 +268,21 @@ def scaffold_overlay(repo: Path, payload: Path, plan: Path, output: Path, *,
             raise AdoptionError("Added path already exists or is tracked")
         inventory.append(entry)
         data[name] = content
+    # Hooks are metadata-only, never tracked repository payload. The current
+    # artifact engine owns their execution and has its own native hook receipts.
+    for hook_path, hook_data in hook_files.items():
+        if hook_path in data:
+            raise AdoptionError("Hook path collides with source inventory")
+        data[hook_path] = hook_data
     # One stable identifier for exact identity and contents. Do not pretend this
     # is a PR/CI/release qualification or automatically apply the artifact.
-    binding = hashlib.sha256(json.dumps({"source": identity["source_sha"],
-                       "inventory": inventory}, sort_keys=True).encode()).hexdigest()[:20]
+    binding_input = {"source": identity["source_sha"], "inventory": inventory}
+    if extension:
+        binding_input["validation_contract"] = extension
+        binding_input["hook_metadata"] = [
+            {"path": path, "sha256": hashlib.sha256(contents).hexdigest()}
+            for path, contents in sorted(hook_files.items())]
+    binding = hashlib.sha256(json.dumps(binding_input, sort_keys=True).encode()).hexdigest()[:20]
     # Devtool's canonical GIT-FRX-05 *exact-tree* contract prevents an archive
     # created today being silently applied to a different future HEAD.
     from .artifact_base_contract import build_base_contract
@@ -274,6 +296,10 @@ def scaffold_overlay(repo: Path, payload: Path, plan: Path, output: Path, *,
                 "apply": {"atomic": True, "conflict_policy": "fail", "requires_clean_worktree": True},
                 "inventory": {"format": 1, "entries": inventory},
                 "validation": {"mode": "disabled", "restore": False, "build": False, "test": False},
+                **({"notes": ["Explicit static-only validation: " + extension["delivery_static_justification"]]}
+                   if "delivery_static_justification" in extension else {}),
+                **{key: value for key, value in extension.items()
+                   if key in ("validation", "preflight", "finalize")},
                 **base_contract}
     data[".devtool-artifact.json"] = (json.dumps(manifest, sort_keys=True, indent=2) + "\n").encode()
     fd, temp_name = tempfile.mkstemp(prefix=".s7-scaffold-", suffix=".zip", dir=target.parent)

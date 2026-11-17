@@ -24,9 +24,13 @@ import uuid
 import zipfile
 from typing import Callable
 from typing import Any
+from .launcher_validation_contract import (
+    ValidationContractError, inspect_delivery_plan, metadata_descriptors,
+    verify_metadata_manifest, validation_execution_mode, MAX_TOTAL_HOOK_BYTES,
+)
 
 SCHEMA = 'devtool.launcher-contract.v3'
-LAUNCHER_CONTRACT_VERSION = '3.1.0'
+LAUNCHER_CONTRACT_VERSION = '3.2.0'
 from .launcher_runtime_compat import (
     require_version, declared_version, IncompatibleLauncherRuntime)
 SHA40 = re.compile(r'[0-9a-f]{40}\Z')
@@ -334,7 +338,8 @@ def redact(text: str) -> str:
 
 def exec_cmd(argv: list[str], *, stage: str, cwd: Path | None = None,
              devtool_root: Path | None = None, timeout: float = 120,
-             live: bool = False, target_root: Path | None = None) -> str:
+             live: bool = False, target_root: Path | None = None,
+             tty_live: bool = False) -> str:
     """Bounded native subprocess. Never strip useful exceptions or synthesize CI output."""
     env = safe_env(devtool_root=devtool_root, target_root=target_root or cwd, color_output=live)
     if live:
@@ -342,7 +347,21 @@ def exec_cmd(argv: list[str], *, stage: str, cwd: Path | None = None,
         # `gh watch` output. Do not print argv, which might contain secrets.
         say('LAUNCHER_NATIVE_BEGIN stage='+stage)
         try:
-            if _ACTIVE_TRANSCRIPT is not None:
+            # Only CI/watch uses inherited real terminal file descriptors.
+            # A child behind stdout/stderr pipes is not a TTY and cannot
+            # enable Devtool's interactive Rich monitor. Never forge one.
+            real_tty = (tty_live and sys.stdin.isatty() and sys.stdout.isatty()
+                        and sys.stderr.isatty() and 'NO_COLOR' not in env
+                        and env.get('CLICOLOR') != '0' and env.get('TERM') != 'dumb'
+                        and str(env.get('CI','')).lower() not in ('1','true','yes','on'))
+            if real_tty:
+                if _ACTIVE_TRANSCRIPT is not None:
+                    _ACTIVE_TRANSCRIPT.append('LAUNCHER_V32_TTY_NATIVE_MONITOR: child output remains on the true terminal; native CI receipts own the details\n')
+                    # Do not claim a complete launcher failure transcript when
+                    # native child output bypasses the launcher's relay.
+                    _ACTIVE_TRANSCRIPT.failed = True
+                rc = subprocess.run(argv,cwd=cwd,env=env,timeout=timeout,check=False).returncode
+            elif _ACTIVE_TRANSCRIPT is not None:
                 rc = _stream_native_and_log(argv,cwd=cwd,env=env,timeout=timeout)
             else:
                 rc = subprocess.run(argv,cwd=cwd,env=env,timeout=timeout,check=False).returncode
@@ -502,6 +521,10 @@ def verify_manifest(m: dict[str,Any]) -> None:
     if plan.get('schema_version')!=1 or not isinstance(plan.get('changes'),list):raise Refused('PLAN_INVALID')
     if [(z.get('path'),z.get('action')) for z in plan['changes']] != [(z.get('path'),z.get('action')) for z in inv]:
         raise Refused('PLAN_AND_INVENTORY_MISMATCH')
+    try:
+        verify_metadata_manifest(plan, m.get('artifact_metadata', []))
+    except ValidationContractError as exc:
+        raise Refused('IMMUTABLE_VALIDATION_CONTRACT_INVALID ' + str(exc)) from exc
     seen=set()
     for c in inv:
         p=safe_path(c.get('path'))
@@ -522,7 +545,7 @@ def read_embedded_package(package: Path) -> tuple[dict[str,Any],dict[str,bytes]]
         if len(names)!=len(set(names)) or z.testzip() is not None:raise Refused('DUPLICATE_OR_CORRUPT_ZIPAPP')
         if '__main__.py' not in names  or 'manifest.json' not in names:
             raise Refused('MISSING_REQUIRED_PACKAGE_MODULE')
-        if sum(i.file_size for i in infos)>MAX_TOTAL+300000:
+        if sum(i.file_size for i in infos)>MAX_TOTAL+MAX_TOTAL_HOOK_BYTES+300000:
             raise Refused('PACKAGE_TOO_LARGE')
         for info in infos:
             p=info.filename
@@ -535,12 +558,17 @@ def read_embedded_package(package: Path) -> tuple[dict[str,Any],dict[str,bytes]]
         if z.read('__main__.py')!=bootstrap_content(m['devtool']).encode('utf-8'):
             raise Refused('ZIP_BOOTSTRAP_PIN_MISMATCH')
         expected={'payload/'+a['path'] for a in m['inventory']}
+        expected |= {'payload/'+a['path'] for a in m.get('artifact_metadata', [])}
         actual={n for n in names if n.startswith('payload/')}
         if expected != actual:raise Refused('ZIP_INVENTORY_MISMATCH')
         data={n:z.read(n) for n in expected}
         for c in m['inventory']:
             if digest(data['payload/'+c['path']]) != c['payload_sha256']:
                 raise Refused('ZIP_PAYLOAD_HASH_MISMATCH '+c['path'])
+        for item in m.get('artifact_metadata', []):
+            raw = data['payload/'+item['path']]
+            if len(raw) != item['size'] or digest(raw) != item['sha256']:
+                raise Refused('ZIP_HOOK_DIGEST_MISMATCH '+item['path'])
         if set(names) != {'__main__.py','manifest.json'} | expected:
             raise Refused('UNDECLARED_ZIP_MEMBER')
         # This is integrity, NOT a cryptographic signature. Source Git
@@ -591,16 +619,32 @@ def build_package(args:argparse.Namespace)->None:
     inv,payload=payload_contract(plan,Path(args.payload),source_repo)
     manifest=make_manifest(args.name,target,devtool,inv,args.commit_message,
                            args.pr_title,args.pr_body,args.base,schema_blob)
+    try:
+        extension, hooks = inspect_delivery_plan(plan, Path(args.payload))
+    except ValidationContractError as exc:
+        raise Refused('BUILDER_VALIDATION_CONTRACT_REFUSED ' + str(exc)) from exc
+    if extension:
+        manifest['plan'].update(extension)
+        manifest['artifact_metadata'] = metadata_descriptors(hooks)
+    else:
+        if not bool(getattr(args, 'allow_legacy_static', False)):
+            raise Refused('NEW_PACKAGE_REQUIRES_EXECUTABLE_VALIDATION; '
+                'declare delivery_validation_mode=full, or explicitly acknowledge '
+                'a legacy static-only package using --allow-legacy-static')
+        say('LAUNCHER_V32_WARNING EXPLICIT_LEGACY_STATIC_ONLY; '
+            'no executable overlay validation promised')
     verify_manifest(manifest)
     files={'__main__.py':bootstrap_content(devtool).encode('utf-8'),
            'manifest.json':(json.dumps(manifest,sort_keys=True,indent=2,ensure_ascii=False)+'\n').encode(),
-           **payload}
+           **payload, **{'payload/'+p:b for p,b in hooks.items()}}
     raw=zip_bytes(files)
     # Test the generated bytes before publication.
     with tempfile.TemporaryDirectory() as t:
         tmp=Path(t)/'tmp.pyz';tmp.write_bytes(raw)
         found,data=read_embedded_package(tmp)
-        if found!=manifest or data!=payload:raise Refused('BUILT_PACKAGE_ROUNDTRIP_MISMATCH')
+        expected_data = {**payload, **{'payload/'+p:b for p,b in hooks.items()}}
+        if found != manifest or data != expected_data:
+            raise Refused('BUILT_PACKAGE_ROUNDTRIP_MISMATCH')
     output=Path(args.output)
     if output.suffix!='.pyz' or output.resolve().is_relative_to(source_repo.resolve()):
         raise Refused('OUTPUT_MUST_BE_PYZ_OUTSIDE_TARGET_REPO')
@@ -987,13 +1031,14 @@ def runtime_probe(repo:Path,devtool_root:Path,m:dict[str,Any])->None:
 
 
 def native(repo:Path,devtool_root:Path,*parts:str,stage:str,timeout:float=120,
-           live:bool=False)->str:
+           live:bool=False,tty_live:bool=False)->str:
     # The supported native global flag prevents both the post-run copy prompt
     # and automatic copying. Only Devtool CLI children receive this option;
     # never replace internal overlay file transactions with clipboard controls.
     return exec_cmd([sys.executable,'-B','-m','devtool','--repo',str(repo),
                      '--no-clipboard',*parts],
-                    stage=stage,cwd=devtool_root,devtool_root=devtool_root,target_root=repo,timeout=timeout,live=live)
+                    stage=stage,cwd=devtool_root,devtool_root=devtool_root,target_root=repo,
+                    timeout=timeout,live=live,tty_live=tty_live)
 
 
 def native_json(repo:Path,devtool_root:Path,*parts:str,stage:str)->dict[str,Any]:
@@ -1032,6 +1077,29 @@ def scaffold(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,bytes]
         if (info.get('source_sha') != m['source']['source_sha'] or
                 info.get('applied') is not False or not archive.is_file()):
             raise Refused('NATIVE_SCAFFOLD_RECEIPT_MISMATCH')
+    # New validation-aware packages must verify the native scaffold retained
+    # every declared hook and exact validation contract before apply.
+    # Legacy S7 plans have no extended metadata: preserve the original API
+    # and its independently validated native validate-overlay operation.
+    extended = bool(set(m.get('plan', {})) - {'schema_version', 'changes'}) or bool(
+        m.get('artifact_metadata'))
+    if extended:
+        try:
+            with zipfile.ZipFile(archive) as produced:
+                artifact_manifest = json.loads(produced.read('.devtool-artifact.json'))
+                for field in ('validation','preflight','finalize'):
+                    if field in m['plan'] and artifact_manifest.get(field) != m['plan'][field]:
+                        raise Refused('NATIVE_SCAFFOLD_DROPPED_CONTRACT '+field)
+                reason = m['plan'].get('delivery_static_justification')
+                if reason is not None and artifact_manifest.get('notes') != [
+                        'Explicit static-only validation: ' + reason]:
+                    raise Refused('NATIVE_SCAFFOLD_DROPPED_STATIC_JUSTIFICATION')
+                for item in m.get('artifact_metadata', []):
+                    content = produced.read(item['path'])
+                    if len(content) != item['size'] or digest(content) != item['sha256']:
+                        raise Refused('NATIVE_SCAFFOLD_HOOK_DRIFT '+item['path'])
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
+            raise Refused('NATIVE_SCAFFOLD_METADATA_INVALID') from exc
     native(repo,devtool_root,'validate-overlay',str(archive),stage='native-validate-overlay',timeout=330,live=True)
     say('LAUNCHER_V3_NATIVE_OVERLAY_VALIDATED '+str(archive))
     return archive
@@ -1078,7 +1146,7 @@ def observe_delivery_ci(repo:Path,devtool_root:Path,sid:str,*,checks:int=25,inte
         raise Refused('INVALID_BOUNDED_CI_POLLING')
     native(repo,devtool_root,'delivery','session','ci','--id',sid,'--checks',str(checks),
            '--interval',str(interval),stage='native-source-bound-ci',
-           timeout=ci_watch_timeout_seconds(checks,interval),live=True)
+           timeout=ci_watch_timeout_seconds(checks,interval),live=True,tty_live=True)
     report=native_json(repo,devtool_root,'delivery','session','report','--id',sid,stage='native-ci-machine-receipt')
     ci=(report.get('receipt') or {}).get('ci_state') or (report.get('ci') or {}).get('state')
     say('LAUNCHER_V3_CI_STATE '+str(ci or 'UNKNOWN')+'; formal release NOT qualified')
@@ -1181,9 +1249,17 @@ def apply_package(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,b
     check_source(repo,m);runtime_probe(repo,devtool_root,m)
     ci_policy=required_ci_preflight(repo,devtool_root,m) if watch_ci else None
     archive=scaffold(repo,devtool_root,m,payload)
+    # Full mode delegates executable tests/tasks/scripts to the existing
+    # native Devtool validator and transaction. Static is explicitly bounded
+    # and cannot silently skip declared validation.tests/tasks.
+    mode = validation_execution_mode(m['plan'])
+    native_flag = '--validate' if mode == 'full' else '--static-validate'
+    say('LAUNCHER_V32_VALIDATION_MODE '+mode+' native='+native_flag)
+    if mode == 'static' and m['plan'].get('delivery_static_justification'):
+        say('LAUNCHER_V32_STATIC_JUSTIFICATION '+redact(m['plan']['delivery_static_justification']))
     native(repo,devtool_root,'apply','overlay',str(archive),'--yes','--commit',
-           m['delivery']['commit_message'],'--commit-mode','new','--static-validate',
-           '--keep-artifact',stage='native-atomic-apply-and-commit',timeout=800,live=True)
+           m['delivery']['commit_message'],'--commit-mode','new',native_flag,
+           '--keep-artifact',stage='native-atomic-apply-and-commit',timeout=1800,live=True)
     after=repo_identity(repo,clean=False)
     verify_postcommit_status(repo)
     # A newly added required-CI policy cannot be checked before its
@@ -1686,6 +1762,8 @@ def make_parser(is_builder:bool)->argparse.ArgumentParser:
         for name in ('repo','devtool-repo','plan','payload','output','name','commit-message','pr-title'):
             q.add_argument('--'+name,required=True)
         q.add_argument('--base',default='main');q.add_argument('--pr-body',default='')
+        q.add_argument('--allow-legacy-static',action='store_true',
+            help='Explicit compatibility: legacy static-only plan without executable checks')
         return p
     sub.add_parser('inspect',help='Read-only embedded inventory, no local repo required')
     for command in ('check','apply','status','report','ci','deliver','resume','diagnose','plan','capabilities','verify-artifact'):

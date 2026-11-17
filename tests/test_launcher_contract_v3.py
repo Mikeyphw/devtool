@@ -121,7 +121,8 @@ class ContractTests(unittest.TestCase):
         args=argparse.Namespace(repo=str(target),devtool_repo=str(runtime),
              plan=str(plan),payload=str(payload),output=str(package),
              name='detached-runtime-hf03',commit_message='test: detached runtime',
-             pr_title='Detached runtime',pr_body='fixture',base='main')
+             pr_title='Detached runtime',pr_body='fixture',base='main',
+             allow_legacy_static=True)
         lc.build_package(args)
         manifest,body=lc.read_embedded_package(package)
         self.assertEqual(manifest['devtool']['source_sha'],g(runtime,'rev-parse','HEAD'))
