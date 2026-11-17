@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from devtool.storage_layout import artifact_registry_file
 from unittest import mock
 
 import pytest
@@ -58,7 +59,7 @@ def test_evidence_session_is_hashed_immutable_and_registry_integrated(tmp_path: 
     with pytest.raises(FileExistsError):
         session.seal()
     assert path.read_bytes() == original
-    registry = json.loads((tmp_path / ".devtool/artifacts/registry.json").read_text(encoding="utf-8"))
+    registry = json.loads(artifact_registry_file(tmp_path).read_text(encoding="utf-8"))
     assert any(item.get("metadata", {}).get("release_session_id") == "session-1" for item in registry["items"])
 
 

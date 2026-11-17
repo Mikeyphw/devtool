@@ -191,6 +191,15 @@ def _with_failure_transcript(action: Callable[[],int]) -> int:
             try:
                 rc=action()
                 return rc
+            except SystemExit as exc:
+                if exc.code is None or exc.code == 0:
+                    rc = 0
+                else:
+                    transcript.append(
+                        'LAUNCHER_V3_UNHANDLED_EXCEPTION\n'
+                        + traceback.format_exc()
+                    )
+                raise
             except BaseException:
                 transcript.append('LAUNCHER_V3_UNHANDLED_EXCEPTION\n'+traceback.format_exc())
                 raise

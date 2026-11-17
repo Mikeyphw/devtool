@@ -35,15 +35,23 @@ def test_pres_g3_campaign_position_and_exec_prerequisite_are_current() -> None:
     assert ledger["next_on_success"] == "RMP-X01 71/77"
 
 
-def test_pres_g3_removes_rich_live_from_all_runtime_presentation_owners() -> None:
-    refs: list[str] = []
+def test_pres_g3_only_allows_explicit_inline_rich_live() -> None:
+    allowed = {
+        "devtool/delivery_rich.py",
+        "devtool/operator_rich.py",
+        "devtool/operator_workspace.py",
+    }
+    found = set()
     for path in (ROOT / "devtool").rglob("*.py"):
         if path.name == "pres_g3_gate.py":
             continue
-        text = path.read_text(encoding="utf-8")
-        if "rich.live" in text.lower() or "Live(" in text:
-            refs.append(path.relative_to(ROOT).as_posix())
-    assert refs == []
+        source = path.read_text(encoding="utf-8")
+        if "rich.live" in source.lower() or "Live(" in source:
+            relative = path.relative_to(ROOT).as_posix()
+            assert relative in allowed, f"Unexpected Rich Live owner: {relative}"
+            assert "screen=False" in source, f"Non-inline Rich Live: {relative}"
+            found.add(relative)
+    assert found == allowed
     hud = (ROOT / "devtool" / "hud.py").read_text(encoding="utf-8")
     assert "build_textual_terminal_hud_app" in hud
     assert "Static rendering is deliberately non-live" in hud

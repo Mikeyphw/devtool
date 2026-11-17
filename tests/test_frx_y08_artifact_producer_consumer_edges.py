@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from devtool.storage_layout import artifact_registry_file
 import subprocess
 
 import pytest
@@ -147,7 +148,7 @@ def test_producer_digest_mutation_invalidates_consumer_reuse_without_source_drif
 def test_remote_artifact_requires_complete_ssh02_lifecycle(tmp_path: Path) -> None:
     config, producer, consumer = _fixture(tmp_path)
     artifact = _artifact(producer, "producer-run")
-    registry = json.loads((producer / ".devtool" / "artifacts" / "registry.json").read_text())
+    registry = json.loads(artifact_registry_file(producer).read_text())
     record = dict(registry["items"][0])
     record["remote_transfer"] = {
         "produced": True, "staged": True, "transferred": True,
@@ -175,7 +176,7 @@ def test_remote_artifact_requires_complete_ssh02_lifecycle(tmp_path: Path) -> No
 def test_materialized_artifact_input_drift_fails_closed_without_unlink(tmp_path: Path) -> None:
     config, producer, consumer = _fixture(tmp_path)
     artifact = _artifact(producer, "producer-run", b"v1\n")
-    registry = json.loads((producer / ".devtool" / "artifacts" / "registry.json").read_text())
+    registry = json.loads(artifact_registry_file(producer).read_text())
     record = dict(registry["items"][0])
     ownership = {
         "root": str(producer),
