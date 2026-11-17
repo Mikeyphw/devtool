@@ -11,6 +11,7 @@ from devtool.artifact_lifecycle import ArtifactExecutionRecord
 from devtool.artifact_cleanup_worker import cleanup_source_snapshot
 from devtool.core_runtime import private_run_root
 from devtool.run_store import AttachmentDescriptor, RunCatalog
+from devtool.storage_layout import ensure_private_storage_dir
 
 
 def attach_durable_apply_evidence(repo: Path, result, *, status: str = "succeeded") -> None:
@@ -22,7 +23,7 @@ def attach_durable_apply_evidence(repo: Path, result, *, status: str = "succeede
     )
     root = private_run_root(repo)
     target = root / run_id / "artifacts" / (record.record_id.replace(":", "-") + ".json")
-    target.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_storage_dir(target.parent)
     target.write_text(json.dumps(record.as_dict(), sort_keys=True))
     catalog = RunCatalog.open(root)
     catalog.add_run({

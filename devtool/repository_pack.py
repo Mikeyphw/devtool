@@ -374,11 +374,11 @@ def _persist_repository_pack_receipt(repo_root: str | Path, receipt: RepositoryP
     run_id = str(os.environ.get("DEVTOOL_RUN_ID") or "").strip() or f"repo-pack-{receipt.pack_id.split(':')[-1]}"
     catalog_root = private_run_root(root)
     evidence_dir = catalog_root / "evidence" / run_id / "repository-pack"
-    evidence_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        evidence_dir.chmod(0o700)
-    except OSError:
-        pass
+    from .storage_layout import ensure_private_storage_dir
+    # Enforce 0700 on the complete Devtool-owned RUN authority ancestry
+    # before the receipt file is created. Never chmod unsafe pre-existing
+    # directories after the fact: the native storage guard must refuse them.
+    ensure_private_storage_dir(evidence_dir)
     safe_id = receipt.receipt_id.replace(":", "-")
     path = evidence_dir / f"{safe_id}.json"
     payload = {
@@ -387,13 +387,17 @@ def _persist_repository_pack_receipt(repo_root: str | Path, receipt: RepositoryP
         "run_id": run_id,
         "receipt": receipt.as_dict(),
     }
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    import tempfile
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{safe_id}.", suffix=".tmp", dir=evidence_dir)
+    tmp = Path(tmp_name)
     try:
-        tmp.chmod(0o600)
-    except OSError:
-        pass
-    os.replace(tmp, path)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
     catalog = RunCatalog.open(catalog_root)
     prior = dict(catalog.runs.get(run_id, {}))

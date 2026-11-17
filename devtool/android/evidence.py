@@ -151,8 +151,16 @@ class AndroidReleaseEvidenceSession:
         payload = self.to_dict()
         encoded = (json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
 
-        def write_once(destination: Path) -> None:
-            destination.parent.mkdir(parents=True, exist_ok=True)
+        def write_once(destination: Path, *, private: bool = False) -> None:
+            if private:
+                # RUN-V3 evidence must be private before the first byte is
+                # written, not chmod-ed after ordinary 0755 mkdir ancestry.
+                from ..storage_layout import ensure_private_storage_dir
+                ensure_private_storage_dir(destination.parent)
+            else:
+                # A caller-selected export remains outside canonical RUN
+                # authority; it must not be retargeted into XDG storage.
+                destination.parent.mkdir(parents=True, exist_ok=True)
             fd, temp_name = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=str(destination.parent))
             temp = Path(temp_name)
             try:
@@ -164,7 +172,7 @@ class AndroidReleaseEvidenceSession:
             finally:
                 temp.unlink(missing_ok=True)
 
-        write_once(canonical)
+        write_once(canonical, private=True)
         if explicit_export and export is not None:
             try:
                 write_once(export)
