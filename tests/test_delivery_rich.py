@@ -111,10 +111,32 @@ class RichMonitorTests(unittest.TestCase):
         class DummyLive:
             def update(self,*a,**kw):pass
         m._live=DummyLive()
-        with patch('devtool.delivery_rich.os.get_terminal_size',return_value=os.terminal_size((40,24))):
-            m.refresh();self.assertEqual(m.console.width,40)
-        with patch('devtool.delivery_rich.os.get_terminal_size',return_value=os.terminal_size((120,40))):
-            m.refresh();self.assertEqual(m.console.width,120)
+        # Simulate a terminal independent of pytest's stdin capture.
+        with patch('devtool.delivery_rich.sys.stdin') as terminal_input:
+            terminal_input.fileno.return_value=0
+            for columns,rows in ((40,24),(120,40)):
+                with (self.subTest(columns=columns),
+                      patch('devtool.delivery_rich.os.get_terminal_size',return_value=os.terminal_size((columns,rows))),
+                      patch('devtool.delivery_rich.shutil.get_terminal_size',return_value=os.terminal_size((106,24)))):
+                    m.refresh()
+                    self.assertEqual(m.console.width,columns)
+
+    def test_resize_fallback_when_stdin_has_no_terminal(self):
+        from unittest.mock import patch
+        m=NativeRichMonitor(enabled=True,console=Console(file=io.StringIO(),width=80))
+        class DummyLive:
+            def update(self,*a,**kw):pass
+        m._live=DummyLive()
+        # Ensure the captured-stdin path uses the fallback and clamps widths.
+        with patch('devtool.delivery_rich.sys.stdin') as captured_input:
+            captured_input.fileno.side_effect=OSError('no terminal')
+            for columns,expected in ((20,40),(52,52),(106,106),(220,180)):
+                with (self.subTest(columns=columns),
+                      patch('devtool.delivery_rich.os.get_terminal_size',return_value=os.terminal_size((80,24))),
+                      patch('devtool.delivery_rich.shutil.get_terminal_size',return_value=os.terminal_size((columns,24))) as fallback):
+                    m.refresh()
+                    self.assertEqual(m.console.width,expected)
+                    self.assertTrue(fallback.called)
 
     def test_newly_added_required_ci_policy_is_checked_after_native_commit(self):
         # Native source tests run against the real staged launcher; no target
@@ -132,6 +154,8 @@ class RichMonitorTests(unittest.TestCase):
             m={'source':{'repository':'Mikeyphw/devtool','branch':'feature/ux-rich',
                          'source_sha':'a'*40},
                'delivery':{'base':'main','commit_message':'test'},
+               'plan':{'schema_version':1,'changes':[
+                   {'path':'config/delivery-required-ci.json','action':'add'}]},
                'inventory':[{'action':'add','path':'config/delivery-required-ci.json',
                    'payload_sha256':hashlib.sha256(policy.read_bytes()).hexdigest()}]}
             with (patch.object(lc,'check_source'),
