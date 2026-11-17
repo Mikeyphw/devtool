@@ -79,6 +79,40 @@ class CrossConsumerQualificationTests(unittest.TestCase):
         self.assertFalse(obj["physical_device_qualified"])
         self.assertEqual(len(obj["evidence_sha256"]), 64)
 
+    def test_historical_merged_consumers_accepted_with_exact_merge_proof(self):
+        for spec in CONSUMERS:
+            p = self.provider.data[f"repos/{spec.repository}/pulls/{spec.pr}"]
+            p.update({"state": "closed", "draft": False, "merged": True,
+                      "merged_at": "2026-11-15T19:43:08Z", "merge_commit_sha": "a" * 40})
+        result = verify(self.provider)
+        self.assertEqual([c["pr"]["state"] for c in result["consumers"]],
+                         ["merged", "merged", "merged"])
+        self.assertFalse(result["automatic_merge_permitted"])
+        self.assertFalse(result["release_qualified"])
+
+    def test_historical_merge_forgery_and_closed_unmerged_refused(self):
+        spec = CONSUMERS[0]
+        p = self.provider.data[f"repos/{spec.repository}/pulls/{spec.pr}"]
+        p.update({"state": "closed", "draft": False, "merged": False,
+                  "merged_at": None, "merge_commit_sha": None})
+        self.fails("closed but unmerged")
+        p["merged"] = True
+        p["merged_at"] = "2026-11-15T19:43:08Z"
+        self.fails("no merge SHA")
+        p["merge_commit_sha"] = "bad"
+        self.fails("invalid merge SHA")
+        p["merge_commit_sha"] = "a" * 40
+        p["head"]["sha"] = "f" * 40
+        self.fails("wrong merged head SHA")
+
+    def test_historical_merged_failed_workflow_still_refused(self):
+        spec = CONSUMERS[1]
+        p = self.provider.data[f"repos/{spec.repository}/pulls/{spec.pr}"]
+        p.update({"state": "closed", "draft": False, "merged": True,
+                  "merged_at": "2026-11-15T19:43:24Z", "merge_commit_sha": "b" * 40})
+        self.provider.runs(spec)[0]["conclusion"] = "failure"
+        self.fails("merged is not permission to bypass failed hosted checks")
+
     def test_source_drift_refused(self):
         spec = CONSUMERS[2]
         self.provider.data[f"repos/{spec.repository}/pulls/{spec.pr}"]["head"]["sha"] = "f" * 40

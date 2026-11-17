@@ -144,17 +144,43 @@ def _success(entry: dict[str, Any], context: str) -> None:
 
 
 def _pr(reader: GithubReader, spec: Consumer) -> dict[str, Any]:
+    """Trust exact source and GitHub merger proof, not an obsolete draft gate."""
     p = reader.get(f"repos/{spec.repository}/pulls/{spec.pr}")
-    h = p.get("head") or {}
-    b = p.get("base") or {}
-    if (p.get("number") != spec.pr or p.get("state") != "open" or p.get("draft") is not True
-        or p.get("merged_at") is not None or h.get("sha") != spec.source_sha
-        or h.get("ref") != spec.head_branch or (h.get("repo") or {}).get("full_name") != spec.repository
-        or b.get("ref") != "main" or (b.get("repo") or {}).get("full_name") != spec.repository):
-        raise QualificationError(f"PR drift, merge, or wrong source binding: {spec.repository} #{spec.pr}")
-    return {"number": spec.pr, "head_branch": spec.head_branch, "head_sha": spec.source_sha,
-            "url": f"https://github.com/{spec.repository}/pull/{spec.pr}", "state": "open_draft"}
-
+    h, b = p.get("head") or {}, p.get("base") or {}
+    identity_ok = (
+        p.get("number") == spec.pr
+        and h.get("sha") == spec.source_sha
+        and h.get("ref") == spec.head_branch
+        and (h.get("repo") or {}).get("full_name") == spec.repository
+        and b.get("ref") == "main"
+        and (b.get("repo") or {}).get("full_name") == spec.repository
+    )
+    merged_at = p.get("merged_at")
+    merge_commit = p.get("merge_commit_sha")
+    merged = (
+        p.get("state") == "closed"
+        and p.get("merged") is True
+        and p.get("draft") is False
+        and isinstance(merged_at, str)
+        and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", merged_at) is not None
+        and isinstance(merge_commit, str)
+        and re.fullmatch(r"[0-9a-f]{40}", merge_commit) is not None
+    )
+    open_draft = (
+        p.get("state") == "open"
+        and p.get("draft") is True
+        and merged_at is None
+        and p.get("merged") in (None, False)
+    )
+    if not identity_ok or not (merged or open_draft):
+        raise QualificationError(f"PR identity or merge proof drift: {spec.repository} #{spec.pr}")
+    return {
+        "number": spec.pr, "head_branch": spec.head_branch,
+        "head_sha": spec.source_sha,
+        "url": f"https://github.com/{spec.repository}/pull/{spec.pr}",
+        "state": "merged" if merged else "open_draft",
+        "merge_commit_sha": merge_commit if merged else None,
+    }
 
 def _runs(reader: GithubReader, spec: Consumer) -> dict[int, dict[str, Any]]:
     endpoint = (f"repos/{spec.repository}/actions/runs?event=pull_request&"

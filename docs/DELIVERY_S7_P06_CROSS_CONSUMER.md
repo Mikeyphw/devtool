@@ -1,57 +1,14 @@
-# S7 P06 — cross-consumer qualification and cleanup audit
+# S7 P06 — historical consumer hosted acceptance
 
-This phase installs a **read-only** Devtool qualification module. It makes no
-new GitHub mutation engine or duplicate consumer command parser. Canonical
-`delivery session` remains the only push/PR/required-CI orchestrator.
+P06 performs read-only verification of **exact historical consumer PR source commits** and their hosted workflow, job, attempt and required-step evidence. It does not check pending merge eligibility and must not treat a completed historical merge as failure.
 
-### Pinned real consumers
+The three pinned consumer PRs have already been merged. Their PR state is accepted only if GitHub reports a closed, merged PR with a nonempty `merged_at`, valid merge-commit SHA, the same pinned head SHA, correct head branch and same-repository `main` base. A still-open draft with matching source may also be inspected; a closed-unmerged PR, forged merge evidence, unexpected branch, fork, source drift or failed workflow is rejected.
 
-| Repository | PR | Exact head SHA | Required workflow IDs |
-|---|---:|---|---|
-| Mikeyphw/scriptexts | 3 | b77453ba15db824fc3f6d711c25df397d5845207 | 317669398, 418864667 |
-| Mikeyphw/chroot-ctl | 1 | dc94ebfb4d0522cad8ab8930f0004ac27c4b58cf | 324594821, 418878280, 391110853 |
-| Mikeyphw/xbsctl | 29 | 5c3f0da68bcec5606750ab12c13689fa83841a98 | 386774409, 418896455 |
+The frozen workflow IDs, latest source-bound run attempts, complete job inventories and required evidence steps remain mandatory. Historical acceptance says those exact PR commits passed the specified checks at the time. It does **not** prove today's `main` content, current CI, release signing, branch-policy compliance or physical-device qualification.
 
-A report is valid **only** if each PR is still open/draft on its exact head and
-branch; every required **pull_request** workflow ID and name points to that
-head, its latest run attempt completed successfully, all required jobs passed,
-and required Go-native / Android SDK / debug build / APK hash/evidence steps
-completed successfully. Failed/skipped required steps, missing jobs, incomplete
-API pagination, or source drift refuse the cross-consumer seal.
+## Regression and hosted checks
 
-Commands from within the Devtool source repository:
+- `python3 -B -m unittest discover -s tests -p 'test_delivery_cross_consumer.py' -v`
+- `.github/workflows/devtool-delivery-s7-p06.yml`: offline negative tests, then authenticated read-only provider evidence and private JSON/Markdown receipts
 
-```zsh
-python3 -m devtool.delivery_cross_consumer --json
-python3 -m devtool.delivery_cross_consumer --output "$HOME/.local/share/devtool/s7-p06-receipts" --json
-```
-
-Only `gh api -X GET` is invoked by this module. It requires an authenticated
-`gh` client (or `GH_TOKEN` with access to these public repositories). It never
-dispatches/reruns checks, pushes, changes PRs, edits source, or performs local
-Gradle, builds, releases, signing, or physical-device operations.
-
-The report is a *snapshot*, not a continuously guaranteed state. Any later PR
-head change invalidates the frozen source pins and requires an explicitly
-reviewed, newly source-bound P06 version. Report output is private mode 0700
-with atomic 0600 files and deterministic hash over verified provider rows.
-
-### Cleanup decisions
-
-- `scriptexts/scripts/devtool_actions_contract.py` is a consumer-owned static
-  configuration check, **not** a GitHub orchestration launcher; retain it.
-- `chroot-ctl/tests/test_devtool_go_adoption.py` was already deleted by P04 HF01
-  to satisfy GO17. The Go-native test replaces it; do not restore Python files.
-- Keep `chroot-ctl`'s dual-edition candidate pipeline and `xbsctl`'s existing
-  Go/module workflow; neither duplicates S7's non-release adoption gate.
-- The S7 P03/P04/P05 launcher scripts are delivery artifacts, not installed
-  duplicate schedulers. Do not delete maintained source without confirmed
-  semantic equivalence.
-
-### Qualification boundaries
-
-`hosted_cross_consumer_acceptance=passed` does **not** imply the canonical
-Devtool delivery sessions for P04/P05 have registered formal required-CI
-policies, or that Android real-device, signing, release, and merge are approved.
-Those remain separate gates. PRs stay open/draft, and the installed P06 module
-intentionally supplies no workflow dispatch or write path.
+P07 consumes this gate as the single source of historical consumer evidence. Do not reintroduce an `open`/`draft` prerequisite for already merged PRs, remove exact-SHA evidence checks, or mistake a skipped optional job for a required-job pass.

@@ -8,6 +8,8 @@ on:
       - docs/DELIVERY_S7_P07_FINAL_INTEGRATION.md
       - .github/workflows/devtool-delivery-s7-p07.yml
       - devtool/delivery_cross_consumer.py
+      - tests/test_delivery_cross_consumer.py
+      - docs/DELIVERY_S7_P06_CROSS_CONSUMER.md
   workflow_dispatch:
 
 permissions:
@@ -30,30 +32,34 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: '3.12'
-      - name: P06 cross-consumer source evidence regression suite
-        run: python3 -B -m unittest discover -s tests -p 'test_delivery_cross_consumer.py' -v
-      - name: P07 final integration adversarial regression suite
+      - name: P07 current-source and historical consumer adversarial contracts
         run: python3 -B -m unittest discover -s tests -p 'test_delivery_integration_review.py' -v
       - name: Exact-head provider-backed integration review (read-only)
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '0' }}
+          HEAD_BRANCH: ${{ github.head_ref || '' }}
         shell: bash
         run: |
           set -euo pipefail
           install -d -m 700 "$RUNNER_TEMP/s7-p07-evidence"
           python3 -B -m devtool.delivery_integration_review \
             --repo "$GITHUB_WORKSPACE" --expected-head "$EXPECTED_HEAD" \
+            --pr-number "$PR_NUMBER" --head-branch "$HEAD_BRANCH" \
             --output "$RUNNER_TEMP/s7-p07-evidence" --json > "$RUNNER_TEMP/s7-p07-stdout.json"
           test -s "$RUNNER_TEMP/s7-p07-evidence/s7-p07-evidence.json"
           test -s "$RUNNER_TEMP/s7-p07-evidence/s7-p07-readiness.md"
           python3 -B - <<'PY'
           import json, os, pathlib
           receipt = json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'s7-p07-evidence/s7-p07-evidence.json').read_text())
-          assert receipt['schema'] == 'devtool.delivery-integration-review.v1'
+          assert receipt['schema'] == 'devtool.delivery-integration-review.v2'
           assert receipt['devtool_source_sha'] == os.environ['EXPECTED_HEAD']
           assert receipt['integration_source_consistency'] == 'passed'
           assert receipt['consumer_hosted_acceptance'] == 'passed'
+          assert receipt['current_source_mode'] == ('current-pr' if int(os.environ['PR_NUMBER']) else 'main-manual')
+          assert len(receipt['historical_consumers']) == 3
+          assert all(c['state'] == 'merged' for c in receipt['historical_consumers'])
           assert receipt['release_readiness'] == 'blocked_pending_manual_gates'
           assert receipt['merge_permitted'] is False and receipt['release_qualified'] is False
           PY
