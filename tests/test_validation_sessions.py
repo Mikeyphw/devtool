@@ -38,6 +38,7 @@ from devtool.validation_sessions import (
     status_payload,
     sync_plan,
     validation_plan_path,
+    session_path,
 )
 
 
@@ -326,7 +327,7 @@ class ResumableValidationTests(unittest.TestCase):
                 [CommandSpec("preflight", ["true"], metadata={"validation_phase_name": "preflight"})],
             )
             active_session_marker(root).unlink()
-            Path(root / ".devtool" / "state" / "android-validation" / session.session_id / "state.json").unlink()
+            session_path(root, session.session_id).unlink()
 
             with self.assertRaisesRegex(ValidationSessionError, "No new validation session was created"):
                 resolve_resumable_session(root)
@@ -627,8 +628,8 @@ class ResumableValidationTests(unittest.TestCase):
             self.assertEqual([phase.name for phase in session.phases], ["static"])
             self.assertEqual(session.options["validation_resource_profile"], "android-low-power")
             self.assertEqual(transaction["status"], "applied-validation-deferred")
-            self.assertTrue((repo / ".devtool/state/android-validation/active.json").exists())
-            self.assertFalse((execution_root / ".devtool/state/android-validation/active.json").exists())
+            self.assertTrue(active_session_marker(repo).exists())
+            self.assertFalse(active_session_marker(execution_root).exists())
             session_id = session.session_id
 
             with patch.dict(os.environ, env, clear=False), patch("devtool.cli.render_summary"):
@@ -1151,7 +1152,7 @@ class ResumableValidationTests(unittest.TestCase):
                 config,
                 [CommandSpec("compile", ["gradle", "compile"], metadata={"validation_phase_name": "compile"})],
             )
-            state_path = root / ".devtool" / "state" / "android-validation" / session.session_id / "state.json"
+            state_path = session_path(root, session.session_id)
             payload = json.loads(state_path.read_text(encoding="utf-8"))
             stale_root = "/data/data/com.termux/files/home/Code/dustui"
             payload["repo_root"] = stale_root

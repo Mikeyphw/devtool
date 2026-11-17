@@ -308,16 +308,18 @@ def verified_external_cleanup_receipt(
             root, paths, reason=reason, source_snapshots=source_snapshots,
         )
         repo_id = build_repository_identity(root).fingerprint
-        directory = root / ".devtool" / "private" / "cleanup" / "receipts"
-        if directory.is_symlink() or not directory.is_dir():
-            return None
-        # Non-mutating bounded scan; an unbounded or unavailable inventory is
-        # UNKNOWN, never a successful recovery.
+        from .storage_layout import cleanup_receipt_read_dirs
+        directories = cleanup_receipt_read_dirs(root)
+        # Old receipts remain valid evidence after writers switch to XDG.
+        # Bound the combined scan, not each directory independently.
         paths_to_check = []
-        for index, candidate in enumerate(directory.glob("cleanup-receipt-*.json")):
-            if index >= 4096:
-                return None
-            paths_to_check.append(candidate)
+        for directory in directories:
+            if not directory.is_dir():
+                continue
+            for candidate in directory.glob("cleanup-receipt-*.json"):
+                if len(paths_to_check) >= 4096:
+                    return None
+                paths_to_check.append(candidate)
         catalog = None
         if run_id:
             from .core_runtime import private_run_root

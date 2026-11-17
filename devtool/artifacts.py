@@ -3156,17 +3156,18 @@ def _cleanup_legacy_history_lock(repo_root: Path) -> None:
         legacy.unlink(missing_ok=True)
 
 
-def append_history(repo_root: Path, entry: dict[str, Any], *, repo_local: bool = True) -> Path:
+def append_history(repo_root: Path, entry: dict[str, Any], *, repo_local: bool = False) -> Path:
     """Atomically upsert one idempotent operation history record.
 
     The XDG/state copy is authoritative and always written.  Repository-local
-    history is optional compatibility metadata and may be omitted for automatic
-    commit flows so history finalization cannot dirty or distort the commit.
+    history is explicit opt-in compatibility/export metadata, not default
+    runtime state. Legacy records remain readable without automatic deletion.
     """
     runtime_directory = operation_history_entries_dir(repo_root)
-    runtime_directory.mkdir(parents=True, exist_ok=True)
+    from .storage_layout import ensure_private_storage_dir
+    ensure_private_storage_dir(runtime_directory)
     lock_path = history_lock_file(repo_root)
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_storage_dir(lock_path.parent)
     with lock_path.open("a+") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         try:

@@ -372,18 +372,13 @@ def resolve_effective_config(context: ResolutionContext, registry: CoreRegistry 
 
 
 def private_run_root(repo_root: str | Path) -> Path:
-    repo = Path(repo_root).expanduser().resolve(strict=False)
-    # DEVTOOL_XDG_DIR is an explicit state-isolation boundary used by tests,
-    # remote workers, and users who intentionally keep Devtool private state
-    # outside a checkout.  Honor it for RUN-V3 as well so merely executing a
-    # direct library operation never dirties an otherwise-clean repository.
-    override = str(os.environ.get("DEVTOOL_XDG_DIR", "") or "").strip()
-    if override:
-        from .xdg import state_dir
-        digest = hashlib.sha256(str(repo).encode("utf-8", "surrogatepass")).hexdigest()[:16]
-        slug = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in (repo.name or "repo")).strip(".-") or "repo"
-        return state_dir() / "run-v3" / f"{slug}-{digest}"
-    return repo / ".devtool" / "private" / "run-v3"
+    """Canonical RUN catalog root (XDG for new repositories, legacy-readable).
+
+    Never silently abandon pre-existing RUN evidence. Explicit migration uses
+    storage_layout and preserves original bytes for recovery.
+    """
+    from .storage_layout import run_catalog_dir
+    return run_catalog_dir(repo_root)
 
 
 def build_run_envelope(context: ResolutionContext, registry: CoreRegistry | None = None) -> RunEnvelope:

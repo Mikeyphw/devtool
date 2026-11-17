@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .storage_layout import guarded_registry_lock
+
 """Repository-local immutable registry for produced build artifacts."""
 
 from contextlib import contextmanager
@@ -97,7 +99,8 @@ def _now() -> str:
 
 
 def registry_path(repo_root: Path) -> Path:
-    return repo_root / ".devtool" / "artifacts" / "registry.json"
+    from .storage_layout import artifact_registry_file
+    return artifact_registry_file(repo_root)
 
 
 def _sha256(path: Path) -> str:
@@ -163,10 +166,12 @@ def _load_registry_unlocked(repo_root: Path, *, preserve_corrupt: bool = True) -
     return data
 
 
+@guarded_registry_lock
 @contextmanager
 def _registry_lock(repo_root: Path, *, timeout: float = 15.0) -> Iterator[None]:
     lock_path = registry_path(repo_root).with_suffix(".lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    from .storage_layout import ensure_private_storage_dir
+    ensure_private_storage_dir(lock_path.parent)
     handle = lock_path.open("a+b")
     if os.name == "nt":
         # msvcrt.locking() needs a byte range that exists. Seed the otherwise
@@ -222,7 +227,8 @@ def load_registry(repo_root: Path) -> dict[str, Any]:
 
 def _save_registry_unlocked(repo_root: Path, data: dict[str, Any]) -> Path:
     path = registry_path(repo_root)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    from .storage_layout import ensure_private_storage_dir
+    ensure_private_storage_dir(path.parent)
     payload = dict(data)
     payload["schema_version"] = REGISTRY_SCHEMA
     payload["updated_at"] = _now()
