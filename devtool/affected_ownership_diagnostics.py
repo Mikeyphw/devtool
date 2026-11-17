@@ -9,7 +9,6 @@ import argparse
 import json
 from pathlib import Path
 import sys
-import tomllib
 
 from .config import load_wrapper_project_config
 
@@ -19,23 +18,16 @@ def diagnose(repo: Path, *, config_path: Path | None = None) -> dict:
     source = Path(config_path).expanduser().resolve() if config_path else root / ".devtool.toml"
     if not source.is_file() or not source.is_relative_to(root):
         raise ValueError("ownership diagnosis requires a config file inside the repository")
-    raw = tomllib.loads(source.read_text(encoding="utf-8"))
-    raw_targets = raw.get("targets", {})
-    if not isinstance(raw_targets, dict):
-        raise ValueError("[targets] must contain TOML tables")
+    # The canonical, schema-validated loader already exposes the target
+    # declarations and metadata. Do not independently reparse TOML: doing so
+    # creates an unreviewed second configuration authority.
     config = load_wrapper_project_config(str(root), str(source))
     findings: list[dict] = []
     modes: dict[str, str] = {}
-    for name, target in raw_targets.items():
-        if not isinstance(target, dict):
-            raise ValueError(f"[targets.{name}] must be a table")
-        if name not in config.targets:
-            raise ValueError(f"canonical loader lost target {name}")
-        effective = config.targets[name].affected_ownership
+    for name, target in config.targets.items():
+        effective = target.affected_ownership
         modes[name] = effective
-        metadata = target.get("metadata") or {}
-        if not isinstance(metadata, dict):
-            raise ValueError(f"[targets.{name}.metadata] must be a table")
+        metadata = target.metadata
         if "affected_ownership" in metadata:
             findings.append({
                 "target": name,
@@ -50,7 +42,10 @@ def diagnose(repo: Path, *, config_path: Path | None = None) -> dict:
                     'No automatic behavioral changes are made.'
                 ),
             })
-        if target.get("root") == "." and effective == "root-and-inputs":
+        # The canonical loader normalizes declared target roots into absolute
+        # paths. Compare resolved roots, not the pre-normalized TOML literal.
+        # This warning is descriptive only; it never changes ownership mode.
+        if target.root and Path(target.root).resolve(strict=False) == root and effective == "root-and-inputs":
             findings.append({
                 "target": name,
                 "code": "REPOSITORY_ROOT_WILDCARD",
@@ -82,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         result = diagnose(args.repo, config_path=args.config)
-    except (OSError, ValueError, tomllib.TOMLDecodeError, SystemExit) as exc:
+    except (OSError, ValueError, SystemExit) as exc:
         print(f"DEVTOOL_OWNERSHIP_DIAGNOSIS_REFUSED: {exc}", file=sys.stderr)
         return 2
     if args.json:

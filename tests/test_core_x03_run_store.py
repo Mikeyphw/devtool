@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from devtool.core_runtime import ResolutionContext, build_run_envelope
+from devtool.core_runtime import ResolutionContext, build_run_envelope, private_run_root
 from devtool.run_store import (
     AttachmentDescriptor,
     RunCatalog,
@@ -72,7 +72,7 @@ def test_bounded_disk_streams_are_truncated_and_attributed(tmp_path: Path) -> No
 
 def test_run_catalog_query_index_and_coalesced_events(tmp_path: Path) -> None:
     descriptor = _run_descriptor(tmp_path, ["apply", "overlay", "patch.zip"])
-    catalog = RunCatalog.open(tmp_path / ".devtool" / "private" / "run-v3")
+    catalog = RunCatalog.open(private_run_root(tmp_path))
     catalog.add_run(descriptor)
     event1 = catalog.coalesce_event(run_id=descriptor["run_id"], kind="snapshot", key="progress", payload={"percent": 10})
     event2 = catalog.coalesce_event(run_id=descriptor["run_id"], kind="snapshot", key="progress", payload={"percent": 90})

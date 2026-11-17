@@ -77,7 +77,7 @@ def test_run_descriptor_is_private_repo_scoped_with_unique_run_and_stable_operat
     assert first.descriptor.run_id != second.descriptor.run_id
     assert first.descriptor.operation_id == second.descriptor.operation_id
     assert first.descriptor.run_root.startswith(str(private_run_root(tmp_path)))
-    assert "/.devtool/private/run-v3/" in first.descriptor.run_root
+    assert Path(first.descriptor.run_root) == private_run_root(tmp_path) / first.descriptor.run_id
     assert first.scope.repository_id == second.scope.repository_id
 
 

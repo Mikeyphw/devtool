@@ -25,6 +25,7 @@ from devtool.validation_sessions import (
     SESSION_SCHEMA_VERSION,
     load_active_session,
     save_session,
+    session_path,
 )
 
 
@@ -142,7 +143,7 @@ class DurableResumePlanTests(unittest.TestCase):
             args = parser.parse_args(["--repo", str(root), "validate", "--sequential"])
             with patch("devtool.cli._validation_specs_for_args", return_value=self._specs(root)[:2]):
                 session, _ = _load_or_create_validation_session(config, args, parser)
-            state_path = root / ".devtool" / "state" / "android-validation" / session.session_id / "state.json"
+            state_path = session_path(root, session.session_id)
             payload = json.loads(state_path.read_text(encoding="utf-8"))
             payload["schema_version"] = 5
             payload.pop("plan_specs", None)
