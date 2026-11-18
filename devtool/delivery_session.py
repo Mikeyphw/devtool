@@ -169,7 +169,10 @@ def _git(root: Path, *args: str, optional: bool = False) -> str:
     return result.stdout.strip()
 
 
-def _identity(repo: Path, *, head: str | None, base: str) -> dict[str, Any]:
+def _identity(repo: Path, *, head: str | None, base: str,
+              base_repository: str | None = None,
+              head_repository: str | None = None,
+              base_sha: str | None = None) -> dict[str, Any]:
     root = Path(repo).expanduser().resolve(strict=True)
     if not root.is_dir():
         raise DeliverySessionError("Repository path is not a directory")
@@ -192,14 +195,32 @@ def _identity(repo: Path, *, head: str | None, base: str) -> dict[str, Any]:
         found = re.fullmatch(r"(?:git@github\.com:|ssh://git@github\.com/|https://github\.com/)([^\s]+?)(?:\.git)?/?", remote)
         if found and _REPO.fullmatch(found.group(1)):
             slug = found.group(1)
+    # The checked-out origin is authoritative for the *head*. A caller may
+    # designate a distinct upstream *base*, but cannot silently substitute a
+    # different fork or change the Git remote this session can push.
+    h_repo = head_repository or slug
+    b_repo = base_repository or slug
+    if not slug or not _REPO.fullmatch(slug):
+        raise DeliverySessionError("Delivery requires a verified GitHub origin")
+    if (not isinstance(h_repo, str) or not _REPO.fullmatch(h_repo) or
+            h_repo.casefold() != slug.casefold()):
+        raise DeliverySessionError("Head repository must match the checked-out Git origin")
+    if not isinstance(b_repo, str) or not _REPO.fullmatch(b_repo):
+        raise DeliverySessionError("Base repository must be an explicit valid GitHub slug")
+    if base_sha is not None and (not isinstance(base_sha,str) or not _SHA.fullmatch(base_sha)):
+        raise DeliverySessionError("Pinned base commit must be a full SHA-1 identity")
     return {"repo_root": str(root), "git_dir": _git(root, "rev-parse", "--absolute-git-dir"),
-            "repository": slug, "head": selected, "base": base, "head_sha": source}
+            "repository": slug, "head_repository": h_repo, "base_repository": b_repo,
+            "base_sha": base_sha, "head": selected, "base": base, "head_sha": source}
 
 
 def plan(repo: Path, *, base: str = "main", head: str | None = None,
-         overlay: Path | None = None) -> dict[str, Any]:
+         overlay: Path | None = None, base_repository: str | None = None,
+         head_repository: str | None = None, base_sha: str | None = None) -> dict[str, Any]:
     """Read-only source inspection. Does not create a journal or mutate Git."""
-    result = _identity(Path(repo), head=head, base=base)
+    result = _identity(Path(repo), head=head, base=base,
+                       base_repository=base_repository, head_repository=head_repository,
+                       base_sha=base_sha)
     result.update({"schema": "devtool.delivery-plan.v1", "stage": "PLANNED",
                    "remote_verified": False, "release_qualified": False})
     if overlay is not None:
@@ -221,9 +242,13 @@ def plan(repo: Path, *, base: str = "main", head: str | None = None,
 
 
 def start(repo: Path, *, base: str = "main", head: str | None = None,
-          overlay: Path | None = None, state_root: Path | None = None) -> dict[str, Any]:
+          overlay: Path | None = None, state_root: Path | None = None,
+          base_repository: str | None = None, head_repository: str | None = None,
+          base_sha: str | None = None) -> dict[str, Any]:
     """Create a PLANNED session only. No overlay or remote operation executes."""
-    inspected = plan(repo, base=base, head=head, overlay=overlay)
+    inspected = plan(repo, base=base, head=head, overlay=overlay,
+                     base_repository=base_repository, head_repository=head_repository,
+                     base_sha=base_sha)
     folder = _state_root(state_root)
     with _locked(folder):
         identity = uuid.uuid4().hex
@@ -235,6 +260,9 @@ def start(repo: Path, *, base: str = "main", head: str | None = None,
                   "stage": "PLANNED", "repo_root": inspected["repo_root"],
                   "git_dir": inspected["git_dir"], "repository": inspected["repository"],
                   "head": inspected["head"], "base": inspected["base"],
+                  "head_repository": inspected["head_repository"],
+                  "base_repository": inspected["base_repository"],
+                  "base_sha": inspected["base_sha"],
                   "head_sha": inspected["head_sha"], "overlay": inspected["overlay"],
                   "intents": [], "events": [{"kind": "session_started", "at": now, "stage": "PLANNED"}],
                   "remote_verified": False, "release_qualified": False}
@@ -247,6 +275,10 @@ def _public(record: Mapping[str, Any]) -> dict[str, Any]:
     return {key: record[key] for key in ("schema", "id", "stage", "repo_root", "repository",
         "head", "base", "head_sha", "overlay", "created_at", "updated_at",
         "remote_verified", "release_qualified")} | {
+        "head_repository": record.get("head_repository", record["repository"]),
+        "base_repository": record.get("base_repository", record["repository"]),
+        "base_sha": record.get("base_sha"),
+    } | {
         key: record[key] for key in ("pr", "ci", "native_apply") if key in record
     }
 
@@ -408,13 +440,23 @@ def record_pr_observation(identity: str, observation: Mapping[str, Any], *,
         record = _read(path)
         if any(pr.get(field) != record[field] for field in ('head_sha','head','base')):
             raise DeliverySessionError('PR observation source, head or base differs from session')
-        expected = f"https://github.com/{record['repository']}/pull/{pr['number']}"
+        base_repo = record.get('base_repository', record['repository'])
+        head_repo = record.get('head_repository', record['repository'])
+        if (pr.get('base_repository', base_repo).casefold() != base_repo.casefold() or
+                pr.get('head_repository', head_repo).casefold() != head_repo.casefold()):
+            raise DeliverySessionError('PR observation belongs to an unexpected fork or base')
+        if record.get('base_sha') and pr.get('base_sha') != record['base_sha']:
+            raise DeliverySessionError('PR base branch has drifted from pinned SHA')
+        expected = f"https://github.com/{base_repo}/pull/{pr['number']}"
         if pr['url'] != expected:
             raise DeliverySessionError('PR URL does not belong to session repository')
         prior = record.get('pr')
         if prior is not None and prior['number'] != pr['number']:
             raise DeliverySessionError('PR observation conflicts with bound PR number')
         record['pr'] = {k:pr.get(k) for k in ('number','head','base','head_sha','url','merge_commit_sha')}
+        record['pr']['head_repository'] = head_repo
+        record['pr']['base_repository'] = base_repo
+        record['pr']['base_sha'] = pr.get('base_sha')
         record['updated_at'] = _utc()
         if prior != record['pr']:
             record['events'].append({'kind':'pr_observed','at':record['updated_at'],
@@ -465,7 +507,10 @@ def record_ci_observation(identity: str, observation: Mapping[str, Any], *,
 
 
 def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
-                  head: str | None = None, state_root: Path | None = None) -> dict[str, Any]:
+                  head: str | None = None, state_root: Path | None = None,
+                  base_repository: str | None = None,
+                  head_repository: str | None = None,
+                  base_sha: str | None = None) -> dict[str, Any]:
     """Idempotently adopt a *committed and validated* native artifact receipt.
 
     Native apply may clean its source archive after commit, so the durable
@@ -477,7 +522,9 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
                             artifact_preflight_write_paths, artifact_validation_write_paths,
                             artifact_finalize_write_paths)
 
-    inspected = _identity(Path(repo), head=head, base=base)
+    inspected = _identity(Path(repo), head=head, base=base,
+                          base_repository=base_repository,head_repository=head_repository,
+                          base_sha=base_sha)
     root = Path(inspected['repo_root'])
     supplied = Path(overlay).expanduser()
     if supplied.is_symlink():
@@ -587,6 +634,12 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
             raise DeliverySessionError('Ambiguous native sessions already bound to applied commit')
         if same_commit:
             existing = same_commit[0]
+            if (existing.get('base_repository',existing['repository']).casefold() !=
+                    inspected['base_repository'].casefold() or
+                    existing.get('head_repository',existing['repository']).casefold() !=
+                    inspected['head_repository'].casefold() or
+                    existing.get('base_sha') != inspected['base_sha']):
+                raise DeliverySessionError('Existing native delivery session has conflicting fork/base identity')
             prior = existing.get('overlay')
             if existing.get('native_apply') not in (None, native_apply):
                 raise DeliverySessionError('Existing native transaction proof differs from applied history')
@@ -612,6 +665,9 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
                   'stage': 'PLANNED', 'repo_root': inspected['repo_root'],
                   'git_dir': inspected['git_dir'], 'repository': inspected['repository'],
                   'head': inspected['head'], 'base': inspected['base'],
+                  'head_repository': inspected['head_repository'],
+                  'base_repository': inspected['base_repository'],
+                  'base_sha': inspected['base_sha'],
                   'head_sha': inspected['head_sha'], 'overlay': inspected['overlay'],
                   'native_apply': native_apply,
                   'intents': [], 'events': [

@@ -39887,6 +39887,42 @@
           "spellings": [
             "--json"
           ]
+        },
+        {
+          "choices": [],
+          "dest": "base_repo",
+          "help": "Upstream repository (owner/name); for forks, explicit and source-bound",
+          "hidden": false,
+          "id": "cli.option.delivery.session.plan.base-repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--base-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "head_repo",
+          "help": "Head fork repository (owner/name); must match Git origin",
+          "hidden": false,
+          "id": "cli.option.delivery.session.plan.head-repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--head-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "base_sha",
+          "help": "Optional pinned upstream base SHA; reject base branch drift",
+          "hidden": false,
+          "id": "cli.option.delivery.session.plan.base-sha",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--base-sha"
+          ]
         }
       ],
       "path": [
@@ -39962,6 +39998,42 @@
           "required": false,
           "spellings": [
             "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "base_repo",
+          "help": "Upstream repository (owner/name); for forks, explicit and source-bound",
+          "hidden": false,
+          "id": "cli.option.delivery.session.start.base-repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--base-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "head_repo",
+          "help": "Head fork repository (owner/name); must match Git origin",
+          "hidden": false,
+          "id": "cli.option.delivery.session.start.head-repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--head-repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "base_sha",
+          "help": "Optional pinned upstream base SHA; reject base branch drift",
+          "hidden": false,
+          "id": "cli.option.delivery.session.start.base-sha",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--base-sha"
           ]
         }
       ],
@@ -40118,6 +40190,18 @@
           "required": false,
           "spellings": [
             "--json"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "regression_request_id",
+          "help": "Read-only qualification against a correlated Actions dispatch request",
+          "hidden": false,
+          "id": "cli.option.delivery.session.report.regression-request-id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--regression-request-id"
           ]
         }
       ],
@@ -40404,7 +40488,7 @@
       "summary": "Registration-aware, source-bound GitHub CI observation"
     }
   ],
-  "digest": "5a41cda68140787d8958ae676a93fa4d68c24b3df93592ecfa6222a30673df40",
+  "digest": "45b9a1af05534609e0c6b910b2cd49a372154043f2a75e1b5bbf7a9e05c46cbb",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -40951,7 +41035,7 @@
     "registry_command_count": 404
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "8ca68f96db5a6033a1c7db5e81b88286bb57ea905f5f0e9a21afbd133974e097",
+  "registry_digest": "e4e92e11ea5cfa3f2563850b606699c31336743146bb442de960d1ee8259e49f",
   "registry_schema_version": 1,
   "schema_version": 1
 }

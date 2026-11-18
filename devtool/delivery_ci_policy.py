@@ -202,3 +202,54 @@ def assert_observation(summary: Mapping[str, Any], policy: DeliveryCIPolicy) -> 
                     attested.get('jobs_scope') != 'exact-run-attempt' or
                     type(attested.get('jobs_success')) is not int or attested['jobs_success'] < 1):
                 raise DeliveryCIPolicyError('CI pass has unbound exact-run/attempt job evidence')
+
+
+def load_upstream_policy(client: Any, *, expected_repository: str,
+                         expected_base: str, expected_base_sha: str | None = None
+                         ) -> tuple[DeliveryCIPolicy, str]:
+    """Read the upstream's committed policy on a *verified* base commit.
+
+    A fork's own policy is not authoritative for upstream protected-branch CI.
+    No insecure fallback to fork worktree bytes is permitted. The returned
+    base SHA must be checked again after observing the required CI receipts.
+    """
+    from base64 import b64decode
+    from binascii import Error as Base64Error
+    from urllib.parse import quote
+
+    if (not _SLUG.fullmatch(expected_repository) or
+            not _REF.fullmatch(expected_base) or '..' in expected_base):
+        raise DeliveryCIPolicyError('Invalid upstream repository or branch')
+    if expected_base_sha is not None and not re.fullmatch(r'[0-9a-f]{40}',expected_base_sha):
+        raise DeliveryCIPolicyError('Invalid pinned upstream SHA')
+    try:
+        branch = client._get(f'/repos/{expected_repository}/branches/{quote(expected_base,safe="")}')
+        sha = (branch.get('commit') or {}).get('sha')
+        if not isinstance(sha,str) or not re.fullmatch(r'[0-9a-f]{40}',sha):
+            raise DeliveryCIPolicyError('Upstream branch SHA missing')
+        if expected_base_sha is not None and sha != expected_base_sha:
+            raise DeliveryCIPolicyError('Upstream base branch drifted from pin')
+        obj = client._get(f'/repos/{expected_repository}/contents/{POLICY_PATH}?ref={sha}')
+    except (OSError, ValueError, TypeError) as exc:
+        raise DeliveryCIPolicyError('Unable to read upstream committed policy') from exc
+    if (not isinstance(obj,dict) or obj.get('type') != 'file' or
+            obj.get('path') != POLICY_PATH or obj.get('encoding') != 'base64' or
+            not isinstance(obj.get('content'),str)):
+        raise DeliveryCIPolicyError('Upstream policy file response invalid')
+    try:
+        raw = b64decode(''.join(obj['content'].split()).encode('ascii'),validate=True)
+    except (UnicodeError, ValueError, Base64Error):
+        raise DeliveryCIPolicyError('Upstream policy encoding invalid') from None
+    if len(raw) > _MAX_BYTES:
+        raise DeliveryCIPolicyError('Upstream policy exceeds content budget')
+    blob = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+    if obj.get('sha') != blob:
+        raise DeliveryCIPolicyError('Upstream policy content differs from Git blob identity')
+    try:
+        doc = json.loads(raw.decode('utf-8'))
+    except (ValueError,UnicodeError):
+        raise DeliveryCIPolicyError('Upstream policy has invalid JSON') from None
+    result = _validate(doc, expected_repository=expected_repository,
+                       expected_base=expected_base,
+                       digest=hashlib.sha256(raw).hexdigest())
+    return result,sha

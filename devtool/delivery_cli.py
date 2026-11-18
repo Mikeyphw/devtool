@@ -25,12 +25,19 @@ def run_delivery_command(args: Any) -> int:
         if operation in ('plan', 'start'):
             options = {'base':str(getattr(args,'base','main') or 'main'),
                        'head':getattr(args,'head',None),
+                       'base_repository':getattr(args,'base_repo',None),
+                       'head_repository':getattr(args,'head_repo',None),
+                       'base_sha':getattr(args,'base_sha',None),
                        'overlay':Path(args.overlay) if getattr(args,'overlay',None) else None}
             payload = plan(root,**options) if operation=='plan' else start(root,**options)
         elif operation in ('status','resume','report'):
             identity = str(getattr(args,'delivery_id','') or '')
             action = {'status':status,'resume':resume,'report':report}[operation]
             payload = action(identity)
+            if operation == 'report' and getattr(args,'regression_request_id',None):
+                from .delivery_qualification import qualify
+                payload['qualification'] = qualify(identity, request_id=args.regression_request_id,
+                                                   auth=str(getattr(args,'auth','auto') or 'auto'))
             if Path(payload['repo_root']).resolve() != root:
                 raise DeliverySessionError('Session belongs to another repository/worktree')
         elif operation in ('push','pr','ci'):
@@ -49,14 +56,30 @@ def run_delivery_command(args: Any) -> int:
             else:
                 from .delivery_ci_policy import (load_policy, check_requested,
                                                  assert_observation)
-                repo_name = str(bound['repository'])
+                repo_name = str(bound['base_repository'])
                 base_branch = str(bound['base'])
-                policy = load_policy(root, expected_repository=repo_name,
-                                     expected_base=base_branch)
+                fork_delivery = repo_name.casefold() != str(bound['head_repository']).casefold()
+                client_for_policy = None
+                if fork_delivery:
+                    from .github_actions import GitHubActionsClient, resolve_token
+                    from .delivery_ci_policy import load_upstream_policy
+                    token,_ = resolve_token(str(getattr(args,'auth','auto') or 'auto'))
+                    client_for_policy = GitHubActionsClient(token)
+                    policy, base_at_start = load_upstream_policy(
+                        client_for_policy,expected_repository=repo_name,
+                        expected_base=base_branch,expected_base_sha=bound.get('base_sha'))
+                else:
+                    policy = load_policy(root, expected_repository=repo_name,
+                                         expected_base=base_branch)
                 check_requested(tuple(getattr(args,'require_workflow',[]) or ()), policy)
                 def guard() -> None:
-                    again = load_policy(root, expected_repository=repo_name,
-                                        expected_base=base_branch)
+                    if fork_delivery:
+                        again,base_now = load_upstream_policy(
+                            client_for_policy, expected_repository=repo_name,
+                            expected_base=base_branch,expected_base_sha=base_at_start)
+                    else:
+                        again = load_policy(root, expected_repository=repo_name,
+                                            expected_base=base_branch)
                     if again.sha256 != policy.sha256:
                         raise DeliverySessionError('Committed CI policy changed during observation')
                 rich_monitor = NativeRichMonitor(kind='ci',

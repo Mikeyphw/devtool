@@ -176,6 +176,7 @@ class Client:
         if path.endswith('/pulls/17'):
             return {'number':17,'state':'open',
                     'head':{'sha':self.item['head_sha'],'ref':self.item['head'],
+                            'label':self.item['repository'].split('/')[0]+':'+self.item['head'],
                             'repo':{'full_name':self.item['repository']}},
                     'base':{'ref':self.item['base'],
                             'repo':{'full_name':self.item['repository']}}}
