@@ -8054,6 +8054,16 @@ def _single_run_guard(repo_root: Path, args: argparse.Namespace):
         _release_single_run_lock(args)
 
 
+@contextmanager
+def _validation_management_single_run_guard(config: ProjectConfig, args: argparse.Namespace):
+    """Claim only the active validation transaction; block unrelated runs."""
+    _acquire_single_run_lock(config, args)
+    try:
+        yield
+    finally:
+        _release_single_run_lock(args)
+
+
 def _release_single_run_lock(args: argparse.Namespace) -> None:
     lock = getattr(args, "_devtool_single_run_lock", None)
     if lock is not None:
@@ -16274,7 +16284,7 @@ def _main_after_parse(
                 return _handle_validation_pause_control(config, args)
             if args.command in {"validation-stop", "vstop"}:
                 return _handle_validation_stop_control(config, args)
-            with _single_run_guard(config.repo_root, args):
+            with _validation_management_single_run_guard(config, args):
                 if args.command in {"validation-recover", "vrec"}:
                     return _handle_validation_recover(config, args)
                 if args.command in {"validation-reset", "vreset"}:

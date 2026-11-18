@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -70,6 +71,14 @@ def validation_config(root: Path, changed: list[str] | None = None) -> ProjectCo
 
 
 class ResumableValidationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # The same isolated authority is used by both CLI and readers.
+        # A short-lived CLI-only override would hide persisted sessions.
+        self._state = tempfile.TemporaryDirectory(prefix="g0-validation-state-")
+        self.addCleanup(self._state.cleanup)
+        state = patch.dict(os.environ, {"DEVTOOL_XDG_DIR": str(Path(self._state.name) / "xdg")}, clear=False)
+        state.start()
+        self.addCleanup(state.stop)
 
     def test_plan_sync_discards_legacy_artifact_check_without_replaying_package(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -227,7 +236,7 @@ class ResumableValidationTests(unittest.TestCase):
             root.mkdir()
             make_android_project(root)
             (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            env = {}
             with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
                 first_rc = main(["--repo", str(root), "--no-clipboard", "validate", "start", "--next"])
             active = load_active_session(root, required=True)
@@ -256,7 +265,7 @@ class ResumableValidationTests(unittest.TestCase):
             make_android_project(root)
             config_path = root / ".devtool.toml"
             config_path.write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            env = {}
             with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch(
                 "devtool.cli._run_specs_for_args", side_effect=fake_run
             ):
@@ -301,7 +310,7 @@ class ResumableValidationTests(unittest.TestCase):
             root.mkdir()
             make_android_project(root)
             (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            env = {}
             with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
                 self.assertEqual(main(["--repo", str(root), "--no-clipboard", "validate", "start", "--next"]), 0)
 
@@ -388,7 +397,7 @@ class ResumableValidationTests(unittest.TestCase):
                 "\n[targets.two]\ntype='android'\nroot='.'\n",
                 encoding="utf-8",
             )
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            env = {}
             with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
                 self.assertEqual(main(["--repo", str(root), "--target", "two", "--no-clipboard", "validate", "start", "--next"]), 0)
                 self.assertEqual(main(["--repo", str(root), "--no-clipboard", "validate", "continue"]), 0)
@@ -431,7 +440,7 @@ class ResumableValidationTests(unittest.TestCase):
             root.mkdir()
             make_android_project(root)
             (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            env = {}
             with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
                 self.assertEqual(main(["--repo", str(root), "--no-clipboard", "validate", "start"]), 0)
             session = load_active_session(root, required=True)
@@ -484,7 +493,7 @@ class ResumableValidationTests(unittest.TestCase):
             mark_transaction_validation_running(tx["path"], session_id=session.session_id, phase="preflight")
             before_revision = load_active_session(root, required=True).revision
 
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            env = {}
             with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"):
                 rc = main(["--repo", str(root), "--no-clipboard", "validate", "checkpoint"])
 
@@ -516,7 +525,7 @@ class ResumableValidationTests(unittest.TestCase):
             phase.attempt_history[-1].heartbeat_at = phase.heartbeat_at
             save_session(session, active=True)
 
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            env = {}
             with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"):
                 rc = main(["--repo", str(root), "--no-clipboard", "validate", "recover"])
 
@@ -539,7 +548,7 @@ class ResumableValidationTests(unittest.TestCase):
             mark_phase_running(session, session.phases[0].key)
             before = load_active_session(root, required=True)
 
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            env = {}
             with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"):
                 rc = main(["--repo", str(root), "--no-clipboard", "validate", "recover"])
 
@@ -607,7 +616,7 @@ class ResumableValidationTests(unittest.TestCase):
                 archive.writestr(".devtool-artifact/validate.sh", script)
                 archive.writestr("app/src/main/kotlin/Deferred.kt", payload)
 
-            env = {"DEVTOOL_XDG_DIR": str(root / "xdg")}
+            env = {}
             with patch.dict(os.environ, env, clear=False), patch("devtool.cli.render_summary"):
                 apply_rc = main([
                     "--repo", str(repo), "--yes", "--no-clipboard",
@@ -700,7 +709,7 @@ class ResumableValidationTests(unittest.TestCase):
                 },
             )
 
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            env = {}
             with patch.dict("os.environ", env, clear=False), \
                     patch("devtool.cli.render_summary"), \
                     patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
@@ -738,7 +747,7 @@ class ResumableValidationTests(unittest.TestCase):
                 },
             )
 
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            env = {}
             with patch.dict("os.environ", env, clear=False), \
                     patch("devtool.cli.render_summary"), \
                     patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
@@ -768,7 +777,7 @@ class ResumableValidationTests(unittest.TestCase):
                 },
             )
 
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            env = {}
             with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"):
                 rc = main([
                     "--repo", str(root), "--no-clipboard",
@@ -897,7 +906,7 @@ class ResumableValidationTests(unittest.TestCase):
             root.mkdir()
             make_android_project(root)
             (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            env = {}
             with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
                 first_rc = main(["--repo", str(root), "--no-clipboard", "validate", "start"])
             first = load_active_session(root, required=True)
@@ -1037,7 +1046,7 @@ class ResumableValidationTests(unittest.TestCase):
             artifact = Path(tmp) / "source_overlay.zip"
             with ZipFile(artifact, "w") as archive:
                 archive.writestr("app/src/main/kotlin/Main.kt", "class Patched\n")
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            env = {}
             with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"), patch("devtool.cli._run_specs_for_args", side_effect=fake_run):
                 first_rc = main([
                     "--repo", str(root), "--yes", "--force", "--no-clipboard",
@@ -1095,7 +1104,7 @@ class ResumableValidationTests(unittest.TestCase):
             root.mkdir()
             make_android_project(root)
             (root / ".devtool.toml").write_text('[project]\nkind="android"\nproject="."\n', encoding="utf-8")
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            env = {}
             with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"):
                 rc = main(["--repo", str(root), "--dry-run", "--no-clipboard", "validate", "start", "--complete"])
             self.assertEqual(rc, 0)
@@ -1322,7 +1331,7 @@ class ResumableValidationTests(unittest.TestCase):
                 transaction_path=tx["path"],
                 apply_context={"validation_mode": "deferred"},
             )
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
+            env = {}
             with patch.dict("os.environ", env, clear=False), patch("devtool.cli.render_summary"):
                 rc = main(["--repo", str(root), "--no-clipboard", "validate", "abort", "--keep-changes"])
             persisted = load_session(root, session.session_id)

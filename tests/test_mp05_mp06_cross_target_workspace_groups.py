@@ -367,8 +367,9 @@ build = ["target:child#build"]
 
     def test_group_scope_runs_through_real_cli_execution_path(self):
         with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            state = root / "state"
+            root = Path(td) / "repo"
+            root.mkdir()
+            state = Path(td) / "state"
             (root / ".devtool.toml").write_text(
                 '''
 [project]

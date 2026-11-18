@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from devtool.storage_layout import cleanup_receipt_write_dir
+
 import json
 import os
 import tempfile
@@ -131,7 +133,7 @@ class TaskerProgressTests(unittest.TestCase):
             self.assertFalse((state / "events.jsonl").exists())
             self.assertEqual(list((state / "events").iterdir()), [])
             self.assertEqual(list((state / "runs").iterdir()), [])
-            receipts = list((repo / ".devtool" / "private" / "cleanup" / "receipts").glob("*.json"))
+            receipts = list((cleanup_receipt_write_dir(repo)).glob("*.json"))
             self.assertTrue(receipts)
 
 

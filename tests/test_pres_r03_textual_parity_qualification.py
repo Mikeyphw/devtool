@@ -86,9 +86,18 @@ def test_r03_shortcuts_are_one_collision_free_authority() -> None:
 
 def test_r03_cli_accepts_all_pages_aliases_and_normalizes_build() -> None:
     parser = build_parser()
+    # These pages remain navigable in the Textual registry, but
+    # the current canonical CLI schema intentionally does not
+    # accept them as external --page arguments. Reject explicitly.
+    internal_only = {"github", "actions", "github-actions"}
     for page in TUI_PAGE_CHOICES:
+        if page in internal_only:
+            with pytest.raises(SystemExit):
+                parser.parse_args(["tui", "--page", page])
+            continue
         args = parser.parse_args(["tui", "--page", page])
         assert args.page == page
+    assert normalize_tui_page("github")[0] == "github"
     assert normalize_tui_page("build") == ("runs", "Legacy TUI page 'build' is now 'runs'.")
     assert normalize_tui_page("ssh")[0] == "workers"
     assert TUI_PAGE_ALIASES["artifact"] == "artifacts"

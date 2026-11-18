@@ -14,6 +14,7 @@ from devtool.actions_android_lab_export import (
     APK, FIXTURE, JAR_SHA, WORKFLOW, LabError, generate, register, reviewed_graph,
 )
 from devtool.artifact_registry import load_registry
+from devtool.storage_layout import artifact_registry_file
 ROOT=Path(__file__).resolve().parents[1]
 # The repository's tools/ is an implicit namespace package. A regular Python
 # package named tools (common in Termux installations) can shadow it during
@@ -127,6 +128,8 @@ def test_real_canonical_registry_api_registers_and_reverifies_local_apk(tmp_path
     assert len(load_registry(fixture)['items'])==1
     assert load_registry(fixture)['items'][0]['run_id']=='123456'
     assert (out.parent/'registry-snapshot.json').is_file()
+    assert hashlib.sha256((out.parent/'registry-snapshot.json').read_bytes()).hexdigest() == r['registry_sha256']
+    assert r['registry_sha256'] == hashlib.sha256(artifact_registry_file(fixture).read_bytes()).hexdigest()
 
 
 @pytest.mark.parametrize('change',[
@@ -148,7 +151,7 @@ def test_mismatched_evidence_fails_before_registry_mutation(tmp_path,monkeypatch
     else:data[k]=v
     p.write_text(json.dumps(data))
     with pytest.raises(LabError):register(fixture,receipt,out,apk_out)
-    assert not (fixture/'.devtool/artifacts/registry.json').exists()
+    assert not artifact_registry_file(fixture).exists()
     assert not apk_out.exists()
 
 
@@ -156,7 +159,7 @@ def test_tampered_apk_fails_before_registration(tmp_path,monkeypatch):
     fixture,receipt,out,apk_out,_=prepare_receipts(tmp_path,monkeypatch)
     p=fixture/APK;p.write_bytes(p.read_bytes()+b'tamper')
     with pytest.raises(LabError):register(fixture,receipt,out,apk_out)
-    assert not (fixture/'.devtool/artifacts/registry.json').exists()
+    assert not artifact_registry_file(fixture).exists()
 
 
 def test_publication_corruption_fails_before_registry_and_preserves_private_evidence(tmp_path,monkeypatch):
@@ -168,7 +171,7 @@ def test_publication_corruption_fails_before_registry_and_preserves_private_evid
     with pytest.raises(LabError,match='standalone publication changed bytes'):
         register(fixture,receipt,out,apk_out)
     assert apk_out.read_bytes()==b'corrupted-private-publication-for-diagnostics'
-    assert not (fixture/'.devtool/artifacts/registry.json').exists()
+    assert not artifact_registry_file(fixture).exists()
     assert not out.exists()
 
 
@@ -179,4 +182,4 @@ def test_existing_publication_is_never_overwritten_or_registered(tmp_path,monkey
     with pytest.raises(LabError,match='already exists'):
         register(fixture,receipt,out,apk_out)
     assert apk_out.read_bytes()==b'original-user-owned-bytes'
-    assert not (fixture/'.devtool/artifacts/registry.json').exists()
+    assert not artifact_registry_file(fixture).exists()

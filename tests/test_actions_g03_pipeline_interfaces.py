@@ -81,7 +81,10 @@ def test_cli_status_tty_uses_screen_but_json_and_non_tty_never_launch(monkeypatc
     monkeypatch.delenv('CI',raising=False)
     monkeypatch.delenv('DEVTOOL_EXECUTION_PRESENTATION',raising=False)
     args=SimpleNamespace(repo='/repo',json=False,_devtool_json=False,actions_command='pipeline',pipeline_command='status')
-    assert run_actions_command(args)==0 and called==[payload]
+    # Native terminal view is authoritative; Textual/full-screen
+    # must never launch implicitly even on interactive TTY hosts.
+    assert run_actions_command(args)==0 and not called
+    assert 'PIPELINE DAG' in capsys.readouterr().out
     called.clear();args.json=True
     assert run_actions_command(args)==0 and not called
     assert json.loads(capsys.readouterr().out)['phase']=='ACTIONS-06'
