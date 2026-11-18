@@ -2077,24 +2077,8 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             source="--copy",
         )
 
-    if args.command not in INTERACTIVE_COPY_COMMANDS:
-        return None
-    if not console.is_interactive or not sys.stdin.isatty() or not to_copy.strip():
-        return None
-
-    copy_now = Confirm.ask(
-        f"Copy {label.lower()} to clipboard?",
-        default=True,
-        console=console,
-    )
-    if copy_now:
-        return _perform_clipboard_copy(
-            to_copy,
-            label,
-            args,
-            log_path=log_path,
-            source="interactive-prompt",
-        )
+    # No interactive auto-copy prompt or implicit clipboard side effect.
+    # The only clipboard writing path is explicitly requested --copy.
     return None
 
 def _validate_output_flags(args: argparse.Namespace, parser: argparse.ArgumentParser) -> tuple[str, str]:
@@ -12249,8 +12233,9 @@ def _apply_global_cli_defaults(args: argparse.Namespace, raw_argv: list[str]) ->
         value = str(output.get("machine_file") or "").strip()
         if value:
             args.machine_file = value
-    if _config_bool(output.get("copy"), default=False) is True and not _raw_flag_present(raw_argv, "-p", "--copy", "--no-clipboard"):
-        args.copy = True
+    # Clipboard writes are never an automatic global-config default.
+    # Explicit --copy remains supported for the current invocation.  Keep the
+    # historical config key readable for compatibility, but do not activate it.
     if _config_bool(output.get("no_clipboard"), default=False) is True and not _raw_flag_present(raw_argv, "--no-clipboard", "-p", "--copy"):
         args.no_clipboard = True
     if "copy_via" in output and not _raw_flag_present(raw_argv, "--copy-via"):
@@ -13383,10 +13368,9 @@ def _main_impl(argv: list[str] | None = None) -> int:
             return 0 if payload.get('ok') else 2
 
 
-    # PRES-H02: a real Textual terminal driver must own the main interpreter
-    # thread. Interactive artifact apply therefore runs the canonical Devtool
-    # invocation as a managed child while the parent/main process owns Textual.
-    # Machine, redirected, CI and explicit plain modes bypass this host.
+    # Textual is only selected by explicit UI opt-in; ordinary interactive
+    # apply stays in this native CLI with real stdout/stderr and Rich inline.
+    # Machine, redirected, CI and plain modes bypass any alternate-screen host.
     apply_host_error = ""
     try:
         from .textual_apply_host import run_apply_textual_host, select_apply_textual_host

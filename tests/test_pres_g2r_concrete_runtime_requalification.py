@@ -105,7 +105,9 @@ def test_g2r_tui_default_and_normal_execution_selection_are_truthful() -> None:
         "stdout_payload": "auto", "json": False,
     })()
     decision = select_execution_textual_host(args, stdin=_TTY(), stdout=_TTY(), textual_probe=lambda: True, env={})
-    assert decision.enabled is True
+    assert decision.enabled is False  # Native terminal first for normal execution.
+    args.job_ui = "full"
+    assert select_execution_textual_host(args, stdin=_TTY(), stdout=_TTY(), textual_probe=lambda: True, env={}).enabled is True
 
     machine = type("Args", (), {
         "command": "invoke", "quiet": False, "verbose": False, "trace": False,

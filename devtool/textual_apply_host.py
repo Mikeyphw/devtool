@@ -26,6 +26,7 @@ from types import SimpleNamespace
 import uuid
 
 from .tasker import DEFAULT_TASKER_DIR, resolve_cli_path
+from .native_terminal_policy import explicit_textual_host_requested
 from .job_ui import job_ui_mode, run_job_app, styled_job_line, job_icons, readable_job_line
 from .invocation_origin import create_managed_run_handoff
 from .textual_ux import (
@@ -103,6 +104,8 @@ def select_apply_textual_host(
     host_setting = str(environment.get(_DISABLE_ENV, "auto") or "auto").strip().lower()
     if host_setting in {"0", "false", "no", "off", "plain", "disabled"}:
         return ApplyTextualHostDecision(False, "Textual apply host disabled")
+    if not explicit_textual_host_requested(args, environment, host_key=_DISABLE_ENV):
+        return ApplyTextualHostDecision(False, "native terminal is the default; Textual requires explicit opt-in")
     if universal_json or bool(getattr(args, "_devtool_json", False)) or bool(getattr(args, "json", False)):
         return ApplyTextualHostDecision(False, "machine JSON output requested")
     if bool(getattr(args, "quiet", False)):
@@ -113,7 +116,7 @@ def select_apply_textual_host(
         return ApplyTextualHostDecision(False, "explicit stdout payload requested")
     if str(environment.get("CI", "")).strip().lower() in _TRUE:
         return ApplyTextualHostDecision(False, "CI environment")
-    if str(environment.get("DEVTOOL_EXECUTION_PRESENTATION", "auto") or "auto").strip().lower() == "plain" or job_ui_mode(environment) == "plain":
+    if str(environment.get("DEVTOOL_EXECUTION_PRESENTATION", "auto") or "auto").strip().lower() == "plain" or ("DEVTOOL_JOB_UI" in environment and job_ui_mode(environment) == "plain"):
         return ApplyTextualHostDecision(False, "plain execution presentation requested")
     in_stream = sys.stdin if stdin is None else stdin
     out_stream = sys.stdout if stdout is None else stdout

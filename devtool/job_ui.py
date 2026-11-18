@@ -27,9 +27,9 @@ _ACTIVITY = re.compile(
 
 
 def job_ui_mode(env: Mapping[str, str] | None = None) -> str:
-    """Compact by default; no Rich fallback or dependency on Android features."""
+    """Native plain by default; compact/full Textual require explicit opt-in."""
     values = os.environ if env is None else env
-    raw = str(values.get("DEVTOOL_JOB_UI", "compact") or "compact").strip().lower()
+    raw = str(values.get("DEVTOOL_JOB_UI", "plain") or "plain").strip().lower()
     if raw in {"plain", "off", "disabled"}:
         return "plain"
     if raw in {"full", "textual"}:

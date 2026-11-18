@@ -17,7 +17,7 @@ class TTY:
 
 
 def test_compact_default_and_opt_in_modes():
-    assert job_ui_mode({}) == "compact"
+    assert job_ui_mode({}) == "plain"
     assert job_ui_mode({"DEVTOOL_JOB_UI":"full"}) == "full"
     assert job_ui_mode({"DEVTOOL_JOB_UI":"plain"}) == "plain"
 

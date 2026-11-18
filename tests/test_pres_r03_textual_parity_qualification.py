@@ -194,7 +194,10 @@ def test_r03_control_center_projection_lifecycle_is_shutdown_safe() -> None:
 def test_r03_normal_execution_host_selects_only_human_interactive_work() -> None:
     args = SimpleNamespace(command="invoke", quiet=False, verbose=False, trace=False, stdout_payload="auto", json=False)
     yes = select_execution_textual_host(args, stdin=_TTY(), stdout=_TTY(), textual_probe=lambda: True, env={})
-    assert yes.enabled is True
+    assert yes.enabled is False  # native terminal is the default
+    assert select_execution_textual_host(
+        SimpleNamespace(**{**vars(args), "job_ui": "full"}), stdin=_TTY(), stdout=_TTY(),
+        textual_probe=lambda: True, env={}).enabled is True
     assert select_execution_textual_host(args, stdin=io.StringIO(), stdout=_TTY(), textual_probe=lambda: True, env={}).enabled is False
     assert select_execution_textual_host(args, stdin=_TTY(), stdout=_TTY(), textual_probe=lambda: True, env={"CI": "1"}).enabled is False
     assert select_execution_textual_host(args, stdin=_TTY(), stdout=_TTY(), textual_probe=lambda: True, env={"DEVTOOL_EXECUTION_PRESENTATION": "plain"}).enabled is False

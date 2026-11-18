@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 
 from .artifacts import load_history
 from .clipboard import copy_text
@@ -522,6 +523,8 @@ class CanonicalControlActionDispatcher:
             artifact = _text(data.get("artifact") or data.get("path")).strip()
             if not artifact:
                 return False, "Select an overlay artifact first."
+            if data.get("approved") is not True:
+                return False, "Overlay apply needs explicit confirmation before native execution."
             return self._spawn_cli(
                 ["--yes", "apply-overlay", artifact],
                 label=f"overlay apply {artifact}",
@@ -570,7 +573,8 @@ class CanonicalControlActionDispatcher:
         The control center owns no apply/SSH lifecycle.  It only starts the same
         structured CLI authority a shell user would invoke, then returns to live
         projection.  Child output remains in canonical Devtool logs/evidence and
-        Tasker/RUN state rather than being duplicated in a TUI-owned store.
+        Tasker/RUN state. The native stdout/stderr stream is preserved in one
+        private, operator-visible log for post-exit troubleshooting.
         """
 
         env = dict(os.environ)
@@ -580,25 +584,43 @@ class CanonicalControlActionDispatcher:
         if apply_child:
             env["DEVTOOL_TEXTUAL_APPLY_CHILD"] = "1"
         command = [self.python_executable, "-m", "devtool", "--repo", str(self.repo_root), *[str(item) for item in argv]]
+        # Explicit dashboard execution is not the ordinary CLI.  Retain real
+        # child stdout/stderr in a private, durable log rather than DEVNULL and
+        # display its pointer so errors are recoverable after closing the TUI.
+        state_home = Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state"))
+        log_dir = state_home / "devtool" / "control-center" / "requests"
         try:
-            proc = self.popen_factory(
-                command,
-                cwd=str(self.repo_root),
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+            if state_home.resolve(strict=False).is_relative_to(self.repo_root):
+                return False, "Control Center logs must remain outside the target repository."
+            for directory in (log_dir, log_dir.parent, log_dir.parent.parent, state_home):
+                if directory.is_symlink():
+                    return False, "Control Center log directory is an unsafe symlink."
+            log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if log_dir.stat().st_mode & 0o077:
+                return False, "Control Center log directory must be private."
+            log_path = log_dir / (uuid.uuid4().hex + ".log")
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(log_path, flags, 0o600)
+            with os.fdopen(fd, "wb") as stream:
+                proc = self.popen_factory(
+                    command,
+                    cwd=str(self.repo_root),
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=stream,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
         except Exception as exc:
-            return False, f"Could not request {label}: {exc}"
+            return False, f"Could not request {label}: {type(exc).__name__}"
 
         # Reap the child without making UI lifetime or truth depend on it.
         try:
             threading.Thread(target=proc.wait, name=f"devtool-tui-request-{getattr(proc, 'pid', 'child')}", daemon=True).start()
         except Exception:
             pass
-        return True, f"Requested {label} through canonical Devtool CLI (pid {getattr(proc, 'pid', '?')})."
+        return True, (f"Requested {label} through canonical Devtool CLI "
+                      f"(pid {getattr(proc, 'pid', '?')}); native output: {log_path}.")
 
     def _validation_control(self, control: str) -> tuple[bool, str]:
         try:
@@ -1925,7 +1947,7 @@ def create_textual_control_center_app(
                     lambda rc: self._after_inline_overlay_apply(apply_source, rc),
                 )
                 return
-            ok, message = self.dispatcher.dispatch("overlay.apply", payload={"artifact": artifact})
+            ok, message = self.dispatcher.dispatch("overlay.apply", payload={"artifact": artifact, "approved": True})
             self.notify(message, severity="information" if ok else "error")
             self.refresh_from_provider()
 
