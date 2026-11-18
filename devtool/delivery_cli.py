@@ -10,11 +10,10 @@ from .delivery_session import DeliverySessionError, plan, start, status, resume,
 from .delivery_rich import NativeRichMonitor, MonitorDetached
 
 
-def _uxrich02_delivery_view(payload: dict, args: Any) -> bool:
-    # Original durable receipt and CI authority remain unchanged. This is
-    # only a Rich presentation of the already returned native session record.
+def _c2_operator_view(payload: dict, args: Any) -> bool:
+    # The same read-only C2 projection is rendered in plain CLI/Rich/Textual.
     from .operator_rich import render_operator
-    return render_operator('delivery',payload,args=args)
+    return render_operator('operator_status',payload,args=args)
 
 
 def run_delivery_command(args: Any) -> int:
@@ -40,6 +39,11 @@ def run_delivery_command(args: Any) -> int:
                                                    auth=str(getattr(args,'auth','auto') or 'auto'))
             if Path(payload['repo_root']).resolve() != root:
                 raise DeliverySessionError('Session belongs to another repository/worktree')
+            # C2: a single read-only operator projection, with legacy raw
+            # session fields retained for machine clients and receipt readers.
+            from .operator_status import project_delivery_status
+            payload['operator_status'] = project_delivery_status(
+                payload, qualification=payload.get('qualification'))
         elif operation in ('push','pr','ci'):
             from .delivery_github import push, pr, observe_ci
             identity = str(getattr(args,'delivery_id','') or '')
@@ -134,7 +138,8 @@ def run_delivery_command(args: Any) -> int:
         raise
     if bool(getattr(args,'json',False) or getattr(args,'_devtool_json',False)):
         print(json.dumps(payload,indent=2,sort_keys=True,ensure_ascii=False))
-    elif operation in ('status','resume','report') and _uxrich02_delivery_view(payload,args):
+    elif operation in ('status','resume','report') and _c2_operator_view(
+            payload['operator_status'], args):
         pass
     elif operation in ('push','pr','ci'):
         print(f'Devtool delivery {operation}: {payload["state"]}',flush=True)
@@ -180,11 +185,10 @@ def run_delivery_command(args: Any) -> int:
                     for excerpt in job.get('excerpt', []):
                         print('      Evidence: ' + excerpt, flush=True)
         print('Release qualification: NOT PERFORMED',flush=True)
-    elif operation == 'report' and isinstance(payload.get('receipt'), dict):
-        if sys.stdout.isatty():
-            from .delivery_receipt import render_rich
-            render_rich(payload['receipt'])
-        else:
+    elif operation in ('status','resume','report'):
+        from .operator_status import render_status_text
+        print(render_status_text(payload['operator_status']),flush=True)
+        if operation == 'report' and isinstance(payload.get('receipt'),dict):
             print(payload['human_report'],flush=True)
     else:
         print(f'Devtool delivery: {operation} — {payload["stage"]}',flush=True)

@@ -443,6 +443,8 @@ class CanonicalControlCenterProvider:
         log_path = _log_path_for_run(runs, selected_run)
         log_lines = _tail_file(log_path, line_limit=self.log_line_limit) if log_path is not None else []
 
+        from .operator_status import latest_for_repo
+        operator_status = latest_for_repo(self.repo_root)
         return {
             "schema_version": 1,
             "generated_at": time.time(),
@@ -459,6 +461,7 @@ class CanonicalControlCenterProvider:
             "artifacts": artifacts,
             "overlays": overlays,
             "evidence": evidence,
+            "operator_status": operator_status,
             "ipc": {"ok": bool(ipc.get("ok")), "socket": ipc.get("socket", ""), "error": ipc.get("error", "")},
             "selected_run": selected_run,
             "selected_node": selected_node,
@@ -486,6 +489,9 @@ class InMemoryControlCenterProvider:
         result.setdefault("artifacts", [])
         result.setdefault("overlays", [])
         result.setdefault("evidence", [])
+        if "operator_status" not in result:
+            from .operator_status import empty_status
+            result["operator_status"] = empty_status(result.get("repo_root") or "")
         result["selected_run"] = selected_run
         result["selected_node"] = selected_node
         result["version"] = self.version
@@ -1166,6 +1172,7 @@ def create_textual_control_center_app(
         .table { height: 1fr; min-height: 0; }
         .detail { height: auto; max-height: 10; border-top: solid $panel; padding: 0 1; }
         #dashboard-summary { min-height: 3; margin-bottom: 1; }
+        #dashboard-delivery { height: auto; max-height: 12; overflow-y: auto; border-top: solid $panel; border-bottom: solid $panel; }
         #runs-main { height: 1fr; min-height: 0; }
         #run-table { width: 2fr; height: 1fr; }
         #node-tree { width: 1fr; height: 1fr; border-left: solid $panel; }
@@ -1185,9 +1192,11 @@ def create_textual_control_center_app(
         .short .page-title { display: none; }
         .short .detail { max-height: 3; }
         .short #dashboard-summary { min-height: 1; max-height: 1; margin-bottom: 0; overflow-x: hidden; overflow-y: hidden; }
+        .short #dashboard-delivery { max-height: 5; }
         .short #action-bar { height: 3; min-height: 3; max-height: 3; }
         .short #status-line { display: none; }
         .tiny .detail { display: none; }
+        .tiny #dashboard-delivery { max-height: 3; }
         .tiny #action-bar { display: none; }
         """
         PAGE_CONTEXT = {
@@ -1256,6 +1265,7 @@ def create_textual_control_center_app(
                         with Vertical(id="dashboard", classes="page"):
                             yield Label("Dashboard", classes="page-title")
                             yield Static("Runs — · Attention — · Validation — · Workers —", id="dashboard-summary", classes="ux-summary")
+                            yield Static("Delivery · native status unavailable", id="dashboard-delivery", classes="ux-summary")
                             yield DataTable(id="dashboard-runs", classes="table")
                             yield Static("No run selected.", id="dashboard-detail", classes="detail")
                         with Vertical(id="runs", classes="page"):
@@ -1369,6 +1379,13 @@ def create_textual_control_center_app(
                 self.query_one("#dashboard-summary", Static).update(
                     f"Runs {len(runs)} · Active {active} · Attention {attention} · Validation {validation_state} · Workers {worker_text}"
                 )
+                # C2: this is the exact native projection used by CLI and Rich.
+                # It never dispatches, polls GitHub, or approves a mutation.
+                from .operator_status import render_status_text
+                operator = self.snapshot_data.get("operator_status")
+                if isinstance(operator, Mapping):
+                    self.query_one("#dashboard-delivery", Static).update(
+                        render_status_text(operator, compact=True))
             except NoMatches:
                 self._detach_projection()
 
