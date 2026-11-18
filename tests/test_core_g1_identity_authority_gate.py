@@ -8,7 +8,7 @@ import pytest
 
 from devtool.cli import main
 from devtool.core_registry import TrustedInvocationEnvelope, TrustedInvocationError, build_core_registry
-from devtool.core_runtime import OutputRequest, ResolutionContext, build_run_envelope
+from devtool.core_runtime import OutputRequest, ResolutionContext, build_run_envelope, private_run_root
 
 
 def _json_payload(capsys: pytest.CaptureFixture[str]) -> dict:
@@ -164,7 +164,7 @@ def test_registered_operations_receive_one_private_run_descriptor(tmp_path: Path
         descriptor = envelope["descriptor"]
         assert descriptor["schema_version"] == 3
         assert descriptor["private"] is True
-        assert "/.devtool/private/run-v3/" in descriptor["run_root"]
+        assert Path(descriptor["run_root"]) == private_run_root(tmp_path) / descriptor["run_id"]
         assert descriptor["run_id"] not in seen
         seen.add(descriptor["run_id"])
     assert len(seen) == len(command_paths)

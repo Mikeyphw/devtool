@@ -14,6 +14,7 @@ from devtool.cli import _delete_original_artifact_after_apply
 from devtool.models import OperationResult
 from devtool.artifact_lifecycle import ArtifactExecutionRecord
 from devtool.core_runtime import private_run_root
+from devtool.storage_layout import ensure_private_storage_dir
 from devtool.run_store import AttachmentDescriptor, RunCatalog
 
 
@@ -44,7 +45,7 @@ def _record(repo: Path, source: Path, *, status: str = 'succeeded') -> tuple[str
     )
     run_root = private_run_root(repo)
     record_path = run_root / run_id / 'artifacts' / (record.record_id.replace(':', '-') + '.json')
-    record_path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_storage_dir(record_path.parent)
     record_path.write_text(json.dumps(record.as_dict(), sort_keys=True))
     catalog = RunCatalog.open(run_root)
     catalog.add_run({

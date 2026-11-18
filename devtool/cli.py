@@ -2077,24 +2077,8 @@ def _maybe_copy(raw_output: str, summary_text: str, json_text: str, args: argpar
             source="--copy",
         )
 
-    if args.command not in INTERACTIVE_COPY_COMMANDS:
-        return None
-    if not console.is_interactive or not sys.stdin.isatty() or not to_copy.strip():
-        return None
-
-    copy_now = Confirm.ask(
-        f"Copy {label.lower()} to clipboard?",
-        default=True,
-        console=console,
-    )
-    if copy_now:
-        return _perform_clipboard_copy(
-            to_copy,
-            label,
-            args,
-            log_path=log_path,
-            source="interactive-prompt",
-        )
+    # No interactive auto-copy prompt or implicit clipboard side effect.
+    # The only clipboard writing path is explicitly requested --copy.
     return None
 
 def _validate_output_flags(args: argparse.Namespace, parser: argparse.ArgumentParser) -> tuple[str, str]:
@@ -2618,23 +2602,20 @@ def _apply_artifact_manifest_defaults(args: argparse.Namespace) -> None:
             and not getattr(args, "validate_only", False)
         ):
             args.validate = True
-        if not cli_requested_validation:
+        _apply_declared_validation_tasks(args, manifest, active=_validation_is_requested_by_args(args))
+        # A caller's explicit --validate requests applicable checks; it must
+        # not override manifest-disabled built-in restore/build/test phases.
+        # An exclusive --task / validation.tasks plan is a separate execution
+        # contract: the built-in phase switches do not apply to those tasks.
+        # Never clear explicit CLI --skip-* flags; the native task/skip
+        # conflict validator owns rejection of an incompatible request.
+        if not _exclusive_validation_task_values(args):
             if not bool(validation.get("restore", True)):
                 args.skip_restore = True
             if not bool(validation.get("build", True)):
                 args.skip_build = True
             if not bool(validation.get("test", True)):
                 args.skip_test = True
-        _apply_declared_validation_tasks(args, manifest, active=_validation_is_requested_by_args(args))
-        # A manifest validation.tasks declaration is a complete exclusive plan.
-        # Phase booleans describe the built-in restore/build/test pipeline and
-        # must not disable an explicit task plan.  Bundle apply already follows
-        # this rule; keep single-overlay apply consistent. Explicit CLI skip
-        # flags still win by reaching the normal task/skip conflict validator.
-        if not cli_requested_validation and _exclusive_validation_task_values(args):
-            args.skip_restore = False
-            args.skip_build = False
-            args.skip_test = False
         _apply_declared_pytest_selection(args, manifest, active=_validation_is_requested_by_args(args))
     if getattr(args, "no_validate", False) or getattr(args, "defer_validate", False):
         args.validate = False
@@ -8057,6 +8038,16 @@ def _single_run_guard(repo_root: Path, args: argparse.Namespace):
         _release_single_run_lock(args)
 
 
+@contextmanager
+def _validation_management_single_run_guard(config: ProjectConfig, args: argparse.Namespace):
+    """Claim only the active validation transaction; block unrelated runs."""
+    _acquire_single_run_lock(config, args)
+    try:
+        yield
+    finally:
+        _release_single_run_lock(args)
+
+
 def _release_single_run_lock(args: argparse.Namespace) -> None:
     lock = getattr(args, "_devtool_single_run_lock", None)
     if lock is not None:
@@ -12242,8 +12233,9 @@ def _apply_global_cli_defaults(args: argparse.Namespace, raw_argv: list[str]) ->
         value = str(output.get("machine_file") or "").strip()
         if value:
             args.machine_file = value
-    if _config_bool(output.get("copy"), default=False) is True and not _raw_flag_present(raw_argv, "-p", "--copy", "--no-clipboard"):
-        args.copy = True
+    # Clipboard writes are never an automatic global-config default.
+    # Explicit --copy remains supported for the current invocation.  Keep the
+    # historical config key readable for compatibility, but do not activate it.
     if _config_bool(output.get("no_clipboard"), default=False) is True and not _raw_flag_present(raw_argv, "--no-clipboard", "-p", "--copy"):
         args.no_clipboard = True
     if "copy_via" in output and not _raw_flag_present(raw_argv, "--copy-via"):
@@ -13376,10 +13368,9 @@ def _main_impl(argv: list[str] | None = None) -> int:
             return 0 if payload.get('ok') else 2
 
 
-    # PRES-H02: a real Textual terminal driver must own the main interpreter
-    # thread. Interactive artifact apply therefore runs the canonical Devtool
-    # invocation as a managed child while the parent/main process owns Textual.
-    # Machine, redirected, CI and explicit plain modes bypass this host.
+    # Textual is only selected by explicit UI opt-in; ordinary interactive
+    # apply stays in this native CLI with real stdout/stderr and Rich inline.
+    # Machine, redirected, CI and plain modes bypass any alternate-screen host.
     apply_host_error = ""
     try:
         from .textual_apply_host import run_apply_textual_host, select_apply_textual_host
@@ -16277,7 +16268,7 @@ def _main_after_parse(
                 return _handle_validation_pause_control(config, args)
             if args.command in {"validation-stop", "vstop"}:
                 return _handle_validation_stop_control(config, args)
-            with _single_run_guard(config.repo_root, args):
+            with _validation_management_single_run_guard(config, args):
                 if args.command in {"validation-recover", "vrec"}:
                     return _handle_validation_recover(config, args)
                 if args.command in {"validation-reset", "vreset"}:

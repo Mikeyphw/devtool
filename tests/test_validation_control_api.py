@@ -75,10 +75,9 @@ class ValidationControlApiTests(unittest.TestCase):
             root.mkdir()
             make_android_project(root)
             session = create_session(config(root), specs())
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
 
             stdout = io.StringIO()
-            with patch.dict("os.environ", env, clear=False), redirect_stdout(stdout):
+            with redirect_stdout(stdout):
                 rc = main(["--repo", str(root), "--no-clipboard", "validate", "status", "--json"])
             payload = json.loads(stdout.getvalue())
             self.assertEqual(rc, 0)
@@ -88,7 +87,7 @@ class ValidationControlApiTests(unittest.TestCase):
             self.assertEqual(payload["data"]["revision"], session.revision)
 
             stdout = io.StringIO()
-            with patch.dict("os.environ", env, clear=False), redirect_stdout(stdout):
+            with redirect_stdout(stdout):
                 rc = main(["--repo", str(root), "--no-clipboard", "validate", "plan", "--json"])
             payload = json.loads(stdout.getvalue())
             self.assertEqual(rc, 0)
@@ -102,9 +101,8 @@ class ValidationControlApiTests(unittest.TestCase):
             root.mkdir()
             make_android_project(root)
             session = create_session(config(root), specs())
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
             stdout = io.StringIO()
-            with patch.dict("os.environ", env, clear=False), redirect_stdout(stdout):
+            with redirect_stdout(stdout):
                 rc = main([
                     "--repo", str(root), "--no-clipboard", "validate", "pause",
                     "--if-revision", str(session.revision - 1), "--json",
@@ -125,10 +123,9 @@ class ValidationControlApiTests(unittest.TestCase):
             running_revision = session.revision
             heartbeat_phase(session, phase.key, persist_interval_seconds=0)
             self.assertEqual(session.revision, running_revision)
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
 
             stdout = io.StringIO()
-            with patch.dict("os.environ", env, clear=False), redirect_stdout(stdout):
+            with redirect_stdout(stdout):
                 rc = main([
                     "--repo", str(root), "--no-clipboard", "validate", "pause",
                     "--if-revision", str(running_revision), "--json",
@@ -143,7 +140,7 @@ class ValidationControlApiTests(unittest.TestCase):
             # A second, conflicting control request is unavailable until the
             # validation worker consumes the first request.
             stdout = io.StringIO()
-            with patch.dict("os.environ", env, clear=False), redirect_stdout(stdout):
+            with redirect_stdout(stdout):
                 rc = main([
                     "--repo", str(root), "--no-clipboard", "validate", "stop",
                     "--if-revision", str(pause_revision), "--json",
@@ -163,9 +160,8 @@ class ValidationControlApiTests(unittest.TestCase):
             phase = mark_phase_running(session, session.phases[0].key)
             revision = session.revision
             heartbeat_phase(session, phase.key, persist_interval_seconds=0)
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
             stdout = io.StringIO()
-            with patch.dict("os.environ", env, clear=False), redirect_stdout(stdout):
+            with redirect_stdout(stdout):
                 rc = main([
                     "--repo", str(root), "--no-clipboard", "validate", "pause",
                     "--if-revision", str(revision), "--json",
@@ -184,9 +180,8 @@ class ValidationControlApiTests(unittest.TestCase):
             phase = mark_phase_running(session, session.phases[0].key)
             revision = session.revision
             heartbeat_phase(session, phase.key, persist_interval_seconds=0)
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
             stdout = io.StringIO()
-            with patch.dict("os.environ", env, clear=False), redirect_stdout(stdout):
+            with redirect_stdout(stdout):
                 rc = main([
                     "--repo", str(root), "--no-clipboard", "validate", "stop",
                     "--if-revision", str(revision), "--json",
@@ -202,9 +197,8 @@ class ValidationControlApiTests(unittest.TestCase):
             root.mkdir()
             make_android_project(root)
             session = create_session(config(root), specs())
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
             stdout = io.StringIO()
-            with patch.dict("os.environ", env, clear=False), redirect_stdout(stdout):
+            with redirect_stdout(stdout):
                 rc = main([
                     "--repo", str(root), "--no-clipboard", "validate", "stop",
                     "--if-revision", str(session.revision), "--json",
@@ -222,9 +216,8 @@ class ValidationControlApiTests(unittest.TestCase):
             make_android_project(root)
             create_session(config(root), specs())
             output = Path(tmp) / "status.json"
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
             stdout = io.StringIO()
-            with patch.dict("os.environ", env, clear=False), redirect_stdout(stdout):
+            with redirect_stdout(stdout):
                 rc = main([
                     "--repo", str(root), "--no-clipboard", "validate", "status",
                     "--json", "--machine-file", str(output),
@@ -268,9 +261,8 @@ class ValidationControlApiTests(unittest.TestCase):
             session.phases[0].last_verdict = "test-failed"
             session.status = "blocked"
             save_session(session, active=True)
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
             stdout = io.StringIO()
-            with patch.dict("os.environ", env, clear=False), redirect_stdout(stdout):
+            with redirect_stdout(stdout):
                 rc = main(["--repo", str(root), "--no-clipboard", "validate", "status", "--json"])
             payload = json.loads(stdout.getvalue())
             self.assertEqual(rc, 4)
@@ -288,12 +280,11 @@ class ValidationControlApiTests(unittest.TestCase):
             root = Path(tmp) / "repo"
             root.mkdir()
             make_android_project(root)
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
-            with patch.dict("os.environ", env, clear=False), patch("devtool.cli._run_specs_for_args", side_effect=fake_run), patch("devtool.cli.render_summary"):
+            with patch("devtool.cli._run_specs_for_args", side_effect=fake_run), patch("devtool.cli.render_summary"):
                 self.assertEqual(main(["--repo", str(root), "--no-clipboard", "validate", "start", "--next"]), 0)
             session = load_active_session(root, required=True)
             stdout = io.StringIO()
-            with patch.dict("os.environ", env, clear=False), patch("devtool.cli._run_specs_for_args", side_effect=fake_run), redirect_stdout(stdout):
+            with patch("devtool.cli._run_specs_for_args", side_effect=fake_run), redirect_stdout(stdout):
                 rc = main([
                     "--repo", str(root), "--no-clipboard", "validate", "run",
                     "--scope", "next", "--if-revision", str(session.revision), "--json",
@@ -314,10 +305,9 @@ class ValidationControlApiTests(unittest.TestCase):
             session = create_session(config(root), specs())
             mark_phase_running(session, session.phases[0].key)
             running = load_active_session(root, required=True)
-            env = {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}
 
             stdout = io.StringIO()
-            with patch.dict("os.environ", env, clear=False), redirect_stdout(stdout):
+            with redirect_stdout(stdout):
                 rc = main([
                     "--repo", str(root), "--no-clipboard", "validate", "pause",
                     "--if-revision", str(running.revision), "--json",
@@ -328,7 +318,7 @@ class ValidationControlApiTests(unittest.TestCase):
             self.assertEqual(read_control_request(running)["action"], "pause-after-phase")
 
             stdout = io.StringIO()
-            with patch.dict("os.environ", env, clear=False), redirect_stdout(stdout):
+            with redirect_stdout(stdout):
                 rc = main([
                     "--repo", str(root), "--no-clipboard", "validate", "pause", "--cancel",
                     "--if-revision", str(pause_payload["revision"]), "--json",

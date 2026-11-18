@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -40,6 +41,8 @@ def _checked(session_id: str, *, state_root: Path | None = None) -> dict[str, An
         raise DeliverySessionError('Local source drift: delivery session is not bound to current HEAD')
     if not session.get('repository'):
         raise DeliverySessionError('Source Git remote does not resolve to a GitHub repository')
+    if session.get('head_repository', session['repository']).casefold() != session['repository'].casefold():
+        raise DeliverySessionError('Head GitHub repository differs from checked-out origin')
     if session['head'] == session['base']:
         raise DeliverySessionError('Refusing delivery from the target base branch')
     if not _SHA.fullmatch(str(session['head_sha'])):
@@ -132,87 +135,75 @@ def push(session_id: str, *, yes: bool = False, state_root: Path | None = None,
 
 def _github_request(client: GitHubActionsClient, method: str, path: str,
                     payload: Mapping[str, Any] | None = None) -> Any:
-    """Narrow REST extension for list-valued PR GET and PR creation POST.
-
-    Retain Devtool's original urllib opener/auth transport and no-redirect safety.
-    GitHub returns arrays for PR list; the canonical Actions _get expects dicts.
-    """
-    if method not in {'GET', 'POST'} or not path.startswith('/repos/') or '..' in path:
-        raise DeliverySessionError('Unsafe GitHub PR request')
-    from urllib.parse import urlsplit
-    parts = urlsplit(API_ORIGIN + path)
-    if parts.scheme != 'https' or parts.netloc != 'api.github.com' or parts.fragment:
-        raise DeliverySessionError('GitHub PR request escaped canonical API origin')
-    if method == 'POST' and not getattr(client, '_token', None):
-        raise DeliverySessionError('GitHub PR creation requires authenticated API access')
-    headers = {'Accept': 'application/vnd.github+json',
-               'X-GitHub-Api-Version': API_VERSION,
-               'User-Agent': 'devtool-delivery/1'}
-    if getattr(client, '_token', None):
-        headers['Authorization'] = 'Bearer ' + client._token
-    encoded = None if payload is None else json.dumps(payload, separators=(',', ':')).encode('utf-8')
-    if encoded is not None:
-        headers['Content-Type'] = 'application/json'
-    request = Request(API_ORIGIN + path, headers=headers, data=encoded, method=method)
-    try:
-        with client._opener.open(request, timeout=client.timeout) as response:
-            if int(response.status) != (201 if method == 'POST' else 200):
-                raise DeliverySessionError(f'Unexpected GitHub PR HTTP {response.status}')
-            raw = response.read(_MAX_API_BYTES + 1)
-    except HTTPError as exc:
-        if method == 'POST':
-            # HTTP 422 may mean duplicate PR, invalid scope, or branch drift.
-            # Reconciliation MUST be read-only; never assume request was harmless.
-            raise DeliverySessionError(f'GitHub PR mutation requires reconciliation (HTTP {exc.code})') from None
-        raise DeliverySessionError(f'GitHub PR lookup denied or unavailable (HTTP {exc.code})') from None
-    except (URLError, TimeoutError, OSError):
-        if method == 'POST':
-            raise DeliverySessionError('PR POST outcome uncertain; do not retry') from None
-        raise DeliverySessionError('GitHub PR lookup unavailable; no mutation attempted') from None
-    if len(raw) > _MAX_API_BYTES:
-        raise DeliverySessionError('GitHub PR API response exceeds size limit')
-    try:
-        return json.loads(raw)
-    except (UnicodeError, ValueError):
-        raise DeliverySessionError('GitHub PR API returned invalid JSON') from None
+    """Shared, bounded GitHub provider transport over the Actions opener."""
+    from .delivery_provider import request_json
+    return request_json(client, method, path, payload)
 
 
 def pull_requests(client: GitHubActionsClient, slug: str, head: str,
-                  base: str) -> list[dict[str, Any]]:
+                  base: str, *, head_repository: str | None = None) -> list[dict[str, Any]]:
     slug = _slug(slug)
     if not _REF.fullmatch(head) or not _REF.fullmatch(base):
         raise DeliverySessionError('Unsafe PR branch identity')
-    owner = slug.split('/', 1)[0]
+    owner = _slug(head_repository or slug).split('/', 1)[0]
+    # Do not filter by base: wrong-base PRs must remain visible to the
+    # collision guard instead of disappearing from the provider result.
     query = urlencode({'state': 'open', 'head': f'{owner}:{head}',
                        'per_page': '100'})
-    result = _github_request(client, 'GET', f'/repos/{slug}/pulls?{query}')
-    if not isinstance(result, list) or len(result) >= 100:
-        raise DeliverySessionError('PR inventory is ambiguous or truncated')
-    if any(not isinstance(x, dict) for x in result):
-        raise DeliverySessionError('Malformed PR inventory')
-    return result
+    results: list[dict[str, Any]] = []
+    numbers: set[int] = set()
+    # GitHub PR lists do not expose total_count. Exhaust bounded pages instead
+    # of treating a full first page as authoritative or quietly truncating it.
+    for page in range(1, 6):
+        rows = _github_request(client, 'GET', f'/repos/{slug}/pulls?{query}&page={page}')
+        if not isinstance(rows, list) or len(rows) > 100:
+            raise DeliverySessionError('Malformed GitHub PR pagination response')
+        for row in rows:
+            if not isinstance(row, dict) or type(row.get('number')) is not int or row['number'] <= 0:
+                raise DeliverySessionError('Malformed GitHub PR inventory identity')
+            if row['number'] in numbers:
+                raise DeliverySessionError('Duplicate GitHub PR across pages')
+            numbers.add(row['number'])
+            results.append(row)
+        if len(rows) < 100:
+            return results
+    raise DeliverySessionError('PR inventory exceeds bounded five-page capacity')
 
 
 def _pr_match(item: dict[str, Any], slug: str, head: str, base: str,
-              sha: str) -> dict[str, Any] | None:
+              sha: str, *, head_repository: str | None = None,
+              base_sha: str | None = None) -> dict[str, Any] | None:
     if item.get('state') != 'open':
         return None
     h, b = item.get('head'), item.get('base')
     if not isinstance(h, dict) or not isinstance(b, dict):
         raise DeliverySessionError('PR identity is incomplete')
+    head_repo = _slug(head_repository or slug)
     full_name = (h.get('repo') or {}).get('full_name')
-    if not isinstance(full_name, str) or full_name.lower() != slug.lower():
+    if not isinstance(full_name, str) or full_name.casefold() != head_repo.casefold():
         return None
     if h.get('ref') != head or b.get('ref') != base:
         return None
-    if (b.get('repo') or {}).get('full_name', '').lower() != slug.lower():
+    if (b.get('repo') or {}).get('full_name', '').casefold() != slug.casefold():
         return None
+    if head_repo.casefold() != slug.casefold():
+        # Forks require the full provider head label to distinguish two forks
+        # exposing the same short branch name.
+        if h.get('label') != f"{head_repo.split('/',1)[0]}:{head}":
+            return None
+    elif h.get('label') != f"{head_repo.split('/',1)[0]}:{head}":
+        return None
+    actual_base_sha = b.get('sha')
+    if base_sha is not None and actual_base_sha != base_sha:
+        raise DeliverySessionError('PR base branch moved since its pinned SHA')
     if h.get('sha') != sha:
         raise DeliverySessionError('Existing PR head differs from source session; refusing stale PR')
     number = item.get('number')
     if type(number) is not int or number <= 0:
         raise DeliverySessionError('PR lacks exact positive number')
     return {'number': number, 'head_sha': sha, 'head': head, 'base': base,
+            'base_repository': slug, 'head_repository': head_repo,
+            'base_sha': actual_base_sha,
             'url': f'https://github.com/{slug}/pull/{number}',
             'merge_commit_sha': item.get('merge_commit_sha') or None}
 
@@ -230,25 +221,37 @@ def pr(session_id: str, *, yes: bool = False, title: str = '',
        client: GitHubActionsClient | None = None) -> dict[str, Any]:
     item = _checked(session_id, state_root=state_root)
     slug, head, base, sha = (item[x] for x in ('repository','head','base','head_sha'))
+    base_repo = _slug(item.get('base_repository') or slug)
+    head_repo = _slug(item.get('head_repository') or slug)
+    pinned_base = item.get('base_sha')
     if client is None:
         token, _ = resolve_token(auth)
         client = GitHubActionsClient(token)
-    remote = _remote_head(client, slug, head)
+    remote = _remote_head(client, head_repo, head)
     if remote != sha:
         raise DeliverySessionError('Remote branch is missing or has different SHA; push/reconcile first')
-    inventory = pull_requests(client, slug, head, base)
+    base_tip = _remote_head(client, base_repo, base)
+    if pinned_base is not None and base_tip != pinned_base:
+        raise DeliverySessionError('Base branch drift: pinned upstream commit differs')
+    def inventory_read() -> list[dict[str, Any]]:
+        if base_repo.casefold() == head_repo.casefold():
+            return pull_requests(client, base_repo, head, base)
+        return pull_requests(client, base_repo, head, base, head_repository=head_repo)
+    inventory = inventory_read()
     for entry in inventory:
         h = entry.get('head') or {}
         b = entry.get('base') or {}
         if (entry.get('state') == 'open' and h.get('ref') == head and
-            (h.get('repo') or {}).get('full_name','').lower() == slug.lower() and
+            (h.get('repo') or {}).get('full_name','').casefold() == head_repo.casefold() and
             b.get('ref') != base):
             raise DeliverySessionError('Existing open PR targets another base; manual reconciliation required')
-    found = [_pr_match(x, slug, head, base, sha) for x in inventory]
+    found = [_pr_match(x, base_repo, head, base, sha,
+                       head_repository=head_repo, base_sha=pinned_base) for x in inventory]
     found = [x for x in found if x is not None]
     if len(found) > 1:
         raise DeliverySessionError('Multiple matching PRs; refuse ambiguous reconciliation')
-    key = f'{slug}:{base}:{head}:{sha}'
+    # Fixed-size key keeps the delivery intent within its bounded journal.
+    key = hashlib.sha256(f'{base_repo}:{base}:{head_repo}:{head}:{sha}'.encode()).hexdigest()
     if found:
         observed = found[0]
         record_pr_observation(session_id, observed, state_root=state_root)
@@ -256,11 +259,18 @@ def pr(session_id: str, *, yes: bool = False, title: str = '',
                        {'head_sha': sha, 'pr_number': observed['number']},
                        state_root=state_root, optional=True)
         return {'state': 'PR_VERIFIED', 'created_now': False, **observed}
+    if yes and base_repo.casefold() != head_repo.casefold() and pinned_base is None:
+        raise DeliverySessionError('Fork PR creation requires pinned upstream base SHA')
     if not yes:
         return {'state': 'PR_REQUIRES_APPROVAL', 'created_now': False,
                 'head_sha': sha, 'source_bound': False}
     if not getattr(client, '_token', None):
         raise DeliverySessionError('Authenticated GitHub PR write access required; no intent recorded')
+    if isinstance(client, GitHubActionsClient):
+        from .delivery_provider import preflight
+        capability = preflight(client, base_repo, 'pr_create')
+        if capability['state'] in ('permission_unavailable','provider_unavailable','resource_unverified'):
+            raise DeliverySessionError('Upstream PR capability unavailable; no mutation intent recorded')
     if title and (len(title) > 160 or '\n' in title):
         raise DeliverySessionError('PR title must be one line and at most 160 characters')
     if len(body) > 16000:
@@ -268,17 +278,24 @@ def pr(session_id: str, *, yes: bool = False, title: str = '',
     intent = record_intent(session_id, 'pr_create', key, approved=True, state_root=state_root)
     if not intent['new']:
         raise DeliverySessionError('Previous PR creation outcome unresolved; reconcile, do not retry')
-    payload = {'head': head, 'base': base,
+    payload = {'head': head if base_repo.casefold() == head_repo.casefold() else
+               f"{head_repo.split('/',1)[0]}:{head}", 'base': base,
                'title': title or f'Delivery: {head}', 'body': body,
                'draft': True}
-    response = _github_request(client, 'POST', f'/repos/{slug}/pulls', payload)
+    response = _github_request(client, 'POST', f'/repos/{base_repo}/pulls', payload)
     if not isinstance(response, dict):
         raise DeliverySessionError('PR creation returned non-object; outcome uncertain')
-    created = _pr_match(response, slug, head, base, sha)
+    created = _pr_match(response, base_repo, head, base, sha,
+                        head_repository=head_repo, base_sha=pinned_base)
     if created is None:
         raise DeliverySessionError('PR response did not prove exact source identity; reconcile manually')
     # Confirm from a subsequent independent read, never just trust POST body.
-    selected = [_pr_match(x,slug,head,base,sha) for x in pull_requests(client,slug,head,base)]
+    if _remote_head(client, head_repo, head) != sha or (
+            pinned_base is not None and _remote_head(client, base_repo, base) != pinned_base):
+        raise DeliverySessionError('Remote source or pinned base moved after PR POST; reconcile without retry')
+    selected = [_pr_match(x,base_repo,head,base,sha,
+                          head_repository=head_repo, base_sha=pinned_base)
+                for x in inventory_read()]
     verified = [x for x in selected if x and x['number'] == created['number']]
     if len(verified) != 1:
         raise DeliverySessionError('PR POST accepted but independent source verification pending')
@@ -306,7 +323,9 @@ def _ci_candidate(run: dict[str, Any], item: Mapping[str, Any],
     event = run.get('event')
     sha = str(run.get('head_sha') or '').lower()
     branch = str(run.get('head_branch') or '')
-    exact = event == 'push' and sha == item['head_sha'] and branch == item['head']
+    exact = (event == 'push' and
+             item.get('head_repository', item['repository']).casefold() == item['repository'].casefold() and
+             sha == item['head_sha'] and branch == item['head'])
     if event == 'pull_request' and pr_info:
         # Synthetic merge SHA must be the *current*, independently observed PR
         # merge ref. A stale synthetic merge is not sufficient.
@@ -379,6 +398,13 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
     if policy_guard is not None:
         policy_guard()
     item = _checked(session_id, state_root=state_root)
+    head_repo = item.get('head_repository', item['repository'])
+    base_repo = item.get('base_repository', item['repository'])
+    if base_repo.casefold() != head_repo.casefold() and required_event != 'pull_request':
+        raise DeliverySessionError('Fork qualification requires upstream pull_request event')
+    # Required PR CI executes in the upstream repository, but the branch
+    # source is independently checked in the fork on every observation.
+    item = {**item, 'repository': base_repo}
     if client is None:
         token, _ = resolve_token(auth)
         client = GitHubActionsClient(token)
@@ -420,13 +446,14 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
     def live_provenance() -> str | None:
         # Check the remote source on EVERY observation, even if no PR exists.
         # Never infer a successful check from an old head or merge ref.
-        actual_head = _remote_head(client, item['repository'], item['head'])
+        actual_head = _remote_head(client, head_repo, item['head'])
         if actual_head != item['head_sha']:
             raise DeliverySessionError('Remote branch moved during CI; qualification blocked')
         if not pr_info:
             return None
         live = client._get(f"/repos/{item['repository']}/pulls/{pr_info['number']}")
-        verified = _pr_match(live, item['repository'], item['head'], item['base'], item['head_sha'])
+        verified = _pr_match(live, base_repo, item['head'], item['base'], item['head_sha'],
+                             head_repository=head_repo, base_sha=item.get('base_sha'))
         if not verified or verified['number'] != pr_info['number']:
             raise DeliverySessionError('Current PR identity changed or closed during CI')
         return _pr_merge_sha(client, item['repository'], pr_info['number'])

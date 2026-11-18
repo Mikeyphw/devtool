@@ -21,6 +21,7 @@ from devtool.core_surfaces import (
     write_generated_surfaces,
 )
 from devtool.run_store import RunCatalog, RunQuery, migrate_legacy_run_storage, run_storage_status
+from devtool.core_runtime import private_run_root
 from devtool.wrapper_launcher import (
     POSIX_LAUNCHER,
     WINDOWS_LAUNCHER,
@@ -242,7 +243,7 @@ def test_legacy_run_log_migration_is_explicit_non_destructive_and_idempotent(tmp
     legacy.mkdir(parents=True)
     source = legacy / "old-run.log"
     source.write_text("historical output\n", encoding="utf-8")
-    catalog_root = repo / ".devtool" / "private" / "run-v3"
+    catalog_root = private_run_root(repo)
 
     catalog = RunCatalog.open(catalog_root, create=False)
     assert not catalog_root.exists()
@@ -301,11 +302,14 @@ def test_storage_status_classifies_owned_families_and_fails_unknown_state(tmp_pa
     repo = tmp_path / "repo"
     (repo / ".devtool" / "logs").mkdir(parents=True)
     (repo / ".devtool" / "transactions").mkdir(parents=True)
-    catalog = RunCatalog.open(repo / ".devtool" / "private" / "run-v3", create=False)
+    catalog = RunCatalog.open(private_run_root(repo), create=False)
     status = run_storage_status(repo, catalog)
     assert status["status"] == "pass"
     by_family = {row["family"]: row for row in status["inventory"]["paths"]}
-    assert by_family["logs"]["classification"] == "legacy"
+    # Canonical storage inventory distinguishes legacy log evidence from
+    # the broader historical state categories. Never relax unknown-state
+    # rejection merely to satisfy the old generic "legacy" spelling.
+    assert by_family["logs"]["classification"] == "legacy-log"
     assert by_family["transactions"]["owner"] == "LIFE"
 
     (repo / ".devtool" / "mystery-state").mkdir()

@@ -20,7 +20,7 @@ TERMINAL_STATES = {"passed", "failed", "cancelled", "blocked", "error", "complet
 
 PANEL_AUTHORITIES: dict[str, str] = {
     "dashboard": "RUN/PRES",
-    "github": "GitHub Actions API / read-only",
+    "github": "GitHub Actions API / read-only observation; confirmed dispatch, cancel, rerun via native journals",
     "runs": "RUN/EXO",
     "logs": "RUN",
     "diagnostics": "EXO",

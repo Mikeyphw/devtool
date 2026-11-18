@@ -21,6 +21,7 @@ from devtool.transactions import (
     transaction_recovery_diagnostics,
     record_transaction_git_commit,
     rollback_transaction,
+    transaction_root,
 )
 from devtool.reservations import Reservation
 
@@ -311,9 +312,11 @@ def test_life_x01_retries_preflight_failure_without_fabricating_resume_checkpoin
 
     assert result.returncode == 0, result.output
     assert target.read_text(encoding="utf-8") == "before\n"
-    matches = list(tmp_path.glob("xdg-data/devtool/transactions/*/history/life-x01-rollback.json"))
-    assert len(matches) == 1
-    data = json.loads(matches[0].read_text(encoding="utf-8"))
+    # Read the transaction's native journal authority, never infer a private
+    # XDG layout from a historical directory-name convention.
+    history = transaction_root(repo) / "history" / "life-x01-rollback.json"
+    assert history.is_file()
+    data = json.loads(history.read_text(encoding="utf-8"))
     entry = data["affected_paths"][0]
     assert "recovered_resume_target_identities" not in data
     assert "resume_target_identity_recovered_from" not in entry

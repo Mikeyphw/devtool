@@ -20,6 +20,7 @@ from devtool.validation_sessions import (
     mark_phase_running,
     record_phase_result,
     status_payload,
+    session_path,
 )
 
 
@@ -145,7 +146,7 @@ def test_sealed_final_report_is_content_hashed_and_never_overwritten(tmp_path: P
 def test_schema_v4_session_migrates_to_report_capable_schema(tmp_path: Path) -> None:
     config = project(tmp_path)
     session = create_session(config, specs())
-    state = Path(tmp_path) / ".devtool" / "state" / "android-validation" / session.session_id / "state.json"
+    state = session_path(tmp_path, session.session_id)
     payload = json.loads(state.read_text(encoding="utf-8"))
     payload["schema_version"] = 4
     for key in ("initial_git_head", "final_git_head", "report_path", "commit_status", "commit_hash"):

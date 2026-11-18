@@ -142,8 +142,8 @@ def test_canonical_dispatcher_delegates_to_existing_runtime_authorities(monkeypa
     assert dispatcher.dispatch("cancel", run_id="run-a")[0]
     assert dispatcher.dispatch("retry", run_id="run-a", node_id="node-a")[0]
     assert dispatcher.dispatch("validation.pause")[0]
-    assert dispatcher.dispatch("rollback", payload={"transaction_path": "/tmp/transaction.json"})[0]
-    assert dispatcher.dispatch("recover", payload={"transaction_path": "/tmp/transaction.json"})[0]
+    assert dispatcher.dispatch("rollback", payload={"transaction_path": "/tmp/transaction.json", "approved": True})[0]
+    assert dispatcher.dispatch("recover", payload={"transaction_path": "/tmp/transaction.json", "approved": True})[0]
 
     assert any(item[0] == "cancel" and item[1] == "run-a" for item in calls)
     assert any(item[0] == "run-action" and item[2] == "operation.retry" and item[3]["payload"]["node_id"] == "node-a" for item in calls)

@@ -36,6 +36,10 @@ from devtool.gradle_takeover import (
 from devtool.models import ProjectConfig
 
 
+def _external_state_root(root: Path) -> Path:
+    return root.parent / f".{root.name}-devtool-state"
+
+
 def _config(root: Path, takeover: dict | None = None, *, execution_environment: str = "host") -> ProjectConfig:
     return ProjectConfig(
         repo_root=root,
@@ -67,7 +71,7 @@ def _wrapper(root: Path, version: str = "9.7") -> Path:
 
 
 def test_takeover_is_disabled_by_default_and_identity_significant(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(_external_state_root(tmp_path)))
     base = resolve_takeover_config(_config(tmp_path))
     assert base.enabled is False
     assert base.mode is TakeoverMode.OFF
@@ -80,7 +84,7 @@ def test_takeover_is_disabled_by_default_and_identity_significant(tmp_path: Path
 
 
 def test_real_launcher_strips_takeover_shim_before_path_lookup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(_external_state_root(tmp_path)))
     shim = tmp_path / "shim"
     real = tmp_path / "real"
     _exe(shim / "gradle")
@@ -96,7 +100,7 @@ def test_real_launcher_strips_takeover_shim_before_path_lookup(tmp_path: Path, m
 
 
 def test_wrapper_identity_preserves_realpath_distribution_and_content_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(_external_state_root(tmp_path)))
     wrapper = _wrapper(tmp_path, "9.7")
     cfg = _config(tmp_path)
     result = resolve_real_launcher(cfg, requested="wrapper")
@@ -111,7 +115,7 @@ def test_wrapper_identity_preserves_realpath_distribution_and_content_identity(t
 
 
 def test_remote_system_resolution_is_destination_aware_and_never_leaks_host_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(_external_state_root(tmp_path)))
     host_gradle = _exe(tmp_path / "host-bin" / "gradle")
     cfg = _config(tmp_path, execution_environment="ssh")
     destination = GradleDestination("ssh", "remote-1", local=False, path_value=str(host_gradle.parent), cwd="~/repo")
@@ -124,7 +128,7 @@ def test_remote_system_resolution_is_destination_aware_and_never_leaks_host_path
 
 
 def test_chroot_and_proot_resolution_do_not_reuse_host_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(_external_state_root(tmp_path)))
     host_gradle = _exe(tmp_path / "host-only" / "gradle")
     for kind in ("chroot", "proot-distro"):
         cfg = _config(tmp_path, execution_environment=kind)
@@ -136,7 +140,7 @@ def test_chroot_and_proot_resolution_do_not_reuse_host_path(tmp_path: Path, monk
 
 
 def test_scope_blocks_shell_origin_when_only_devtool_takeover_is_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(_external_state_root(tmp_path)))
     _wrapper(tmp_path)
     cfg = _config(tmp_path, {"enabled": True, "mode": "manage", "scope": "devtool"})
     request = GradleInvocationRequest(caller="fixture", action="build", project_root=str(tmp_path), requested_roots=("help",))
@@ -153,7 +157,7 @@ def test_repository_configuration_cannot_forge_takeover_internal_capability() ->
 
 
 def test_work_probe_control_intents_stay_distinct_and_work_reuses_canonical_planner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(_external_state_root(tmp_path)))
     _wrapper(tmp_path)
     cfg = _config(tmp_path, {"enabled": True, "mode": "manage", "scope": "devtool"})
     request = GradleInvocationRequest(
@@ -171,7 +175,7 @@ def test_work_probe_control_intents_stay_distinct_and_work_reuses_canonical_plan
 
 
 def test_disabled_takeover_preserves_existing_behavior_without_planning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(_external_state_root(tmp_path)))
     _wrapper(tmp_path)
     cfg = _config(tmp_path)
     request = GradleInvocationRequest(caller="fixture", action="build", project_root=str(tmp_path), requested_roots=("help",))
@@ -182,7 +186,7 @@ def test_disabled_takeover_preserves_existing_behavior_without_planning(tmp_path
 
 
 def test_shell_lifecycle_is_explicit_reversible_and_truthful_about_coverage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(_external_state_root(tmp_path)))
     real = _exe(tmp_path / "real" / "gradle")
     monkeypatch.setenv("PATH", str(real.parent))
     cfg = _config(tmp_path)
@@ -219,7 +223,7 @@ def test_disable_takeover_respects_life_protection_for_shell_assets(tmp_path: Pa
     from devtool.core_runtime import private_run_root
     from devtool.run_store import AttachmentDescriptor, RunCatalog
 
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(_external_state_root(tmp_path)))
     real = _exe(tmp_path / "real" / "gradle")
     monkeypatch.setenv("PATH", str(real.parent))
     cfg = _config(tmp_path)
@@ -241,7 +245,7 @@ def test_disable_takeover_respects_life_protection_for_shell_assets(tmp_path: Pa
 
 
 def test_local_system_launcher_identity_is_destination_significant(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(_external_state_root(tmp_path)))
     real = _exe(tmp_path / "bin" / "gradle")
     cfg = _config(tmp_path)
     first = GradleDestination("host", "dest-a", local=True, path_value=str(real.parent), cwd=str(tmp_path))
@@ -253,7 +257,7 @@ def test_local_system_launcher_identity_is_destination_significant(tmp_path: Pat
 
 
 def test_disabling_one_repository_does_not_remove_shared_shell_assets_needed_by_another(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(_external_state_root(tmp_path)))
     first_root = tmp_path / "one"; second_root = tmp_path / "two"
     first_root.mkdir(); second_root.mkdir()
     first = _config(first_root); second = _config(second_root)
@@ -267,20 +271,20 @@ def test_disabling_one_repository_does_not_remove_shared_shell_assets_needed_by_
     assert not (shell_bin_dir() / "gradle").exists()
 
 def test_generated_shim_routes_through_takeover_without_claiming_dot_gradlew(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(_external_state_root(tmp_path)))
     assets = write_shell_assets()
     shim = Path(assets["shim"]).read_text(encoding="utf-8")
     adapter = Path(assets["adapter"]).read_text(encoding="utf-8")
     assert "gradle takeover intercept" in shim
     assert "--origin shell" in shim
     assert "PATH=" in adapter
-    token = Path(tmp_path / "state" / "devtool" / "gradle-takeover" / "internal-capability").read_text().strip()
+    token = Path(_external_state_root(tmp_path) / "devtool" / "gradle-takeover" / "internal-capability").read_text().strip()
     assert validate_internal_capability(token)
     assert not validate_internal_capability("forged")
 
 
 def test_execute_real_gradle_escapes_shim_and_preserves_underlying_exit_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(_external_state_root(tmp_path)))
     shim = tmp_path / "shim"
     real = tmp_path / "real"
     _exe(shim / "gradle", "#!/bin/sh\nexit 99\n")
@@ -293,7 +297,7 @@ def test_execute_real_gradle_escapes_shim_and_preserves_underlying_exit_status(t
 
 
 def test_cli_takeover_status_and_explain_surface_canonical_truth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(_external_state_root(tmp_path)))
     _exe(tmp_path / "bin" / "gradle")
     monkeypatch.setenv("PATH", os.pathsep.join((str(tmp_path / "bin"), os.environ.get("PATH", ""))))
     (tmp_path / ".devtool.toml").write_text(

@@ -633,15 +633,18 @@ def _compile_mutations(
             artifact_inventory_metadata_payload_paths,
             is_skipped_artifact_payload_member,
             list_archive_members,
+            verified_member_classification,
         )
+        members = list_archive_members(artifact_path, include_data=True)
+        package_metadata = verified_member_classification(artifact_path, dict(manifest), members).metadata
         allowed_metadata = artifact_inventory_metadata_payload_paths(dict(manifest))
         synthesized: list[dict[str, Any]] = []
-        for member in list_archive_members(artifact_path, include_data=True):
+        for member in members:
             if member.is_dir:
                 continue
             # Explicitly permitted metadata payloads are repository payload; all
             # ordinary Devtool metadata remains outside the mutation contract.
-            if is_skipped_artifact_payload_member(member.name) and member.name not in allowed_metadata:
+            if member.name in package_metadata or (is_skipped_artifact_payload_member(member.name) and member.name not in allowed_metadata):
                 continue
             data = member.data or b""
             synthesized.append({

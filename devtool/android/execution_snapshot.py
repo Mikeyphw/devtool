@@ -607,7 +607,8 @@ def build_android_execution_snapshot(
 def persist_android_execution_snapshot(repo_root: Path, run_id: str, snapshot: AndroidExecutionSnapshot) -> tuple[Path, str]:
     root = private_run_root(Path(repo_root))
     target = root / run_id / "android-execution" / f"{snapshot.snapshot_id}.json"
-    target.parent.mkdir(parents=True, exist_ok=True)
+    from ..storage_layout import ensure_private_storage_dir
+    ensure_private_storage_dir(target.parent)
     encoded = (json.dumps(snapshot.as_dict(), indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
     if target.exists():
         if target.read_bytes() != encoded:

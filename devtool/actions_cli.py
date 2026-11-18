@@ -178,9 +178,11 @@ def run_actions_command(args: Any) -> int:
           and sys.stdout.isatty() and sys.stdin.isatty() and "nodes" in payload):
         # G3: only an explicit read-only status query becomes a Textual screen.
         # Interactive output is never selected for JSON, pipes, CI or plain mode.
-        use_textual = (not os.environ.get('CI')
-                       and os.environ.get('DEVTOOL_EXECUTION_PRESENTATION', 'auto') != 'plain'
-                       and os.environ.get('DEVTOOL_JOB_UI', 'auto') != 'plain')
+        # A status query is observational, not an implicit request for a TUI.
+        # Only explicit --ui compact/full may switch this surface to Textual.
+        from .native_terminal_policy import explicit_textual_host_requested
+        use_textual = (not os.environ.get('CI') and explicit_textual_host_requested(
+            args, os.environ, host_key='DEVTOOL_TEXTUAL_EXECUTION_HOST'))
         if use_textual:
             try:
                 from .textual_execution_host import textual_available

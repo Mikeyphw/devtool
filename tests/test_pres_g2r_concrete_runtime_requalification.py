@@ -85,13 +85,18 @@ def test_g2r_historical_spec_claims_are_backed_by_concrete_runtime_surfaces() ->
     # X06/X07/G1 normal execution replacement is concrete and main-thread hosted.
     assert "class ExecutionTextualHostSource" in execution
     assert "build_textual_execution_app" in execution
-    assert 'child_env["DEVTOOL_EXECUTION_PRESENTATION"] = "plain"' in execution
+    assert 'child_env["DEVTOOL_EXECUTION_PRESENTATION"] = "plain"' not in execution
+    assert 'child_env["DEVTOOL_TEXTUAL_EXECUTION_HOST"] = "0"' in execution
+    assert 'child_env["DEVTOOL_TEXTUAL_APPLY_HOST"] = "0"' in execution
     assert 'child_env["DEVTOOL_AUTO_HUD_CHILD"] = "1"' in execution
     assert "rich.live" not in presentation.lower()
 
     # H02 is a separate concrete main-thread apply host, not a model promise.
     assert "build_apply_textual_app" in h02
     assert 'child_env["DEVTOOL_AUTO_HUD_CHILD"] = "1"' in h02
+    assert 'child_env["DEVTOOL_EXECUTION_PRESENTATION"] = "plain"' not in h02
+    assert 'child_env["DEVTOOL_TEXTUAL_EXECUTION_HOST"] = "0"' in h02
+    assert 'child_env["DEVTOOL_TEXTUAL_APPLY_HOST"] = "0"' in h02
 
 
 def test_g2r_tui_default_and_normal_execution_selection_are_truthful() -> None:
@@ -105,7 +110,9 @@ def test_g2r_tui_default_and_normal_execution_selection_are_truthful() -> None:
         "stdout_payload": "auto", "json": False,
     })()
     decision = select_execution_textual_host(args, stdin=_TTY(), stdout=_TTY(), textual_probe=lambda: True, env={})
-    assert decision.enabled is True
+    assert decision.enabled is False  # Native terminal first for normal execution.
+    args.job_ui = "full"
+    assert select_execution_textual_host(args, stdin=_TTY(), stdout=_TTY(), textual_probe=lambda: True, env={}).enabled is True
 
     machine = type("Args", (), {
         "command": "invoke", "quiet": False, "verbose": False, "trace": False,

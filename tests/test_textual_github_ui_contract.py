@@ -1,5 +1,6 @@
 """Consolidated modern integration gates, keeping existing authority boundaries."""
 from __future__ import annotations
+import os
 
 import inspect
 from pathlib import Path
@@ -15,7 +16,8 @@ def test_canonical_tui_navigation_and_completion_have_exactly_one_actions_page()
     assert shortcut_collisions() == {}
     assert PAGES == TUI_PAGES
     assert PAGE_ACTIONS["github"] == ()
-    assert "read-only" in PANEL_AUTHORITIES["github"]
+    assert "read-only observation" in PANEL_AUTHORITIES["github"]
+    assert "confirmed dispatch, cancel, rerun" in PANEL_AUTHORITIES["github"]
     root=Path(__file__).resolve().parents[1]
     expected = "dashboard github runs logs diagnostics history targets workers validation artifacts overlays evidence build run actions github-actions log diagnostic worker ssh artifact overlay"
     for relative in ("devtool/completion.py","completions/_devtool"):
@@ -41,11 +43,12 @@ def test_single_shell_runtime_uses_isolated_actions_widget_with_no_implicit_post
     assert 'canonical safe downloader' in widget_source
 
 
-def test_native_launcher_must_remain_plain_and_no_clipboard():
+def test_native_launcher_preserves_user_ui_settings_without_clipboard():
     from devtool import launcher_contract_v3 as launcher
     env=launcher.safe_env()
-    assert env["DEVTOOL_EXECUTION_PRESENTATION"] == "plain"
-    assert env["DEVTOOL_JOB_UI"] == "plain"
+    # C3 does not synthesize deprecated job/presentation selectors.
+    assert env.get("DEVTOOL_EXECUTION_PRESENTATION") == os.environ.get("DEVTOOL_EXECUTION_PRESENTATION")
+    assert env.get("DEVTOOL_JOB_UI") == os.environ.get("DEVTOOL_JOB_UI")
     assert env["DEVTOOL_TEXTUAL_APPLY_HOST"] == "0"
     assert env["DEVTOOL_TEXTUAL_EXECUTION_HOST"] == "0"
     native_source=inspect.getsource(launcher.native)

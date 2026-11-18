@@ -23,6 +23,7 @@ from typing import Any, Callable, Mapping, Sequence
 import uuid
 
 from .execution_presentation import build_textual_execution_app, create_textual_execution_source
+from .native_terminal_policy import explicit_textual_host_requested, may_enable_child_ansi
 from .job_ui import job_ui_mode, run_job_app, build_compact_execution_app
 from .tasker import DEFAULT_TASKER_DIR, resolve_cli_path
 from .invocation_origin import create_managed_run_handoff
@@ -82,6 +83,8 @@ def select_execution_textual_host(
     setting = str(environment.get(_DISABLE_ENV, "auto") or "auto").strip().lower()
     if setting in {"0", "false", "no", "off", "plain", "disabled"}:
         return ExecutionTextualHostDecision(False, "Textual execution host disabled")
+    if not explicit_textual_host_requested(args, environment, host_key=_DISABLE_ENV):
+        return ExecutionTextualHostDecision(False, "native terminal is the default; Textual requires explicit opt-in")
     if universal_json or bool(getattr(args, "_devtool_json", False)) or bool(getattr(args, "json", False)):
         return ExecutionTextualHostDecision(False, "machine JSON output requested")
     if bool(getattr(args, "quiet", False)):
@@ -93,7 +96,7 @@ def select_execution_textual_host(
     if str(environment.get("CI", "")).strip().lower() in _TRUE:
         return ExecutionTextualHostDecision(False, "CI environment")
     presentation = str(environment.get("DEVTOOL_EXECUTION_PRESENTATION", "auto") or "auto").strip().lower()
-    if presentation == "plain" or job_ui_mode(environment) == "plain":
+    if presentation == "plain" or ("DEVTOOL_JOB_UI" in environment and job_ui_mode(environment) == "plain"):
         return ExecutionTextualHostDecision(False, "plain execution presentation requested")
     in_stream = sys.stdin if stdin is None else stdin
     out_stream = sys.stdout if stdout is None else stdout
@@ -260,11 +263,13 @@ class ExecutionTextualHostSource:
             child_env['DEVTOOL_ACTIONS_STREAM'] = '1'
         child_env["DEVTOOL_RUN_ID"] = self.run_id
         child_env["DEVTOOL_MANAGED_RUN_HANDOFF"] = create_managed_run_handoff(self.run_id)
-        # Child runner presentation stays plain because the parent owns the TTY.
-        child_env["DEVTOOL_EXECUTION_PRESENTATION"] = "plain"
+        # The parent owns the TTY. Only supported host selectors block recursion;
+        # do not overwrite the operator's older presentation/job preferences.
+        child_env["DEVTOOL_TEXTUAL_EXECUTION_HOST"] = "0"
+        child_env["DEVTOOL_TEXTUAL_APPLY_HOST"] = "0"
         # Captured pipes are not a TTY. Restore opt-in CLI colors where tools
         # support FORCE_COLOR, while honoring an explicit NO_COLOR preference.
-        if "NO_COLOR" not in child_env and "FORCE_COLOR" not in child_env:
+        if may_enable_child_ansi(child_env):
             child_env["FORCE_COLOR"] = "1"
         command_args = interactive_watch_argv(
             self.raw_argv,

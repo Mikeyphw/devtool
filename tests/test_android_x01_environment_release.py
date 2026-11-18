@@ -13,6 +13,7 @@ from devtool.android.instrumentation import request_from_config
 from devtool.android.release import AndroidReleaseOrchestrator
 from devtool.android.variants import resolve_android_variant_lane
 from devtool.cli import build_parser
+from devtool.core_runtime import private_run_root
 from devtool.models import CommandSpec, OperationResult, ProjectConfig
 
 
@@ -143,7 +144,8 @@ def test_release_evidence_defaults_to_private_run_and_collision_fails(tmp_path: 
     session = AndroidReleaseEvidenceSession(tmp_path, "app", "release", run_id="run-x", session_id="session-x")
     session.add_gate("package", "passed")
     path = session.seal()
-    assert ".devtool/private/run-v3/run-x/android-release" in str(path)
+    assert path == private_run_root(tmp_path) / "run-x" / "android-release" / "session-x.final.json"
+    assert path.is_file()
     with pytest.raises(FileExistsError):
         session.seal()
 
@@ -187,7 +189,7 @@ def test_release_evidence_explicit_output_is_projection_of_private_run(tmp_path:
     session.add_gate("package", "passed")
     exported = tmp_path / "release-export.json"
     returned = session.seal(exported, register=False)
-    canonical = tmp_path / ".devtool" / "private" / "run-v3" / "run-export" / "android-release" / "session-export.final.json"
+    canonical = private_run_root(tmp_path) / "run-export" / "android-release" / "session-export.final.json"
     assert returned == exported
     assert canonical.is_file() and exported.is_file()
     assert canonical.read_bytes() == exported.read_bytes()

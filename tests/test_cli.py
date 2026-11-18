@@ -1808,7 +1808,8 @@ artifact-cleanup: ok exit=0 time=0.10s
 
     def test_apply_overlay_preserves_unowned_sidecar_manifest_after_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp) / "repo"
+            root.mkdir()
             (root / ".git").mkdir()
             (root / ".devtool.toml").write_text('[project]\ntest_command = "echo test"\n', encoding="utf-8")
             artifact = root / "artifact.zip"
@@ -1817,7 +1818,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 zf.writestr("new.txt", "new")
             sidecar.write_text(json.dumps({"type": "overlay"}), encoding="utf-8")
 
-            with patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(root / ".xdg-devtool")}):
+            with patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}):
                 rc = main(["--repo", str(root), "--yes", "apply-overlay", str(artifact)])
 
             self.assertEqual(rc, 0)
@@ -1915,7 +1916,8 @@ artifact-cleanup: ok exit=0 time=0.10s
 
     def test_apply_overlay_preserves_original_artifact_when_validation_rolls_back_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp) / "repo"
+            root.mkdir()
             (root / ".git").mkdir()
             (root / "existing.txt").write_text("before", encoding="utf-8")
             (root / ".devtool.toml").write_text('[project]\ntest_command = "echo test"\n', encoding="utf-8")
@@ -1927,7 +1929,7 @@ artifact-cleanup: ok exit=0 time=0.10s
             sidecar.write_text(json.dumps({"type": "overlay"}), encoding="utf-8")
 
             with (
-                patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(root / ".xdg-devtool")}),
+                patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}),
                 patch("devtool.cli._git_dirty", return_value=False),
                 patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 1, 0.0, "failed", [])], "validate output")),
                 patch("devtool.cli.render_summary"),
@@ -1942,7 +1944,8 @@ artifact-cleanup: ok exit=0 time=0.10s
 
     def test_apply_overlay_delete_artifact_on_failure_is_explicit_opt_in(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp) / "repo"
+            root.mkdir()
             (root / ".git").mkdir()
             (root / "existing.txt").write_text("before", encoding="utf-8")
             (root / ".devtool.toml").write_text('[project]\ntest_command = "echo test"\n', encoding="utf-8")
@@ -1953,7 +1956,7 @@ artifact-cleanup: ok exit=0 time=0.10s
             sidecar.write_text(json.dumps({"type": "overlay"}), encoding="utf-8")
 
             with (
-                patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(root / ".xdg-devtool")}),
+                patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}),
                 patch("devtool.cli._git_dirty", return_value=False),
                 patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 1, 0.0, "failed", [])], "validate output")),
                 patch("devtool.cli.render_summary"),
@@ -1968,12 +1971,13 @@ artifact-cleanup: ok exit=0 time=0.10s
 
     def test_apply_overlay_preserves_corrupt_artifact_when_failure_precedes_extraction(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp) / "repo"
+            root.mkdir()
             (root / ".git").mkdir()
             artifact = root / "broken.zip"
             artifact.write_bytes(b"not a zip archive")
 
-            with patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(root / ".xdg-devtool")}):
+            with patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}):
                 rc = main(["--repo", str(root), "--yes", "apply-overlay", str(artifact)])
 
             self.assertNotEqual(rc, 0)
@@ -1982,7 +1986,8 @@ artifact-cleanup: ok exit=0 time=0.10s
 
     def test_apply_overlay_keep_artifact_preserves_original_after_rollback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp) / "repo"
+            root.mkdir()
             (root / ".git").mkdir()
             (root / "existing.txt").write_text("before", encoding="utf-8")
             (root / ".devtool.toml").write_text('[project]\ntest_command = "echo test"\n', encoding="utf-8")
@@ -1994,7 +1999,7 @@ artifact-cleanup: ok exit=0 time=0.10s
             sidecar.write_text(json.dumps({"type": "overlay"}), encoding="utf-8")
 
             with (
-                patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(root / ".xdg-devtool")}),
+                patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}),
                 patch("devtool.cli._git_dirty", return_value=False),
                 patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 1, 0.0, "failed", [])], "validate output")),
                 patch("devtool.cli.render_summary"),
@@ -2699,7 +2704,8 @@ class OverlayClipboardSummaryTests(unittest.TestCase):
         from types import SimpleNamespace
 
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp) / "repo"
+            root.mkdir()
             (root / ".git").mkdir()
             artifact = root / "named_overlay.zip"
             with ZipFile(artifact, "w") as zf:
@@ -2711,7 +2717,7 @@ class OverlayClipboardSummaryTests(unittest.TestCase):
                 return SimpleNamespace(success=True, backend="test", reason="")
 
             with (
-                patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(root / ".xdg-devtool")}),
+                patch.dict("os.environ", {"DEVTOOL_XDG_DIR": str(Path(tmp) / "xdg")}),
                 patch("devtool.cli.copy_text", side_effect=capture),
             ):
                 rc = main([

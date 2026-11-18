@@ -82,6 +82,23 @@ CLASSIFIED_FILES: dict[str, str] = {
 # removed destructive call requires fresh review, without freezing unrelated
 # lines or resurrecting historical source SHA assertions.
 NEW_REVIEWED_DESTRUCTIVE_CALLS: dict[str, tuple[str, ...]] = {
+    # Current verified production callsites. Preserve expression-level counting:
+    # a new deletion within any of these modules must trigger fresh review.
+    'devtool/delivery_adoption.py': (
+        'target.unlink()', 'os.unlink(temp_name)',
+    ),
+    'devtool/delivery_cross_consumer.py': ('os.unlink(temp)',),
+    'devtool/delivery_integration_review.py': ('os.unlink(temporary)',),
+    'devtool/delivery_session.py': ('os.unlink(temp)',),
+    'devtool/launcher_contract_v3.py': (
+        'transcript.path.unlink(missing_ok=True)', 'dst.unlink(missing_ok=True)',
+    ),
+    'devtool/operator_workspace.py': ('os.unlink(name)',),
+    'devtool/storage_layout.py': (
+        'if os.path.exists(temp): os.unlink(temp)',
+        'temp.unlink(missing_ok=True)',
+        'marker_path.unlink(missing_ok=True)',
+    ),
  'devtool/actions_dn03_dotnet.py': ('path.unlink(missing_ok=True)',),
  'devtool/actions_dn03_r3.py': ('path.unlink(missing_ok=True)',),
  'devtool/actions_dn03_r4.py': ('path.unlink(missing_ok=True)',),
@@ -117,6 +134,13 @@ NEW_REVIEWED_DESTRUCTIVE_CALLS: dict[str, tuple[str, ...]] = {
                                'if os.path.exists(name): os.unlink(name)')}
 
 NEW_REVIEWED_RATIONALES: dict[str, str] = {
+    'devtool/delivery_adoption.py': 'S7 scaffolding owns an exclusive destination inode and unlinks on failed publication only when inode identity matches; a separate mkstemp is cleaned after attempted ZIP publication. No repository GC rights.',
+    'devtool/delivery_cross_consumer.py': 'Cross-consumer review writes into exclusively created mkstemp staging; the observed os.unlink only removes unpromoted temp bytes after atomic placement, without broad deletion authority.',
+    'devtool/delivery_integration_review.py': 'Integration-review output uses mkstemp then atomic os.replace, and the sole unlink removes only unpromoted temporary output on termination; not a general cleanup operation.',
+    'devtool/delivery_session.py': 'Native delivery-session journal persistence uses private mkstemp with atomic replacement and unlink of the unpromoted temp on exit; sessions and receipts remain durable.',
+    'devtool/launcher_contract_v3.py': 'Launcher removes its owned successful-run transcript to minimize retained sensitive logs, and unlinks its exclusive output on failed initial write. Neither permits arbitrary workspace or release deletion.',
+    'devtool/operator_workspace.py': 'Workspace selection cache persistence uses a local mkstemp and atomic replacement; cleanup removes only its unpromoted temp file after an attempted write.',
+    'devtool/storage_layout.py': 'Storage migration atomic JSON and receipt handling removes only owned unpromoted staging; cutover marker removal occurs when post-publication source drift invalidates authority and MUST fail closed.',
  'devtool/actions_dn03_dotnet.py': 'DN03 export creates absent workflow and receipt paths with exclusive creation and attempts to unlink only files created during this operation when rollback is necessary; this is a classification, not proof of race-free deletion or general GC authority.',
  'devtool/actions_dn03_r3.py': 'DN03-R3 native export removes only paths listed in its own create-only output ledger on failed source-identity or generation checks; not permission to remove unrelated user or artifact state.',
  'devtool/actions_dn03_r4.py': 'DN03-R4 generated workflow and evidence rollback removes only paths the current operation successfully created after an absence check, not arbitrary files or history.',

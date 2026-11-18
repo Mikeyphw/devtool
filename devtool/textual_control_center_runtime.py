@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 
 from .artifacts import load_history
 from .clipboard import copy_text
@@ -442,6 +443,8 @@ class CanonicalControlCenterProvider:
         log_path = _log_path_for_run(runs, selected_run)
         log_lines = _tail_file(log_path, line_limit=self.log_line_limit) if log_path is not None else []
 
+        from .operator_status import latest_for_repo
+        operator_status = latest_for_repo(self.repo_root)
         return {
             "schema_version": 1,
             "generated_at": time.time(),
@@ -458,6 +461,7 @@ class CanonicalControlCenterProvider:
             "artifacts": artifacts,
             "overlays": overlays,
             "evidence": evidence,
+            "operator_status": operator_status,
             "ipc": {"ok": bool(ipc.get("ok")), "socket": ipc.get("socket", ""), "error": ipc.get("error", "")},
             "selected_run": selected_run,
             "selected_node": selected_node,
@@ -485,6 +489,9 @@ class InMemoryControlCenterProvider:
         result.setdefault("artifacts", [])
         result.setdefault("overlays", [])
         result.setdefault("evidence", [])
+        if "operator_status" not in result:
+            from .operator_status import empty_status
+            result["operator_status"] = empty_status(result.get("repo_root") or "")
         result["selected_run"] = selected_run
         result["selected_node"] = selected_node
         result["version"] = self.version
@@ -522,12 +529,16 @@ class CanonicalControlActionDispatcher:
             artifact = _text(data.get("artifact") or data.get("path")).strip()
             if not artifact:
                 return False, "Select an overlay artifact first."
+            if data.get("approved") is not True:
+                return False, "Overlay apply needs explicit confirmation before native execution."
             return self._spawn_cli(
                 ["--yes", "apply-overlay", artifact],
                 label=f"overlay apply {artifact}",
                 apply_child=True,
             )
         if action == "worker.recover":
+            if data.get("approved") is not True:
+                return False, "SSH worker recovery requires explicit confirmation."
             profile = _text(data.get("profile") or data.get("name")).strip()
             if not profile:
                 return False, "Select an SSH worker profile first."
@@ -540,6 +551,8 @@ class CanonicalControlActionDispatcher:
                 argv.extend(["--node-id", worker_node_id])
             return self._spawn_cli(argv, label=f"SSH worker recovery {profile}")
         if action in {"rollback", "recover"}:
+            if data.get("approved") is not True:
+                return False, "Transaction recovery/rollback requires explicit confirmation."
             transaction_path = _text(data.get("transaction_path") or data.get("path")).strip()
             if not transaction_path:
                 return False, "Select an active transaction with a canonical transaction path first."
@@ -570,35 +583,59 @@ class CanonicalControlActionDispatcher:
         The control center owns no apply/SSH lifecycle.  It only starts the same
         structured CLI authority a shell user would invoke, then returns to live
         projection.  Child output remains in canonical Devtool logs/evidence and
-        Tasker/RUN state rather than being duplicated in a TUI-owned store.
+        Tasker/RUN state. The native stdout/stderr stream is preserved in one
+        private, operator-visible log for post-exit troubleshooting.
         """
 
         env = dict(os.environ)
         env["DEVTOOL_TEXTUAL_EXECUTION_CHILD"] = "1"
         env["DEVTOOL_AUTO_HUD_CHILD"] = "1"
-        env["DEVTOOL_EXECUTION_PRESENTATION"] = "plain"
+        # Ordinary child execution is native. Do not synthesize or overwrite
+        # the historical presentation/job selectors: keep the operator's
+        # environment and disable only the supported Textual hosts.
+        env["DEVTOOL_TEXTUAL_EXECUTION_HOST"] = "0"
+        env["DEVTOOL_TEXTUAL_APPLY_HOST"] = "0"
         if apply_child:
             env["DEVTOOL_TEXTUAL_APPLY_CHILD"] = "1"
-        command = [self.python_executable, "-m", "devtool", "--repo", str(self.repo_root), *[str(item) for item in argv]]
+        command = [self.python_executable, "-m", "devtool", "--no-clipboard", "--ui", "plain",
+                   "--repo", str(self.repo_root), *[str(item) for item in argv]]
+        # Explicit dashboard execution is not the ordinary CLI.  Retain real
+        # child stdout/stderr in a private, durable log rather than DEVNULL and
+        # display its pointer so errors are recoverable after closing the TUI.
+        state_home = Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state"))
+        log_dir = state_home / "devtool" / "control-center" / "requests"
         try:
-            proc = self.popen_factory(
-                command,
-                cwd=str(self.repo_root),
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+            if state_home.resolve(strict=False).is_relative_to(self.repo_root):
+                return False, "Control Center logs must remain outside the target repository."
+            for directory in (log_dir, log_dir.parent, log_dir.parent.parent, state_home):
+                if directory.is_symlink():
+                    return False, "Control Center log directory is an unsafe symlink."
+            log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if log_dir.stat().st_mode & 0o077:
+                return False, "Control Center log directory must be private."
+            log_path = log_dir / (uuid.uuid4().hex + ".log")
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(log_path, flags, 0o600)
+            with os.fdopen(fd, "wb") as stream:
+                proc = self.popen_factory(
+                    command,
+                    cwd=str(self.repo_root),
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=stream,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
         except Exception as exc:
-            return False, f"Could not request {label}: {exc}"
+            return False, f"Could not request {label}: {type(exc).__name__}"
 
         # Reap the child without making UI lifetime or truth depend on it.
         try:
             threading.Thread(target=proc.wait, name=f"devtool-tui-request-{getattr(proc, 'pid', 'child')}", daemon=True).start()
         except Exception:
             pass
-        return True, f"Requested {label} through canonical Devtool CLI (pid {getattr(proc, 'pid', '?')})."
+        return True, (f"Requested {label} through canonical Devtool CLI "
+                      f"(pid {getattr(proc, 'pid', '?')}); native output: {log_path}.")
 
     def _validation_control(self, control: str) -> tuple[bool, str]:
         try:
@@ -1144,6 +1181,7 @@ def create_textual_control_center_app(
         .table { height: 1fr; min-height: 0; }
         .detail { height: auto; max-height: 10; border-top: solid $panel; padding: 0 1; }
         #dashboard-summary { min-height: 3; margin-bottom: 1; }
+        #dashboard-delivery { height: auto; max-height: 12; overflow-y: auto; border-top: solid $panel; border-bottom: solid $panel; }
         #runs-main { height: 1fr; min-height: 0; }
         #run-table { width: 2fr; height: 1fr; }
         #node-tree { width: 1fr; height: 1fr; border-left: solid $panel; }
@@ -1163,9 +1201,11 @@ def create_textual_control_center_app(
         .short .page-title { display: none; }
         .short .detail { max-height: 3; }
         .short #dashboard-summary { min-height: 1; max-height: 1; margin-bottom: 0; overflow-x: hidden; overflow-y: hidden; }
+        .short #dashboard-delivery { max-height: 5; }
         .short #action-bar { height: 3; min-height: 3; max-height: 3; }
         .short #status-line { display: none; }
         .tiny .detail { display: none; }
+        .tiny #dashboard-delivery { max-height: 3; }
         .tiny #action-bar { display: none; }
         """
         PAGE_CONTEXT = {
@@ -1234,6 +1274,7 @@ def create_textual_control_center_app(
                         with Vertical(id="dashboard", classes="page"):
                             yield Label("Dashboard", classes="page-title")
                             yield Static("Runs — · Attention — · Validation — · Workers —", id="dashboard-summary", classes="ux-summary")
+                            yield Static("Delivery · native status unavailable", id="dashboard-delivery", classes="ux-summary")
                             yield DataTable(id="dashboard-runs", classes="table")
                             yield Static("No run selected.", id="dashboard-detail", classes="detail")
                         with Vertical(id="runs", classes="page"):
@@ -1347,6 +1388,13 @@ def create_textual_control_center_app(
                 self.query_one("#dashboard-summary", Static).update(
                     f"Runs {len(runs)} · Active {active} · Attention {attention} · Validation {validation_state} · Workers {worker_text}"
                 )
+                # C2: this is the exact native projection used by CLI and Rich.
+                # It never dispatches, polls GitHub, or approves a mutation.
+                from .operator_status import render_status_text
+                operator = self.snapshot_data.get("operator_status")
+                if isinstance(operator, Mapping):
+                    self.query_one("#dashboard-delivery", Static).update(
+                        render_status_text(operator, compact=True))
             except NoMatches:
                 self._detach_projection()
 
@@ -1898,7 +1946,7 @@ def create_textual_control_center_app(
             )
 
         def _dispatch_transaction(self, action_id: str, overlay: Mapping[str, Any]) -> None:
-            ok, message = self.dispatcher.dispatch(action_id, payload={"transaction_path": overlay.get("transaction_path", "")})
+            ok, message = self.dispatcher.dispatch(action_id, payload={"transaction_path": overlay.get("transaction_path", ""), "approved": True})
             self.notify(message, severity="information" if ok else "error")
             self.refresh_from_provider()
 
@@ -1925,7 +1973,7 @@ def create_textual_control_center_app(
                     lambda rc: self._after_inline_overlay_apply(apply_source, rc),
                 )
                 return
-            ok, message = self.dispatcher.dispatch("overlay.apply", payload={"artifact": artifact})
+            ok, message = self.dispatcher.dispatch("overlay.apply", payload={"artifact": artifact, "approved": True})
             self.notify(message, severity="information" if ok else "error")
             self.refresh_from_provider()
 
@@ -1955,6 +2003,7 @@ def create_textual_control_center_app(
                 "worker.recover",
                 payload={
                     "profile": worker.get("profile") or worker.get("name") or "",
+                    "approved": True,
                     "run_id": worker.get("run_id") or "",
                     "node_id": worker.get("node_id") or "",
                 },

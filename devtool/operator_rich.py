@@ -212,6 +212,11 @@ def build_operator_view(kind: str, payload: Mapping[str,Any], *, width: int = 80
     if not isinstance(payload,Mapping):
         raise TypeError('Operator view requires a structured mapping')
     width=max(40,min(180,int(width)))
+    if kind == 'operator_status':
+        from .operator_status import render_status_text
+        return Panel(Text(render_status_text(payload)), title='Devtool · Operator Status',
+                     border_style='yellow' if payload.get('blockers') else 'cyan',
+                     expand=False, padding=(0,1))
     domain={'delivery':'DELIVERY & PR','actions':'GITHUB ACTIONS','pipeline':'PIPELINE DAG',
             'validation':'VALIDATION','runs':'LOCAL RUNS','logs':'LOCAL LOGS',
             'ssh':'SSH WORKERS','overlay':'OVERLAY RECOVERY','transaction':'TRANSACTION',

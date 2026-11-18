@@ -47,13 +47,16 @@ def test_apply_host_selects_only_human_interactive_artifact_apply() -> None:
     chosen = select_apply_textual_host(
         args(), env={}, stdin=TTY(), stdout=TTY(), textual_probe=lambda: True
     )
-    assert chosen.enabled is True
+    assert chosen.enabled is False  # native stdout/stderr by default
 
     nested = select_apply_textual_host(
         args(command="apply", normalized_command="apply-overlay"),
         env={}, stdin=TTY(), stdout=TTY(), textual_probe=lambda: True,
     )
-    assert nested.enabled is True
+    assert nested.enabled is False
+    assert select_apply_textual_host(
+        args(job_ui="full"), env={}, stdin=TTY(), stdout=TTY(), textual_probe=lambda: True
+    ).enabled is True
 
     assert select_apply_textual_host(
         args(command="invoke"), env={}, stdin=TTY(), stdout=TTY(), textual_probe=lambda: True
@@ -88,7 +91,7 @@ def test_nested_apply_overlay_parser_routes_to_textual_host() -> None:
     chosen = select_apply_textual_host(
         parsed, env={}, stdin=TTY(), stdout=TTY(), textual_probe=lambda: True
     )
-    assert chosen.enabled is True
+    assert chosen.enabled is False  # nested form needs explicit --ui
 
 
 def test_confirmed_parent_forces_yes_only_in_managed_child() -> None:
@@ -154,7 +157,10 @@ def test_source_managed_child_preserves_canonical_devtool_authority(monkeypatch:
     env = calls["kwargs"]["env"]
     assert env["DEVTOOL_TEXTUAL_APPLY_CHILD"] == "1"
     assert env["DEVTOOL_AUTO_HUD_CHILD"] == "1"
-    assert env["DEVTOOL_EXECUTION_PRESENTATION"] == "plain"
+    assert "DEVTOOL_EXECUTION_PRESENTATION" not in env
+    assert "DEVTOOL_JOB_UI" not in env
+    assert env["DEVTOOL_TEXTUAL_EXECUTION_HOST"] == "0"
+    assert env["DEVTOOL_TEXTUAL_APPLY_HOST"] == "0"
     assert env["DEVTOOL_RUN_ID"] == source.run_id
     assert calls["kwargs"]["stdin"] == __import__("subprocess").DEVNULL
     assert calls["kwargs"]["start_new_session"] is True

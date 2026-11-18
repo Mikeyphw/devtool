@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from devtool.storage_layout import cleanup_receipt_write_dir
+
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -373,7 +375,7 @@ def test_recovery_retains_run_referenced_local_mirror_instead_of_direct_rmtree(t
         ssh_returns.recover_return_bundles(_cfg(), tmp_path, run_id="run-protected")
 
     assert protected.is_file(), "RUN-referenced returned evidence must not be erased by recovery retry cleanup"
-    receipts = list((tmp_path / ".devtool" / "private" / "cleanup" / "receipts").glob("*.json"))
+    receipts = list((cleanup_receipt_write_dir(tmp_path)).glob("*.json"))
     assert receipts
 
 

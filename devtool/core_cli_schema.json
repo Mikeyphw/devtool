@@ -67545,6 +67545,160 @@
       "sensitive": false,
       "stable_id": "cli.option.delivery.session.ci.json",
       "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--base-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "base_repo",
+        "help": "Upstream repository (owner/name); for forks, explicit and source-bound",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "delivery session plan",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.plan.base-repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--head-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "head_repo",
+        "help": "Head fork repository (owner/name); must match Git origin",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "delivery session plan",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.plan.head-repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--base-sha",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "base_sha",
+        "help": "Optional pinned upstream base SHA; reject base branch drift",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "plan"
+        ],
+        "required": false
+      },
+      "scope": "delivery session plan",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.plan.base-sha",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--base-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "base_repo",
+        "help": "Upstream repository (owner/name); for forks, explicit and source-bound",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "start"
+        ],
+        "required": false
+      },
+      "scope": "delivery session start",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.start.base-repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--head-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "head_repo",
+        "help": "Head fork repository (owner/name); must match Git origin",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "start"
+        ],
+        "required": false
+      },
+      "scope": "delivery session start",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.start.head-repo",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--base-sha",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "base_sha",
+        "help": "Optional pinned upstream base SHA; reject base branch drift",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "start"
+        ],
+        "required": false
+      },
+      "scope": "delivery session start",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.start.base-sha",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--regression-request-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "regression_request_id",
+        "help": "Read-only qualification against a correlated Actions dispatch request",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "report"
+        ],
+        "required": false
+      },
+      "scope": "delivery session report",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.report.regression-request-id",
+      "value_kind": "_StoreAction"
     }
   ],
   "parser": {
@@ -94931,6 +95085,57 @@
                                 ],
                                 "required": false,
                                 "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "base_repo",
+                                "group": null,
+                                "help": "Upstream repository (owner/name); for forks, explicit and source-bound",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--base-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "head_repo",
+                                "group": null,
+                                "help": "Head fork repository (owner/name); must match Git origin",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--head-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "base_sha",
+                                "group": null,
+                                "help": "Optional pinned upstream base SHA; reject base branch drift",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--base-sha"
+                                ],
+                                "required": false,
+                                "type": null
                               }
                             ],
                             "add_help": true,
@@ -95016,6 +95221,57 @@
                                 "nargs": 0,
                                 "option_strings": [
                                   "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "base_repo",
+                                "group": null,
+                                "help": "Upstream repository (owner/name); for forks, explicit and source-bound",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--base-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "head_repo",
+                                "group": null,
+                                "help": "Head fork repository (owner/name); must match Git origin",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--head-repo"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "base_sha",
+                                "group": null,
+                                "help": "Optional pinned upstream base SHA; reject base branch drift",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--base-sha"
                                 ],
                                 "required": false,
                                 "type": null
@@ -95178,6 +95434,23 @@
                                 "nargs": 0,
                                 "option_strings": [
                                   "--json"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": null,
+                                "dest": "regression_request_id",
+                                "group": null,
+                                "help": "Read-only qualification against a correlated Actions dispatch request",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--regression-request-id"
                                 ],
                                 "required": false,
                                 "type": null

@@ -52,6 +52,7 @@ def _authority(private_repo: Path, path: Path) -> bytes:
     from devtool.artifact_lifecycle import ArtifactExecutionRecord
     from devtool.artifact_cleanup_worker import cleanup_source_snapshot
     from devtool.core_runtime import private_run_root
+    from devtool.storage_layout import ensure_private_storage_dir
     from devtool.run_store import AttachmentDescriptor, RunCatalog
 
     run_id = uuid.uuid4().hex
@@ -61,7 +62,7 @@ def _authority(private_repo: Path, path: Path) -> bytes:
         execution_status='succeeded')
     store = private_run_root(private_repo)
     record_path = store / run_id / 'artifacts' / (record.record_id.replace(':', '-') + '.json')
-    record_path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_storage_dir(record_path.parent)
     record_path.write_text(json.dumps(record.as_dict(), sort_keys=True))
     catalog = RunCatalog.open(store)
     catalog.add_run({'run_id':run_id, 'artifact_id':record.artifact_id,

@@ -170,7 +170,7 @@ class CompatibilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path=Path(temp)/'immutable.pyz'
             blob=launcher.zip_bytes({
-                '__main__.py':launcher.bootstrap_content(runtime).encode(),
+                '__main__.py':launcher.bootstrap_content(m['devtool']).encode(),
                 'manifest.json':(json.dumps(m,sort_keys=True)+'\n').encode(),
                 'payload/devtool/new.py':b'original bytes\n'})
             path.write_bytes(blob)

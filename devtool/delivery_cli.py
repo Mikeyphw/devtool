@@ -10,11 +10,10 @@ from .delivery_session import DeliverySessionError, plan, start, status, resume,
 from .delivery_rich import NativeRichMonitor, MonitorDetached
 
 
-def _uxrich02_delivery_view(payload: dict, args: Any) -> bool:
-    # Original durable receipt and CI authority remain unchanged. This is
-    # only a Rich presentation of the already returned native session record.
+def _c2_operator_view(payload: dict, args: Any) -> bool:
+    # The same read-only C2 projection is rendered in plain CLI/Rich/Textual.
     from .operator_rich import render_operator
-    return render_operator('delivery',payload,args=args)
+    return render_operator('operator_status',payload,args=args)
 
 
 def run_delivery_command(args: Any) -> int:
@@ -25,14 +24,26 @@ def run_delivery_command(args: Any) -> int:
         if operation in ('plan', 'start'):
             options = {'base':str(getattr(args,'base','main') or 'main'),
                        'head':getattr(args,'head',None),
+                       'base_repository':getattr(args,'base_repo',None),
+                       'head_repository':getattr(args,'head_repo',None),
+                       'base_sha':getattr(args,'base_sha',None),
                        'overlay':Path(args.overlay) if getattr(args,'overlay',None) else None}
             payload = plan(root,**options) if operation=='plan' else start(root,**options)
         elif operation in ('status','resume','report'):
             identity = str(getattr(args,'delivery_id','') or '')
             action = {'status':status,'resume':resume,'report':report}[operation]
             payload = action(identity)
+            if operation == 'report' and getattr(args,'regression_request_id',None):
+                from .delivery_qualification import qualify
+                payload['qualification'] = qualify(identity, request_id=args.regression_request_id,
+                                                   auth=str(getattr(args,'auth','auto') or 'auto'))
             if Path(payload['repo_root']).resolve() != root:
                 raise DeliverySessionError('Session belongs to another repository/worktree')
+            # C2: a single read-only operator projection, with legacy raw
+            # session fields retained for machine clients and receipt readers.
+            from .operator_status import project_delivery_status
+            payload['operator_status'] = project_delivery_status(
+                payload, qualification=payload.get('qualification'))
         elif operation in ('push','pr','ci'):
             from .delivery_github import push, pr, observe_ci
             identity = str(getattr(args,'delivery_id','') or '')
@@ -49,14 +60,30 @@ def run_delivery_command(args: Any) -> int:
             else:
                 from .delivery_ci_policy import (load_policy, check_requested,
                                                  assert_observation)
-                repo_name = str(bound['repository'])
+                repo_name = str(bound['base_repository'])
                 base_branch = str(bound['base'])
-                policy = load_policy(root, expected_repository=repo_name,
-                                     expected_base=base_branch)
+                fork_delivery = repo_name.casefold() != str(bound['head_repository']).casefold()
+                client_for_policy = None
+                if fork_delivery:
+                    from .github_actions import GitHubActionsClient, resolve_token
+                    from .delivery_ci_policy import load_upstream_policy
+                    token,_ = resolve_token(str(getattr(args,'auth','auto') or 'auto'))
+                    client_for_policy = GitHubActionsClient(token)
+                    policy, base_at_start = load_upstream_policy(
+                        client_for_policy,expected_repository=repo_name,
+                        expected_base=base_branch,expected_base_sha=bound.get('base_sha'))
+                else:
+                    policy = load_policy(root, expected_repository=repo_name,
+                                         expected_base=base_branch)
                 check_requested(tuple(getattr(args,'require_workflow',[]) or ()), policy)
                 def guard() -> None:
-                    again = load_policy(root, expected_repository=repo_name,
-                                        expected_base=base_branch)
+                    if fork_delivery:
+                        again,base_now = load_upstream_policy(
+                            client_for_policy, expected_repository=repo_name,
+                            expected_base=base_branch,expected_base_sha=base_at_start)
+                    else:
+                        again = load_policy(root, expected_repository=repo_name,
+                                            expected_base=base_branch)
                     if again.sha256 != policy.sha256:
                         raise DeliverySessionError('Committed CI policy changed during observation')
                 rich_monitor = NativeRichMonitor(kind='ci',
@@ -111,7 +138,8 @@ def run_delivery_command(args: Any) -> int:
         raise
     if bool(getattr(args,'json',False) or getattr(args,'_devtool_json',False)):
         print(json.dumps(payload,indent=2,sort_keys=True,ensure_ascii=False))
-    elif operation in ('status','resume','report') and _uxrich02_delivery_view(payload,args):
+    elif operation in ('status','resume','report') and _c2_operator_view(
+            payload['operator_status'], args):
         pass
     elif operation in ('push','pr','ci'):
         print(f'Devtool delivery {operation}: {payload["state"]}',flush=True)
@@ -157,11 +185,10 @@ def run_delivery_command(args: Any) -> int:
                     for excerpt in job.get('excerpt', []):
                         print('      Evidence: ' + excerpt, flush=True)
         print('Release qualification: NOT PERFORMED',flush=True)
-    elif operation == 'report' and isinstance(payload.get('receipt'), dict):
-        if sys.stdout.isatty():
-            from .delivery_receipt import render_rich
-            render_rich(payload['receipt'])
-        else:
+    elif operation in ('status','resume','report'):
+        from .operator_status import render_status_text
+        print(render_status_text(payload['operator_status']),flush=True)
+        if operation == 'report' and isinstance(payload.get('receipt'),dict):
             print(payload['human_report'],flush=True)
     else:
         print(f'Devtool delivery: {operation} — {payload["stage"]}',flush=True)

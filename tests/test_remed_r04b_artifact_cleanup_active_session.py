@@ -9,6 +9,7 @@ from pathlib import Path
 from devtool.cli import _delete_original_artifact_after_apply
 from devtool.models import OperationResult
 from devtool.validation_sessions import active_session_marker, session_path
+from devtool.storage_layout import ensure_private_storage_dir
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -37,7 +38,7 @@ def _repo(tmp_path: Path) -> Path:
 
 def _write_running_schema6_session(repo: Path, session_id: str = "active-schema6") -> None:
     state = session_path(repo, session_id)
-    state.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_storage_dir(state.parent)
     payload = {
         "schema_version": 6,
         "session_id": session_id,
@@ -57,7 +58,7 @@ def _write_running_schema6_session(repo: Path, session_id: str = "active-schema6
     }
     state.write_text(json.dumps(payload), encoding="utf-8")
     marker = active_session_marker(repo)
-    marker.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_storage_dir(marker.parent)
     marker.write_text(
         json.dumps({"schema_version": 6, "session_id": session_id, "status": "running"}),
         encoding="utf-8",

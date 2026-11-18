@@ -195,7 +195,7 @@ def create_github_workspace_widget(repo_root: str | Path, *,
                         yield Button("Rerun…", id="github-rerun")
                     yield RichLog(id="github-log-lines", wrap=False, highlight=False,
                                   markup=False, max_lines=400, auto_scroll=False)
-            yield Static("GitHub API · read-only; not release or CI qualification evidence", id="github-status")
+            yield Static("GitHub GET: read-only observation · dispatch/cancel/rerun require confirmation · not CI qualification", id="github-status")
 
         def on_mount(self) -> None:
             self._live = True

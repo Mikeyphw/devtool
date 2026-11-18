@@ -35,6 +35,7 @@ def session(tmp_path):
 def fake_pr(data,n=18,sha=None):
     return {'number':n,'state':'open',
             'head':{'sha':sha or data['head_sha'],'ref':data['head'],
+                    'label':data['repository'].split('/')[0]+':'+data['head'],
                     'repo':{'full_name':data['repository']}},
             'base':{'ref':data['base'],'repo':{'full_name':data['repository']}},
             'merge_commit_sha':'b'*40}

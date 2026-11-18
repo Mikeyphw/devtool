@@ -27,6 +27,7 @@ from devtool.distributed_provider_control import (
 from devtool.distributed_transport import DelegatedEventReceiver, TransportProtocolCapabilities
 from devtool.federation_operations import request_federated_child_control
 from devtool.run_store import AttachmentDescriptor, RunCatalog
+from devtool.core_runtime import private_run_root
 from devtool.ssh_tmux_runner import SSHRunnerConfig
 
 
@@ -131,7 +132,7 @@ def test_run_v3_relation_persists_queries_progress_and_pins_descendant_gc(tmp_pa
     root = tmp_path / "repo"
     link = _link()
     relation = record_delegation_relation(root, link, delivery_health="live")
-    catalog = RunCatalog.open(root / ".devtool" / "private" / "run-v3")
+    catalog = RunCatalog.open(private_run_root(root))
     assert catalog.relations[relation.relation_id].delegation_id == link.delegation_id
     catalog.add_run({"run_id": "parent-run", "status": "running"})
     catalog.add_run({"run_id": "child-run", "status": "succeeded"})

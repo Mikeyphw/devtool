@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from devtool.storage_layout import cleanup_receipt_write_dir
+
 import json
 import tempfile
 import sys
@@ -787,7 +789,7 @@ class PythonSupportTests(unittest.TestCase):
             prepared = prepare_dist(root)
             self.assertEqual(prepared, dist)
             self.assertFalse(stale.exists())
-            receipts = list((root / ".devtool" / "private" / "cleanup" / "receipts").glob("*.json"))
+            receipts = list((cleanup_receipt_write_dir(root)).glob("*.json"))
             self.assertTrue(receipts, "prepare-dist deletion must leave a canonical LIFE receipt")
 
     def test_prepare_dist_refuses_tracked_dist_instead_of_direct_rmtree(self) -> None:
@@ -807,7 +809,7 @@ class PythonSupportTests(unittest.TestCase):
                 prepare_dist(root)
 
             self.assertTrue(tracked.exists(), "tracked dist content must survive prepare-dist cleanup")
-            receipts = list((root / ".devtool" / "private" / "cleanup" / "receipts").glob("*.json"))
+            receipts = list((cleanup_receipt_write_dir(root)).glob("*.json"))
             self.assertTrue(receipts, "refused destructive cleanup must still persist its LIFE decision")
 
     def test_notebook_execution_uses_disposable_copy(self) -> None:

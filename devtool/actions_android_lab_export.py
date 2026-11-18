@@ -19,6 +19,7 @@ import tempfile
 
 from .actions_graph_export import compile_graph
 from .artifact_registry import register_paths, verify_record, load_registry
+from .storage_layout import artifact_registry_file
 
 WORKFLOW = '.github/workflows/devtool-android-r34-generated-hosted-dag.yml'
 FIXTURE = 'tests/fixtures/r33_hosted_android'
@@ -330,16 +331,19 @@ def register(fixture: Path, receipt: Path, out: Path, apk_out: Path) -> dict:
     local_registry=load_registry(fixture)
     if not any(x['id']==records[0]['id'] for x in local_registry['items']):
         raise LabError('R34 canonical registry missing new record')
+    registry_path = artifact_registry_file(fixture)
+    if registry_path.is_symlink() or not registry_path.is_file():
+        raise LabError('R34 canonical registry missing or unsafe')
     out.parent.mkdir(parents=True,exist_ok=True)
     report={'schema':'devtool.r34.hosted-registry.v1','status':'PASS_LOCAL_REGISTRY_VERIFIED',
-            'record_id':records[0]['id'],'registry_sha256':sha(fixture/'.devtool/artifacts/registry.json'),
+            'record_id':records[0]['id'],'registry_sha256':sha(registry_path),
             'apk_sha256':info['sha256'],'apk_size':info['size'],'package':PACKAGE,
             'signer_sha256':info['signer_certificate_sha256'],'fixture_sha':fixture_sha,
             'graph_sha256':graph['graph_sha256'],**ctx,
             'local_registry_registered':True,'local_registry_verified':True,
             'remote_actions_artifact_authenticated':False,'release_qualified':False,'device_qualified':False}
     out.write_text(json.dumps(report,sort_keys=True,indent=2)+'\n')
-    shutil.copyfile(fixture/'.devtool/artifacts/registry.json',out.parent/'registry-snapshot.json')
+    shutil.copyfile(registry_path,out.parent/'registry-snapshot.json')
     return report
 
 
