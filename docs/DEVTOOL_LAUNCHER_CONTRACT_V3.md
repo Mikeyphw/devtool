@@ -108,6 +108,20 @@ of ancestry, never forced or rebased.
 Every native Devtool child receives the supported Devtool switches:
 `DEVTOOL_EXECUTION_PRESENTATION=plain`, `DEVTOOL_JOB_UI=plain`,
 `DEVTOOL_TEXTUAL_APPLY_HOST=0`, and `DEVTOOL_TEXTUAL_EXECUTION_HOST=0`.
+The launcher passes Devtool's supported global `--host` flag to every native
+Devtool subprocess, including scaffold, validate-overlay, atomic apply, and
+session commands. On Termux this explicitly selects native Termux rather
+than auto-chroot; it is not an Android Gradle build permission.
+Full-mode native delivery relies on the artifact's required validation policy
+instead of explicitly passing `--validate`. This preserves the artifact's
+`restore`, `build`, and `test` phase selections; a checksum-verified
+targeted hook can therefore run without the full repository pipeline.
+Static-mode packages retain explicit `--static-validate`, with their
+documented bounds. Neither mode bypasses artifact qualification.
+Durable delivery operations (`status`, `report`, `ci`, `deliver`, `resume`)
+require a real `--session-id` from the native delivery receipt after a
+successful commit. Negative parser tests check this requirement while
+capturing their expected usage errors; mocked test IDs are not receipts.
 The launcher also uses Devtool's supported global `--no-clipboard` CLI flag
 for **every** native Devtool subprocess. This disables end-of-run clipboard
 prompts and automatic copying even in an interactive Termux terminal. It does

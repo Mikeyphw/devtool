@@ -1044,7 +1044,7 @@ def native(repo:Path,devtool_root:Path,*parts:str,stage:str,timeout:float=120,
     # The supported native global flag prevents both the post-run copy prompt
     # and automatic copying. Only Devtool CLI children receive this option;
     # never replace internal overlay file transactions with clipboard controls.
-    return exec_cmd([sys.executable,'-B','-m','devtool','--repo',str(repo),
+    return exec_cmd([sys.executable,'-B','-m','devtool','--host','--repo',str(repo),
                      '--no-clipboard',*parts],
                     stage=stage,cwd=devtool_root,devtool_root=devtool_root,target_root=repo,
                     timeout=timeout,live=live,tty_live=tty_live)
@@ -1262,12 +1262,16 @@ def apply_package(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,b
     # native Devtool validator and transaction. Static is explicitly bounded
     # and cannot silently skip declared validation.tests/tasks.
     mode = validation_execution_mode(m['plan'])
-    native_flag = '--validate' if mode == 'full' else '--static-validate'
-    say('LAUNCHER_V32_VALIDATION_MODE '+mode+' native='+native_flag)
+    # Required full-mode artifact validation is enabled by the native CLI itself.
+    # Do not explicitly pass --validate: that would override the manifest's
+    # restore/build/test booleans and run unrelated project validation.
+    native_flags = () if mode == 'full' else ('--static-validate',)
+    say('LAUNCHER_V32_VALIDATION_MODE '+mode+' native='+
+        ('artifact-policy' if mode == 'full' else '--static-validate'))
     if mode == 'static' and m['plan'].get('delivery_static_justification'):
         say('LAUNCHER_V32_STATIC_JUSTIFICATION '+redact(m['plan']['delivery_static_justification']))
     native(repo,devtool_root,'apply','overlay',str(archive),'--yes','--commit',
-           m['delivery']['commit_message'],'--commit-mode','new',native_flag,
+           m['delivery']['commit_message'],'--commit-mode','new',*native_flags,
            '--keep-artifact',stage='native-atomic-apply-and-commit',timeout=1800,live=True)
     after=repo_identity(repo,clean=False)
     verify_postcommit_status(repo)
