@@ -29,6 +29,7 @@ from .artifacts import (
     diff_artifact,
     is_overlay_bundle,
     is_skipped_artifact_payload_member,
+    artifact_payload_members,
     list_archive_members,
     materialize_overlay_bundle_entries,
     preview_artifact,
@@ -127,8 +128,8 @@ def _bundle_inventory(path: Path) -> list[dict[str, str]]:
             if not nested:
                 nested = [
                     {"path": member.name, "action": "payload"}
-                    for member in list_archive_members(entry.path, include_data=False)
-                    if not member.is_dir and not is_skipped_artifact_payload_member(member.name)
+                    for member in artifact_payload_members(entry.path)
+                    if not member.is_dir
                 ]
             inventory.extend(_clean_inventory(nested))
     return inventory
@@ -226,8 +227,8 @@ def inspect_artifact(
         else:
             inventory = [
                 {"path": member.name, "action": "payload"}
-                for member in list_archive_members(path, include_data=False)
-                if not member.is_dir and not is_skipped_artifact_payload_member(member.name)
+                for member in artifact_payload_members(path)
+                if not member.is_dir
             ]
     inventory = _clean_inventory(inventory)
     commit_enabled, commit_message, commit_strategy = artifact_commit_policy(manifest)

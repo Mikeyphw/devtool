@@ -247,7 +247,7 @@ def _public(record: Mapping[str, Any]) -> dict[str, Any]:
     return {key: record[key] for key in ("schema", "id", "stage", "repo_root", "repository",
         "head", "base", "head_sha", "overlay", "created_at", "updated_at",
         "remote_verified", "release_qualified")} | {
-        key: record[key] for key in ("pr", "ci") if key in record
+        key: record[key] for key in ("pr", "ci", "native_apply") if key in record
     }
 
 
@@ -284,7 +284,10 @@ def resume(identity: str, *, state_root: Path | None = None) -> dict[str, Any]:
         result["next_action"] = "Review source drift or unresolved intents; no operation was retried"
         result["disposition"] = "BLOCKED_RECONCILIATION"
     else:
-        result["next_action"] = "Proceed through an explicitly authorized delivery coordinator stage"
+        result["next_action"] = (
+            "Native commit already adopted; use delivery session push/pr/ci, never reapply"
+            if result.get('native_apply', {}).get('state') == 'COMMITTED'
+            else "Proceed through an explicitly authorized delivery coordinator stage")
         result["disposition"] = "READY_FOR_EXPLICIT_STAGE"
     result["operation_replayed"] = False
     return result
@@ -458,3 +461,162 @@ def record_ci_observation(identity: str, observation: Mapping[str, Any], *,
             record['events'] = sorted([*critical,*recent],key=lambda x:x['at'])
         _write(path,record)
     return {'state':obs['state'],'checks_qualified':obs['checks_qualified']}
+
+
+
+def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
+                  head: str | None = None, state_root: Path | None = None) -> dict[str, Any]:
+    """Idempotently adopt a *committed and validated* native artifact receipt.
+
+    Native apply may clean its source archive after commit, so the durable
+    Devtool history is authoritative; an existing archive is rehashed, and a
+    removed one is *not* silently regenerated. This never applies anything or
+    mutates a GitHub remote.
+    """
+    from .artifacts import (load_history, artifact_inventory_entries,
+                            artifact_preflight_write_paths, artifact_validation_write_paths,
+                            artifact_finalize_write_paths)
+
+    inspected = _identity(Path(repo), head=head, base=base)
+    root = Path(inspected['repo_root'])
+    supplied = Path(overlay).expanduser()
+    if supplied.is_symlink():
+        raise DeliverySessionError('Applied artifact path is a symlink')
+    artifact_path = str(supplied.resolve(strict=False))
+    if not inspected['repository']:
+        raise DeliverySessionError('Applied overlay adoption requires a verified GitHub origin')
+    if _git(root, 'status', '--porcelain'):
+        raise DeliverySessionError('Applied overlay adoption requires a clean checkout')
+
+    historical = [item for item in load_history(root)
+                  if item.get('commit_hash') == inspected['head_sha']
+                  and item.get('artifact') == artifact_path]
+    qualified = [item for item in historical
+                 if str(item.get('status') or '').lower() in {'ok', 'applied', 'success', 'succeeded'}
+                 and str(item.get('validation_status') or '').lower() in {'ok', 'passed', 'success', 'succeeded'}
+                 and isinstance(item.get('manifest'), dict)
+                 and isinstance(item.get('sha256'), str)
+                 and re.fullmatch(r'[0-9a-f]{64}', item['sha256'])]
+    if len(historical) != 1 or len(qualified) != 1:
+        raise DeliverySessionError('Unique qualified native applied-commit history receipt not found')
+    receipt = qualified[0]
+    manifest = receipt['manifest']
+    digest = receipt['sha256']
+    tx = receipt.get('transaction')
+    if not isinstance(tx, dict) or tx.get('status') != 'completed' or not tx.get('id'):
+        raise DeliverySessionError('Applied native history lacks completed transaction proof')
+    validation = manifest.get('validation') if isinstance(manifest.get('validation'), dict) else {}
+    outcomes = (receipt.get('validation_plan') or {}).get('validation_step_outcomes')
+    if validation.get('required') is True:
+        if (not isinstance(outcomes, list) or not outcomes or any(
+            not isinstance(item, dict) or item.get('skipped') is True
+            or item.get('outcome') != 'passed' or item.get('returncode') != 0
+            for item in outcomes)):
+            raise DeliverySessionError('Required native validation must have passing, unskipped step evidence')
+    native_apply = {
+        'state': 'COMMITTED', 'commit': inspected['head_sha'],
+        'history_id': str(receipt.get('history_id') or ''),
+        'operation_id': str(receipt.get('operation_id') or ''),
+        'transaction_id': str(tx['id']), 'transaction_status': tx['status'],
+        'validation_status': str(receipt['validation_status']).lower(),
+        'source_tree': str(manifest.get('base_tree') or ''),
+        'artifact_sha256': digest,
+    }
+    if supplied.exists():
+        if not supplied.is_file():
+            raise DeliverySessionError('Applied artifact is not a regular file')
+        stored = hashlib.sha256(supplied.read_bytes()).hexdigest()
+        if stored != digest:
+            raise DeliverySessionError('Remaining artifact does not match committed native history')
+    inspected['overlay'] = {'path': artifact_path, 'sha256': digest,
+                            'size': (receipt.get('content_identity') or {}).get('size')}
+    old_commit = str(manifest.get('base_commit') or '').lower()
+    if not _SHA.fullmatch(old_commit):
+        raise DeliverySessionError('Applied overlay requires a source-bound base commit')
+    if _git(root, 'rev-parse', 'HEAD^').lower() != old_commit:
+        raise DeliverySessionError('Applied overlay commit parent does not match source binding')
+    old_tree = str(manifest.get('base_tree') or '').lower()
+    if _SHA.fullmatch(old_tree) and _git(root, 'rev-parse', 'HEAD~1^{tree}') != old_tree:
+        raise DeliverySessionError('Applied overlay base tree mismatch')
+    expected = manifest.get('expected_post_sha256')
+    entries = artifact_inventory_entries(manifest)
+    if not isinstance(expected, dict) or not entries:
+        raise DeliverySessionError('Applied overlay requires exact committed payload inventory')
+    allowed_mutations = {
+        str(item.get('path') or '') for item in entries if isinstance(item, dict)
+    }
+    allowed_mutations.update(artifact_preflight_write_paths(manifest))
+    allowed_mutations.update(artifact_validation_write_paths(manifest))
+    allowed_mutations.update(artifact_finalize_write_paths(manifest))
+    actual_mutations = set(_git(root, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD').splitlines())
+    if not actual_mutations or actual_mutations - allowed_mutations:
+        raise DeliverySessionError('Applied commit contains unverified or empty mutation inventory')
+    for row in entries:
+        if not isinstance(row, dict):
+            raise DeliverySessionError('Applied overlay inventory shape invalid')
+        path = str(row.get('path') or '')
+        action = str(row.get('action') or '').lower()
+        if not path or path.startswith('/') or '..' in path.split('/') or '\\' in path:
+            raise DeliverySessionError('Applied overlay inventory path invalid')
+        if action == 'delete':
+            present = subprocess.run(['git', '-C', str(root), 'cat-file', '-e', f'HEAD:{path}'],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+            if present.returncode == 0:
+                raise DeliverySessionError(f'Applied deletion not present in committed tree: {path}')
+            continue
+        digest_post = expected.get(path)
+        if not isinstance(digest_post, str) or not re.fullmatch(r'[0-9a-f]{64}', digest_post):
+            raise DeliverySessionError(f'Applied expected payload hash missing: {path}')
+        blob = subprocess.run(['git', '-C', str(root), 'show', f'HEAD:{path}'],
+                              capture_output=True, timeout=15)
+        if blob.returncode != 0 or hashlib.sha256(blob.stdout).hexdigest() != digest_post:
+            raise DeliverySessionError(f'Applied committed payload does not match overlay: {path}')
+
+    folder = _state_root(state_root)
+    with _locked(folder):
+        same_commit: list[dict[str, Any]] = []
+        for candidate in folder.glob('*.json'):
+            existing = _read(candidate)  # Corrupt journal blocks guessing.
+            if (existing['repo_root'] == inspected['repo_root']
+                    and existing['head_sha'] == inspected['head_sha']
+                    and existing['git_dir'] == inspected['git_dir']
+                    and existing['head'] == inspected['head']
+                    and existing['base'] == inspected['base']):
+                same_commit.append(existing)
+        if len(same_commit) > 1:
+            raise DeliverySessionError('Ambiguous native sessions already bound to applied commit')
+        if same_commit:
+            existing = same_commit[0]
+            prior = existing.get('overlay')
+            if existing.get('native_apply') not in (None, native_apply):
+                raise DeliverySessionError('Existing native transaction proof differs from applied history')
+            if prior is not None and prior != inspected['overlay']:
+                raise DeliverySessionError('Existing native session binds another overlay for this commit')
+            if prior is None:
+                if (existing.get('intents') or existing.get('pr') or existing.get('ci')
+                        or existing.get('stage') != 'PLANNED'):
+                    raise DeliverySessionError('Existing remote-mutated or progressed session cannot be rebound')
+                now = _utc()
+                existing['overlay'] = inspected['overlay']
+                existing['native_apply'] = native_apply
+                existing['events'].append({'kind': 'committed_apply_adopted', 'at': now,
+                                           'commit': inspected['head_sha'],
+                                           'overlay_sha256': digest})
+                existing['updated_at'] = now
+                _write(_path(folder, existing['id']), existing)
+            return {**_public(existing), 'reused': True,
+                    'native_apply_replayed': False}
+        identity = uuid.uuid4().hex
+        now = _utc()
+        record = {'schema': _SCHEMA, 'id': identity, 'created_at': now, 'updated_at': now,
+                  'stage': 'PLANNED', 'repo_root': inspected['repo_root'],
+                  'git_dir': inspected['git_dir'], 'repository': inspected['repository'],
+                  'head': inspected['head'], 'base': inspected['base'],
+                  'head_sha': inspected['head_sha'], 'overlay': inspected['overlay'],
+                  'native_apply': native_apply,
+                  'intents': [], 'events': [
+                      {'kind': 'committed_apply_adopted', 'at': now, 'commit': inspected['head_sha'],
+                       'overlay_sha256': digest}],
+                  'remote_verified': False, 'release_qualified': False}
+        _write(_path(folder, identity), record)
+        return {**_public(record), 'reused': False, 'native_apply_replayed': False}

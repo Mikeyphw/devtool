@@ -12,7 +12,7 @@ import tempfile
 from typing import Any
 
 from ..artifact_base_contract import _base_path_identity, _current_path_identity
-from ..artifacts import artifact_inventory_entries, list_archive_members, read_artifact_manifest, resolve_artifact_path
+from ..artifacts import artifact_inventory_entries, list_archive_members, artifact_payload_members, read_artifact_manifest, resolve_artifact_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +65,7 @@ def _run_git(repo: Path, *args: str, input_bytes: bytes | None = None, check: bo
 def _archive_payload(artifact: Path) -> tuple[dict[str, bytes], dict[str, int | None]]:
     payload: dict[str, bytes] = {}
     modes: dict[str, int | None] = {}
-    for member in list_archive_members(artifact, include_data=True):
+    for member in artifact_payload_members(artifact):
         if member.is_dir or member.data is None:
             continue
         payload[member.name] = member.data

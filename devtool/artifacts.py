@@ -34,7 +34,7 @@ SUPPORTED_ARCHIVE_SUFFIXES = (
     ".tar.xz", ".txz",
     ".tar.bz2", ".tbz2",
     ".tar.gz", ".tgz",
-    ".tar", ".zip",
+    ".tar", ".zip", ".pyz",
 )
 SUPPORTED_ARTIFACT_SUFFIXES = SUPPORTED_ARCHIVE_SUFFIXES
 BUNDLE_MANIFEST_NAMES = {"devtool-bundle.json", ".devtool-bundle.json"}
@@ -434,7 +434,10 @@ def _is_skipped_artifact_payload_member(
     name: str,
     *,
     allowed_metadata_payloads: set[str] | None = None,
+    package_metadata: set[str] | frozenset[str] = frozenset(),
 ) -> bool:
+    if name in package_metadata:
+        return True
     if is_ignored_artifact_payload_member(name):
         return True
     if is_artifact_metadata_member(name):
@@ -1371,7 +1374,7 @@ def write_archive_entries(output: str | Path, entries: dict[str, bytes]) -> Path
     suffix = archive_suffix(output_path)
     if not suffix:
         raise RuntimeError(f"Unsupported archive type: {output_path}")
-    if suffix == ".zip":
+    if suffix in {".zip", ".pyz"}:
         with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             for name, data in entries.items():
                 _safe_rel(name)
@@ -1430,8 +1433,36 @@ def list_archive_members(artifact: str | Path, *, include_data: bool = False) ->
     members: list[ArchiveMember] = []
     seen: dict[str, bool] = {}
     suffix = archive_suffix(path)
-    if suffix == ".zip":
+    if suffix in {".zip", ".pyz"}:
         with zipfile.ZipFile(path) as zf:
+            declared_profile = suffix == '.pyz'
+            if not declared_profile and '.devtool-artifact.json' in zf.namelist():
+                entry = zf.getinfo('.devtool-artifact.json')
+                if entry.file_size <= 65536:
+                    try:
+                        doc = json.loads(zf.read(entry).decode('utf-8'))
+                        declared_profile = isinstance(doc, dict) and 'executable_overlay' in doc
+                    except (ValueError, UnicodeError):
+                        pass  # Manifest resolution reports invalid JSON separately.
+            if not declared_profile:
+                for sidecar in (path.with_name(path.name + '.devtool.json'),
+                                path.with_name(path.name + '.manifest.json')):
+                    if sidecar.is_file():
+                        if sidecar.stat().st_size > 65536:
+                            raise RuntimeError('Artifact manifest sidecar exceeds verification size limit')
+                        try:
+                            doc = json.loads(sidecar.read_text(encoding='utf-8'))
+                            if isinstance(doc, dict) and 'executable_overlay' in doc:
+                                declared_profile = True
+                        except (ValueError, UnicodeError):
+                            pass
+            if declared_profile:
+                infos = zf.infolist()
+                if len(infos) > 512 or sum(info.file_size for info in infos) > 24*1024*1024:
+                    raise RuntimeError('Executable overlay archive budget exceeded')
+                for info in infos:
+                    if info.file_size > 8*1024*1024 or (info.file_size and info.file_size > max(1, info.compress_size)*200):
+                        raise RuntimeError(f'Executable overlay decompression budget exceeded: {info.filename}')
             for info in zf.infolist():
                 is_dir = info.is_dir()
                 raw_name = info.filename.rstrip("/")
@@ -1469,6 +1500,30 @@ def list_archive_members(artifact: str | Path, *, include_data: bool = False) ->
         return members
     raise RuntimeError(f"Unsupported artifact type: {path}")
 
+
+
+def verified_member_classification(artifact: str | Path, manifest: dict[str, Any],
+                                   members: list[ArchiveMember] | None = None):
+    """Single validated package-vs-repository member map for all consumers."""
+    from .executable_overlay import classify
+    if members is None:
+        members = list_archive_members(artifact, include_data=True)
+    return classify(artifact, manifest, members,
+                    allowed_metadata_payloads=frozenset(artifact_inventory_metadata_payload_paths(manifest)))
+
+
+def artifact_payload_members(artifact: str | Path, *, manifest: dict[str, Any] | None = None,
+                             include_data: bool = True) -> list[ArchiveMember]:
+    """Return only repository-owned files/dirs; checked PYZ bootstrap is excluded."""
+    if manifest is None:
+        manifest = read_artifact_manifest(artifact)
+    members = list_archive_members(artifact, include_data=True)
+    classified = verified_member_classification(artifact, manifest, members)
+    metadata = classified.metadata
+    allowed = artifact_inventory_metadata_payload_paths(manifest)
+    return [m for m in members if not _is_skipped_artifact_payload_member(
+        m.name, allowed_metadata_payloads=allowed, package_metadata=metadata
+    )]
 
 
 def _archive_file_data(artifact: str | Path) -> dict[str, bytes]:
@@ -2380,6 +2435,7 @@ def _validate_inventory(
     *,
     check_source_state: bool = True,
     ignore_checksum: bool = False,
+    package_metadata: frozenset[str] = frozenset(),
 ) -> bool:
     entries = artifact_inventory_entries(manifest)
     if not entries:
@@ -2413,6 +2469,7 @@ def _validate_inventory(
         and not _is_skipped_artifact_payload_member(
             member.name,
             allowed_metadata_payloads=allowed_metadata_payloads,
+            package_metadata=package_metadata,
         )
     }
     declared_payload: set[str] = set()
@@ -2553,6 +2610,16 @@ def validate_artifact(
 
     if not members:
         return ArtifactValidation(False, ["Artifact archive is empty."], manifest)
+    try:
+        classified = verified_member_classification(artifact, manifest, members)
+    except (RuntimeError, ValueError) as exc:
+        return ArtifactValidation(False, [str(exc)], manifest)
+    package_metadata = classified.metadata
+    try:
+        from .native_validation_plan import normalize
+        normalize(manifest)
+    except (RuntimeError, ValueError) as exc:
+        return ArtifactValidation(False, [str(exc)], manifest)
 
     if manifest and _schema_version(manifest, messages) is None:
         ok = False
@@ -2585,6 +2652,7 @@ def validate_artifact(
         and not _is_skipped_artifact_payload_member(
             member.name,
             allowed_metadata_payloads=artifact_inventory_metadata_payload_paths(manifest),
+            package_metadata=package_metadata,
         )
     }
     payload_delete_conflicts = sorted(payload_paths.intersection(delete_manifest_paths))
@@ -2679,6 +2747,7 @@ def validate_artifact(
         messages,
         check_source_state=check_source_state,
         ignore_checksum=ignore_checksum,
+        package_metadata=package_metadata,
     ):
         ok = False
 
@@ -2816,6 +2885,7 @@ def preview_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = 
     manifest = read_artifact_manifest(artifact) if not snapshot else {}
     allowed_metadata_payloads = artifact_inventory_metadata_payload_paths(manifest)
     members = list_archive_members(artifact, include_data=True)
+    package_metadata = verified_member_classification(artifact, manifest, members).metadata if not snapshot else frozenset()
     file_members = [m for m in members if not m.is_dir]
     incoming_files = {
         Path(m.name): m
@@ -2823,6 +2893,7 @@ def preview_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = 
         if not _is_skipped_artifact_payload_member(
             m.name,
             allowed_metadata_payloads=allowed_metadata_payloads,
+            package_metadata=package_metadata,
         )
     }
     incoming_dirs = {
@@ -2832,6 +2903,7 @@ def preview_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = 
         and not _is_skipped_artifact_payload_member(
             m.name,
             allowed_metadata_payloads=allowed_metadata_payloads,
+            package_metadata=package_metadata,
         )
     }
     changes: list[dict[str, str]] = []
@@ -2924,6 +2996,7 @@ def diff_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = Fal
     manifest = read_artifact_manifest(artifact) if not snapshot else {}
     allowed_metadata_payloads = artifact_inventory_metadata_payload_paths(manifest)
     members = list_archive_members(artifact, include_data=True)
+    package_metadata = verified_member_classification(artifact, manifest, members).metadata if not snapshot else frozenset()
     file_members = [m for m in members if not m.is_dir]
     incoming_files = {
         Path(m.name): m
@@ -2931,6 +3004,7 @@ def diff_artifact(repo_root: Path, artifact: str | Path, *, snapshot: bool = Fal
         if not _is_skipped_artifact_payload_member(
             m.name,
             allowed_metadata_payloads=allowed_metadata_payloads,
+            package_metadata=package_metadata,
         )
     }
     hunks: list[str] = []

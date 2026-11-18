@@ -230,6 +230,10 @@ def rebase_overlay(repo_root: Path, artifact: str | Path, *, output: str | Path 
     if inventory is None or not artifact_inventory_entries(manifest):
         raise RuntimeError("Overlay rebase requires a schema-v2 inventory.")
 
+    if manifest.get('executable_overlay') is not None:
+        # Rebase would have to reseal bootstrap and profile identity; never
+        # silently copy verified package metadata into an ordinary ZIP.
+        raise RuntimeError('Executable overlays require a newly sealed source-bound package; cannot rebase')
     members = list_archive_members(source, include_data=True)
     payload: dict[str, bytes] = {}
     manifest_member = ""

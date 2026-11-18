@@ -22,6 +22,7 @@ from .artifacts import (
     archive_suffix,
     artifact_inventory_entries,
     artifact_inventory_metadata_payload_paths,
+    verified_member_classification,
     artifact_preflight_policy,
     artifact_preflight_phases,
     artifact_preflight_write_paths,
@@ -4993,16 +4994,19 @@ def _extract_archive(artifact_path: Path, target: Path) -> int:
     # duplicate normalized names or internal file/child collisions.
     from .artifacts import list_archive_members
 
-    list_archive_members(artifact_path, include_data=False)
+    members = list_archive_members(artifact_path, include_data=True)
     manifest = read_artifact_manifest(artifact_path)
+    package_metadata = verified_member_classification(artifact_path, manifest, members).metadata
     allowed_metadata_payloads = artifact_inventory_metadata_payload_paths(manifest)
     suffix = archive_suffix(artifact_path)
-    if suffix == ".zip":
+    if suffix in {".zip", ".pyz"}:
         with zipfile.ZipFile(artifact_path) as zf:
-            return _safe_extract_zip(zf, target, allowed_metadata_payloads=allowed_metadata_payloads)
+            return _safe_extract_zip(zf, target, allowed_metadata_payloads=allowed_metadata_payloads,
+                                     package_metadata=package_metadata)
     if suffix and suffix != ".zip":
         with open_tar_archive(artifact_path) as tf:
-            return _safe_extract_tar(tf, target, allowed_metadata_payloads=allowed_metadata_payloads)
+            return _safe_extract_tar(tf, target, allowed_metadata_payloads=allowed_metadata_payloads,
+                                     package_metadata=package_metadata)
     raise RuntimeError(f"Unsupported artifact type: {artifact_path}")
 
 
@@ -5028,6 +5032,7 @@ def _safe_extract_zip(
     target: Path,
     *,
     allowed_metadata_payloads: set[str] | None = None,
+    package_metadata: frozenset[str] = frozenset(),
 ) -> int:
     target = target.resolve()
     skipped_metadata = 0
@@ -5046,6 +5051,7 @@ def _safe_extract_zip(
         if _is_skipped_artifact_payload_member(
             archive_name,
             allowed_metadata_payloads=allowed_metadata_payloads,
+            package_metadata=package_metadata,
         ):
             skipped_metadata += 1
             continue
@@ -5072,6 +5078,7 @@ def _safe_extract_tar(
     target: Path,
     *,
     allowed_metadata_payloads: set[str] | None = None,
+    package_metadata: frozenset[str] = frozenset(),
 ) -> int:
     target = target.resolve()
     skipped_metadata = 0
@@ -5087,6 +5094,7 @@ def _safe_extract_tar(
         if _is_skipped_artifact_payload_member(
             archive_name,
             allowed_metadata_payloads=allowed_metadata_payloads,
+            package_metadata=package_metadata,
         ):
             skipped_metadata += 1
             continue
