@@ -653,14 +653,16 @@ class ContractV31Tests(unittest.TestCase):
             with self.assertRaisesRegex(lc.Refused,'NO_TRUSTED_DEVTOOL_CHECKOUT'):
                 lc.discover_runtime(other,pin)
 
-    def test_3105_native_ui_is_plain_even_with_parent_textual(self):
+    def test_native_child_host_controls_respect_explicit_ui_preferences(self):
         with patch.dict(os.environ,{'DEVTOOL_EXECUTION_PRESENTATION':'textual',
                                      'DEVTOOL_JOB_UI':'compact',
                                      'DEVTOOL_TEXTUAL_APPLY_HOST':'1',
                                      'DEVTOOL_TEXTUAL_EXECUTION_HOST':'1'},clear=False):
             e=lc.safe_env()
-        self.assertEqual(e['DEVTOOL_EXECUTION_PRESENTATION'],'plain')
-        self.assertEqual(e['DEVTOOL_JOB_UI'],'plain')
+        # The C1/C3 native contract disables automatic Textual hosts, not
+        # supported user-provided presentation settings.
+        self.assertEqual(e['DEVTOOL_EXECUTION_PRESENTATION'],'textual')
+        self.assertEqual(e['DEVTOOL_JOB_UI'],'compact')
         self.assertEqual(e['DEVTOOL_TEXTUAL_APPLY_HOST'],'0')
         self.assertEqual(e['DEVTOOL_TEXTUAL_EXECUTION_HOST'],'0')
 

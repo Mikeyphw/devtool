@@ -304,10 +304,11 @@ def safe_env(*, devtool_root: Path | None = None, target_root: Path | None = Non
     env['GIT_NO_REPLACE_OBJECTS'] = '1'
     env['GIT_TERMINAL_PROMPT'] = '0'
     env['PYTHONDONTWRITEBYTECODE'] = '1'
-    # Native Devtool presentation selectors. Do not emulate or replace its UI.
+    # C3: Native child hosts are disabled at the supported boundaries. Do not
+    # manufacture or override the older presentation/job UI selectors: C1
+    # made native terminal output the default in the CLI itself. Preserving
+    # explicit environment preferences avoids silently rewriting user state.
     env.update({
-        'DEVTOOL_EXECUTION_PRESENTATION': 'plain',
-        'DEVTOOL_JOB_UI': 'plain',
         'DEVTOOL_TEXTUAL_APPLY_HOST': '0',
         'DEVTOOL_TEXTUAL_EXECUTION_HOST': '0',
     })
@@ -497,6 +498,10 @@ def make_manifest(name: str, identity: dict[str,str], devtool: dict[str,str],
         major=parse_version(version)[0]
         if major != 3:raise Refused('LAUNCHER_RUNTIME_UNSUPPORTED_MAJOR')
         devtool_contract['runtime_compatibility']={'minimum':version,'major':major}
+        # Newly built packages opt into native terminal semantics, while
+        # already-published manifests with no profile continue to verify
+        # against their original immutable bootstrap bytes.
+        devtool_contract['bootstrap_profile']='native-terminal-v1'
     return {'schema':SCHEMA,'name':name,'source':{k:identity[k] for k in ('repository','branch','source_sha','source_tree')},
             'devtool':devtool_contract,
             'plan':{'schema_version':1,'changes':[{'path':c['path'],'action':c['action']} for c in inventory]},
@@ -512,6 +517,10 @@ def verify_manifest(m: dict[str,Any]) -> None:
     for key in ('source_sha','source_tree'):validate_sha(source.get(key),'source.'+key)
     for k in ('schema_blob','source_sha','source_tree','module_blob'):
         validate_sha(devtool.get(k),'devtool.'+k)
+    profile=devtool.get('bootstrap_profile')
+    if profile is not None and (profile != 'native-terminal-v1' or
+                                'runtime_compatibility' not in devtool):
+        raise Refused('LAUNCHER_BOOTSTRAP_PROFILE_INVALID')
     if 'runtime_compatibility' in devtool:
         from .launcher_runtime_compat import parse_version
         contract=devtool['runtime_compatibility']
@@ -643,7 +652,7 @@ def build_package(args:argparse.Namespace)->None:
         say('LAUNCHER_V32_WARNING EXPLICIT_LEGACY_STATIC_ONLY; '
             'no executable overlay validation promised')
     verify_manifest(manifest)
-    files={'__main__.py':bootstrap_content(devtool).encode('utf-8'),
+    files={'__main__.py':bootstrap_content(manifest['devtool']).encode('utf-8'),
            'manifest.json':(json.dumps(manifest,sort_keys=True,indent=2,ensure_ascii=False)+'\n').encode(),
            **payload, **{'payload/'+p:b for p,b in hooks.items()}}
     raw=zip_bytes(files)
@@ -1586,6 +1595,22 @@ sys.path.insert(0,str(root))
 from devtool.launcher_contract_v3 import main
 raise SystemExit(main())
 '''
+    # Preserve the previous generated 3.1/3.2 compatible bootstrap exactly
+    # for immutable packages with no profile. Only newly declared profiles
+    # change the generated code; the native coordinator is still the owner of
+    # apply, commit, delivery and CI operations.
+    if devtool.get('bootstrap_profile') == 'native-terminal-v1':
+        env_old=("env.update(DEVTOOL_EXECUTION_PRESENTATION='plain',DEVTOOL_JOB_UI='plain',\n"
+                 "           DEVTOOL_TEXTUAL_APPLY_HOST='0',DEVTOOL_TEXTUAL_EXECUTION_HOST='0')")
+        env_new="env.update(DEVTOOL_TEXTUAL_APPLY_HOST='0',DEVTOOL_TEXTUAL_EXECUTION_HOST='0')"
+        keys_old=("for key in ('DEVTOOL_EXECUTION_PRESENTATION','DEVTOOL_JOB_UI',"
+                  "'DEVTOOL_TEXTUAL_APPLY_HOST','DEVTOOL_TEXTUAL_EXECUTION_HOST'):")
+        keys_new="for key in ('DEVTOOL_TEXTUAL_APPLY_HOST','DEVTOOL_TEXTUAL_EXECUTION_HOST'):"
+        if code.count(env_old) != 1 or code.count(keys_old) != 1:
+            raise Refused('LAUNCHER_NATIVE_TERMINAL_BOOTSTRAP_TEMPLATE_DRIFT')
+        code=code.replace(env_old,env_new).replace(keys_old,keys_new)
+    elif devtool.get('bootstrap_profile') is not None:
+        raise Refused('LAUNCHER_BOOTSTRAP_PROFILE_INVALID')
     code=code.replace('_MINIMUM_',repr(required)).replace('_MAJOR_',repr(major))
     compile(code,'compatible-bootstrap.py','exec')
     return code
@@ -1593,6 +1618,10 @@ raise SystemExit(main())
 
 def bootstrap_content(devtool:dict[str,str])->str:
     """Select verified same-major runtime for opt-in manifests; exact for legacy."""
+    if devtool.get('bootstrap_profile') not in (None, 'native-terminal-v1'):
+        raise Refused('LAUNCHER_BOOTSTRAP_PROFILE_INVALID')
+    if devtool.get('bootstrap_profile') and not ('launcher_version' in devtool or 'runtime_compatibility' in devtool):
+        raise Refused('LAUNCHER_BOOTSTRAP_PROFILE_REQUIRES_ABI')
     if 'launcher_version' in devtool:
         return compatible_bootstrap_content(devtool)
     if 'runtime_compatibility' in devtool:
