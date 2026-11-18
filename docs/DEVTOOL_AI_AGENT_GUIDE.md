@@ -2165,6 +2165,9 @@ Read-only source-bound delivery session plan
 | `--head HEAD` | Checked-out feature branch |
 | `--overlay OVERLAY` | Read-only overlay SHA-256 inventory |
 | `--json` | Emit machine-readable result |
+| `--base-repo BASE_REPO` | Upstream repository (owner/name); for forks, explicit and source-bound |
+| `--head-repo HEAD_REPO` | Head fork repository (owner/name); must match Git origin |
+| `--base-sha BASE_SHA` | Optional pinned upstream base SHA; reject base branch drift |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -2178,6 +2181,9 @@ Create a private PLANNED delivery session
 | `--head HEAD` | Checked-out feature branch |
 | `--overlay OVERLAY` | Read-only overlay SHA-256 inventory |
 | `--json` | Emit machine-readable result |
+| `--base-repo BASE_REPO` | Upstream repository (owner/name); for forks, explicit and source-bound |
+| `--head-repo HEAD_REPO` | Head fork repository (owner/name); must match Git origin |
+| `--base-sha BASE_SHA` | Optional pinned upstream base SHA; reject base branch drift |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -2211,6 +2217,7 @@ Read-only delivery evidence report
 | --- | --- |
 | `--id DELIVERY_ID` | Exact 32-character session ID Required. |
 | `--json` | Emit machine-readable result |
+| `--regression-request-id REGRESSION_REQUEST_ID` | Read-only qualification against a correlated Actions dispatch request |
 
 Agent note: machine-friendly controls on this command include `--json`.
 

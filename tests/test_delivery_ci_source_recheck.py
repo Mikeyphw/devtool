@@ -29,6 +29,7 @@ def sess(tmp_path):
 def pr_info(item):
     return {'number':18,'state':'open',
             'head':{'sha':item['head_sha'],'ref':item['head'],
+                    'label':f"{item['repository'].split('/',1)[0]}:{item['head']}",
                     'repo':{'full_name':item['repository']}},
             'base':{'ref':item['base'],'repo':{'full_name':item['repository']}},
             'merge_commit_sha':'c'*40}
@@ -44,13 +45,16 @@ def run(item, sha=None, event='push'):
 class Client:
     def __init__(self,item):
         self.item=item;self.remote_sha=item['head_sha'];self.merge='c'*40
-        self.calls=0;self.change=None
+        self.calls=0;self.change=None;self.head_label_override=None
         self.rows=[run(item)]
     def _get(self,path):
         if '/branches/' in path:
             return {'commit':{'sha':self.remote_sha}}
         if path.endswith('/pulls/18'):
-            return pr_info(self.item)
+            info=pr_info(self.item)
+            if self.head_label_override is not None:
+                info['head']['label']=self.head_label_override
+            return info
         if path.endswith('/merge'):
             return {'object':{'sha':self.merge}}
         raise AssertionError(path)
@@ -93,3 +97,16 @@ def test_pr_merge_changes_during_run_list_cannot_pass(sess):
     c.change=lambda client:setattr(client,'merge','d'*40)
     with pytest.raises(DeliverySessionError,match='merge identity changed'):
         delivery.observe_ci(item['id'],required=('Unit CI',),client=c,state_root=root)
+
+
+def test_pr_same_short_branch_wrong_head_label_cannot_pass(sess):
+    item,root=sess
+    record_pr_observation(item['id'],{'number':18,'head':item['head'],
+        'base':item['base'],'head_sha':item['head_sha'],
+        'url':f"https://github.com/{item['repository']}/pull/18"},state_root=root)
+    c=Client(item)
+    c.head_label_override='attacker:feature/a'
+    c.rows=[run(item,sha='c'*40,event='pull_request')]
+    with pytest.raises(DeliverySessionError,match='Current PR identity changed'):
+        delivery.observe_ci(item['id'],required=('Unit CI',),client=c,state_root=root)
+    assert c.calls == 0  # fail closed before attempting to count hosted runs
