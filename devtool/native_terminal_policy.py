@@ -30,3 +30,16 @@ def explicit_textual_host_requested(
     if str(environment.get("DEVTOOL_EXECUTION_PRESENTATION", "") or "").strip().lower() == "plain":
         return False
     return host in _ENABLE or selected in _TEXTUAL or env_selected in _TEXTUAL
+
+
+def may_enable_child_ansi(environment: Mapping[str, str]) -> bool:
+    """Never synthesize FORCE_COLOR against explicit terminal color opt-outs.
+
+    A managed Textual parent uses pipes for the child, so opt-in color helps
+    preserve safe SGR in its log widget. It is not permission to ignore the
+    operator's NO_COLOR, CLICOLOR=0 or TERM=dumb settings.
+    """
+    return ("FORCE_COLOR" not in environment
+            and "NO_COLOR" not in environment
+            and str(environment.get("CLICOLOR", "") or "").strip() != "0"
+            and str(environment.get("TERM", "") or "").strip().lower() != "dumb")

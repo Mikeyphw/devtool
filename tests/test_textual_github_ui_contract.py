@@ -16,7 +16,8 @@ def test_canonical_tui_navigation_and_completion_have_exactly_one_actions_page()
     assert shortcut_collisions() == {}
     assert PAGES == TUI_PAGES
     assert PAGE_ACTIONS["github"] == ()
-    assert "read-only" in PANEL_AUTHORITIES["github"]
+    assert "read-only observation" in PANEL_AUTHORITIES["github"]
+    assert "confirmed dispatch, cancel, rerun" in PANEL_AUTHORITIES["github"]
     root=Path(__file__).resolve().parents[1]
     expected = "dashboard github runs logs diagnostics history targets workers validation artifacts overlays evidence build run actions github-actions log diagnostic worker ssh artifact overlay"
     for relative in ("devtool/completion.py","completions/_devtool"):

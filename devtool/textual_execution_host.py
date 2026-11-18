@@ -23,7 +23,7 @@ from typing import Any, Callable, Mapping, Sequence
 import uuid
 
 from .execution_presentation import build_textual_execution_app, create_textual_execution_source
-from .native_terminal_policy import explicit_textual_host_requested
+from .native_terminal_policy import explicit_textual_host_requested, may_enable_child_ansi
 from .job_ui import job_ui_mode, run_job_app, build_compact_execution_app
 from .tasker import DEFAULT_TASKER_DIR, resolve_cli_path
 from .invocation_origin import create_managed_run_handoff
@@ -263,11 +263,13 @@ class ExecutionTextualHostSource:
             child_env['DEVTOOL_ACTIONS_STREAM'] = '1'
         child_env["DEVTOOL_RUN_ID"] = self.run_id
         child_env["DEVTOOL_MANAGED_RUN_HANDOFF"] = create_managed_run_handoff(self.run_id)
-        # Child runner presentation stays plain because the parent owns the TTY.
-        child_env["DEVTOOL_EXECUTION_PRESENTATION"] = "plain"
+        # The parent owns the TTY. Only supported host selectors block recursion;
+        # do not overwrite the operator's older presentation/job preferences.
+        child_env["DEVTOOL_TEXTUAL_EXECUTION_HOST"] = "0"
+        child_env["DEVTOOL_TEXTUAL_APPLY_HOST"] = "0"
         # Captured pipes are not a TTY. Restore opt-in CLI colors where tools
         # support FORCE_COLOR, while honoring an explicit NO_COLOR preference.
-        if "NO_COLOR" not in child_env and "FORCE_COLOR" not in child_env:
+        if may_enable_child_ansi(child_env):
             child_env["FORCE_COLOR"] = "1"
         command_args = interactive_watch_argv(
             self.raw_argv,

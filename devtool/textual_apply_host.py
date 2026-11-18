@@ -26,7 +26,7 @@ from types import SimpleNamespace
 import uuid
 
 from .tasker import DEFAULT_TASKER_DIR, resolve_cli_path
-from .native_terminal_policy import explicit_textual_host_requested
+from .native_terminal_policy import explicit_textual_host_requested, may_enable_child_ansi
 from .job_ui import job_ui_mode, run_job_app, styled_job_line, job_icons, readable_job_line
 from .invocation_origin import create_managed_run_handoff
 from .textual_ux import (
@@ -324,9 +324,11 @@ class ArtifactApplyHostSource:
         child_env["DEVTOOL_AUTO_HUD_CHILD"] = "1"
         child_env["DEVTOOL_RUN_ID"] = self.run_id
         child_env["DEVTOOL_MANAGED_RUN_HANDOFF"] = create_managed_run_handoff(self.run_id)
-        # Nested runner/hook presentation remains plain; the parent owns the TTY.
-        child_env["DEVTOOL_EXECUTION_PRESENTATION"] = "plain"
-        if "NO_COLOR" not in child_env and "FORCE_COLOR" not in child_env:
+        # Parent owns the TTY; use supported host disables rather than overwriting
+        # the operator's presentation/job preferences.
+        child_env["DEVTOOL_TEXTUAL_EXECUTION_HOST"] = "0"
+        child_env["DEVTOOL_TEXTUAL_APPLY_HOST"] = "0"
+        if may_enable_child_ansi(child_env):
             child_env["FORCE_COLOR"] = "1"
         argv = [sys.executable, "-m", "devtool", *child_argv(self.raw_argv, force_yes=force_yes)]
         self._process = self.popen_factory(

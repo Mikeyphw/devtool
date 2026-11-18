@@ -537,6 +537,8 @@ class CanonicalControlActionDispatcher:
                 apply_child=True,
             )
         if action == "worker.recover":
+            if data.get("approved") is not True:
+                return False, "SSH worker recovery requires explicit confirmation."
             profile = _text(data.get("profile") or data.get("name")).strip()
             if not profile:
                 return False, "Select an SSH worker profile first."
@@ -549,6 +551,8 @@ class CanonicalControlActionDispatcher:
                 argv.extend(["--node-id", worker_node_id])
             return self._spawn_cli(argv, label=f"SSH worker recovery {profile}")
         if action in {"rollback", "recover"}:
+            if data.get("approved") is not True:
+                return False, "Transaction recovery/rollback requires explicit confirmation."
             transaction_path = _text(data.get("transaction_path") or data.get("path")).strip()
             if not transaction_path:
                 return False, "Select an active transaction with a canonical transaction path first."
@@ -586,10 +590,15 @@ class CanonicalControlActionDispatcher:
         env = dict(os.environ)
         env["DEVTOOL_TEXTUAL_EXECUTION_CHILD"] = "1"
         env["DEVTOOL_AUTO_HUD_CHILD"] = "1"
-        env["DEVTOOL_EXECUTION_PRESENTATION"] = "plain"
+        # Ordinary child execution is native. Do not synthesize or overwrite
+        # the historical presentation/job selectors: keep the operator's
+        # environment and disable only the supported Textual hosts.
+        env["DEVTOOL_TEXTUAL_EXECUTION_HOST"] = "0"
+        env["DEVTOOL_TEXTUAL_APPLY_HOST"] = "0"
         if apply_child:
             env["DEVTOOL_TEXTUAL_APPLY_CHILD"] = "1"
-        command = [self.python_executable, "-m", "devtool", "--repo", str(self.repo_root), *[str(item) for item in argv]]
+        command = [self.python_executable, "-m", "devtool", "--no-clipboard", "--ui", "plain",
+                   "--repo", str(self.repo_root), *[str(item) for item in argv]]
         # Explicit dashboard execution is not the ordinary CLI.  Retain real
         # child stdout/stderr in a private, durable log rather than DEVNULL and
         # display its pointer so errors are recoverable after closing the TUI.
@@ -1937,7 +1946,7 @@ def create_textual_control_center_app(
             )
 
         def _dispatch_transaction(self, action_id: str, overlay: Mapping[str, Any]) -> None:
-            ok, message = self.dispatcher.dispatch(action_id, payload={"transaction_path": overlay.get("transaction_path", "")})
+            ok, message = self.dispatcher.dispatch(action_id, payload={"transaction_path": overlay.get("transaction_path", ""), "approved": True})
             self.notify(message, severity="information" if ok else "error")
             self.refresh_from_provider()
 
@@ -1994,6 +2003,7 @@ def create_textual_control_center_app(
                 "worker.recover",
                 payload={
                     "profile": worker.get("profile") or worker.get("name") or "",
+                    "approved": True,
                     "run_id": worker.get("run_id") or "",
                     "node_id": worker.get("node_id") or "",
                 },

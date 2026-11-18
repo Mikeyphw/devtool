@@ -104,6 +104,8 @@ def test_explicit_control_center_apply_needs_real_approval(tmp_path, monkeypatch
     ok, message = dispatcher.dispatch('overlay.apply', payload={'artifact':'demo.zip', 'approved':True})
     assert ok, message
     assert len(calls)==1 and 'native output:' in message
+    assert calls[0]['env']['DEVTOOL_TEXTUAL_APPLY_HOST'] == '0'
+    assert calls[0]['env']['DEVTOOL_TEXTUAL_EXECUTION_HOST'] == '0'
     logs=list((state/'devtool'/'control-center'/'requests').glob('*.log'))
     assert len(logs)==1 and logs[0].stat().st_mode & 0o077 == 0
 

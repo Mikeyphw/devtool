@@ -157,7 +157,10 @@ def test_source_managed_child_preserves_canonical_devtool_authority(monkeypatch:
     env = calls["kwargs"]["env"]
     assert env["DEVTOOL_TEXTUAL_APPLY_CHILD"] == "1"
     assert env["DEVTOOL_AUTO_HUD_CHILD"] == "1"
-    assert env["DEVTOOL_EXECUTION_PRESENTATION"] == "plain"
+    assert "DEVTOOL_EXECUTION_PRESENTATION" not in env
+    assert "DEVTOOL_JOB_UI" not in env
+    assert env["DEVTOOL_TEXTUAL_EXECUTION_HOST"] == "0"
+    assert env["DEVTOOL_TEXTUAL_APPLY_HOST"] == "0"
     assert env["DEVTOOL_RUN_ID"] == source.run_id
     assert calls["kwargs"]["stdin"] == __import__("subprocess").DEVNULL
     assert calls["kwargs"]["start_new_session"] is True
