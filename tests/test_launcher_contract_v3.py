@@ -241,7 +241,10 @@ class ContractTests(unittest.TestCase):
         p=lc.make_parser(False)
         a=p.parse_args(['apply','--repo','/tmp/example','--devtool-repo','/tmp/devtool'])
         self.assertFalse(a.approve_remote)
-        with self.assertRaises(SystemExit):p.parse_args(['deliver','--repo','/tmp/example','--devtool-repo','/tmp/devtool'])
+        refusal=io.StringIO()
+        with contextlib.redirect_stderr(refusal), self.assertRaises(SystemExit):
+            p.parse_args(['deliver','--repo','/tmp/example','--devtool-repo','/tmp/devtool'])
+        self.assertIn('--session-id',refusal.getvalue())
 
     def test_a23_bounded_ci(self):
         p=lc.make_parser(False)
@@ -628,7 +631,10 @@ class ContractV31Tests(unittest.TestCase):
         self.assertEqual((run.checks,run.interval),(25,8))
         self.assertFalse(p.parse_args(['apply']).approve_remote)
         for item in ['status','report','ci','deliver','resume']:
-            with self.assertRaises(SystemExit):p.parse_args([item])
+            refusal=io.StringIO()
+            with contextlib.redirect_stderr(refusal), self.assertRaises(SystemExit):
+                p.parse_args([item])
+            self.assertIn('--session-id',refusal.getvalue())
 
     def test_3102_auto_target_exact_checkout(self):
         repo=fixture(self.root,'sample')
@@ -786,10 +792,86 @@ class NativeDeliveryClipboardAndCITests(unittest.TestCase):
             lc.native(self.repo,self.runtime,'apply','overlay','pkg.zip',
                       '--yes',stage='native-atomic-apply',live=True)
         argv=run.call_args.args[0]
-        self.assertEqual(argv[:8],[sys.executable,'-B','-m','devtool','--repo',
-                                   str(self.repo),'--no-clipboard','apply'])
+        self.assertEqual(argv[:9],[sys.executable,'-B','-m','devtool','--host',
+                                   '--repo',str(self.repo),'--no-clipboard','apply'])
         self.assertEqual(argv[-3:],['overlay','pkg.zip','--yes'])
         self.assertTrue(run.call_args.kwargs['live'])
+
+    def test_native_delivery_commands_force_host_execution(self):
+        # Do not allow auto-chroot for any native launcher delivery operation.
+        commands=(
+            ('delivery','adoption','scaffold','--help'),
+            ('validate-overlay','candidate.zip'),
+            ('apply','overlay','candidate.zip'),
+            ('delivery','session','start','--json'),
+            ('delivery','session','push','--yes'),
+            ('delivery','session','pr','--yes'),
+            ('delivery','session','ci','--checks','2'),
+        )
+        for parts in commands:
+            with self.subTest(operation=parts), patch(
+                    'devtool.launcher_contract_v3.exec_cmd',return_value='') as execute:
+                lc.native(self.repo,self.runtime,*parts,stage='host-delivery-test')
+                argv=execute.call_args.args[0]
+                self.assertEqual(argv[:8],
+                    [sys.executable,'-B','-m','devtool','--host','--repo',
+                     str(self.repo),'--no-clipboard'])
+                self.assertEqual(argv[8:],list(parts))
+
+    def test_required_full_artifact_policy_scopes_native_validation(self):
+        # Full assurance does NOT mean the whole project's default build/test.
+        # Leave native required-validation policy in control of phase selection.
+        manifest=json.loads(json.dumps(self.manifest))
+        manifest['source']['branch']='feature/test-targeted'
+        manifest['inventory']=[]
+        manifest['plan']={
+            'schema_version':1,'changes':[],
+            'delivery_validation_mode':'full',
+            'validation':{'mode':'required','required':True,
+                 'restore':False,'build':False,'test':False,
+                 'rollback_on_failure':True,
+                 'script':{'path':'.devtool-artifact/validate-targeted.sh',
+                           'runner':'sh','sha256':'a'*64}}
+        }
+        changed={'repository':'Mikeyphw/sample','branch':'feature/test-targeted',
+                 'source_sha':'f'*40,'source_tree':'e'*40}
+        receipt={'id':'b'*32,'head_sha':'f'*40}
+        with patch('devtool.launcher_contract_v3.check_source'),              patch('devtool.launcher_contract_v3.runtime_probe'),              patch('devtool.launcher_contract_v3.scaffold',return_value=self.root/'target.zip'),              patch('devtool.launcher_contract_v3.native') as native,              patch('devtool.launcher_contract_v3.repo_identity',return_value=changed),              patch('devtool.launcher_contract_v3.verify_postcommit_status'),              patch('devtool.launcher_contract_v3.native_json',return_value=receipt):
+            self.assertEqual(lc.apply_package(self.repo,self.runtime,manifest,{},False),0)
+        native.assert_called_once()
+        argv=native.call_args.args
+        # native(repo, devtool_root, *operation_parts, stage=...)
+        # First two mocked arguments are bound paths, not CLI operation tokens.
+        self.assertEqual(argv[:2],(self.repo,self.runtime))
+        self.assertEqual(argv[2:4],('apply','overlay'))
+        self.assertIn('--keep-artifact',argv)
+        self.assertNotIn('--validate',argv)
+        self.assertNotIn('--static-validate',argv)
+        self.assertTrue(manifest['plan']['validation']['required'])
+        self.assertFalse(manifest['plan']['validation']['build'])
+        self.assertFalse(manifest['plan']['validation']['test'])
+
+    def test_legacy_static_still_selects_explicit_bounded_static_validation(self):
+        manifest=json.loads(json.dumps(self.manifest))
+        manifest['source']['branch']='feature/test-static'
+        manifest['inventory']=[]
+        manifest['plan']={
+            'schema_version':1,'changes':[],
+            'delivery_validation_mode':'static',
+            'delivery_static_justification':'Explicit bounded static source-only checks.',
+            'validation':{'mode':'required','required':True,
+                 'restore':False,'build':False,'test':False,
+                 'rollback_on_failure':True,
+                 'script':{'path':'.devtool-artifact/validate-static.sh',
+                           'runner':'sh','sha256':'a'*64}}
+        }
+        changed={'repository':'Mikeyphw/sample','branch':'feature/test-static',
+                 'source_sha':'f'*40,'source_tree':'e'*40}
+        receipt={'id':'b'*32,'head_sha':'f'*40}
+        with patch('devtool.launcher_contract_v3.check_source'),              patch('devtool.launcher_contract_v3.runtime_probe'),              patch('devtool.launcher_contract_v3.scaffold',return_value=self.root/'target.zip'),              patch('devtool.launcher_contract_v3.native') as native,              patch('devtool.launcher_contract_v3.repo_identity',return_value=changed),              patch('devtool.launcher_contract_v3.verify_postcommit_status'),              patch('devtool.launcher_contract_v3.native_json',return_value=receipt):
+            self.assertEqual(lc.apply_package(self.repo,self.runtime,manifest,{},False),0)
+        self.assertIn('--static-validate',native.call_args.args)
+        self.assertNotIn('--validate',native.call_args.args)
 
     def test_native_machine_receipts_also_disable_clipboard(self):
         with patch('devtool.launcher_contract_v3.exec_cmd',return_value='{"ok":true}') as run:
@@ -797,7 +879,7 @@ class NativeDeliveryClipboardAndCITests(unittest.TestCase):
                                             'status','--id','a'*32,stage='session-status'),
                              {'ok':True})
         argv=run.call_args.args[0]
-        self.assertEqual(argv[6],'--no-clipboard')
+        self.assertEqual(argv[7],'--no-clipboard')
         self.assertEqual(argv[-1],'--json')
         self.assertFalse(run.call_args.kwargs['live'])
 
