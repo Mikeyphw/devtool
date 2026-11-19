@@ -19,7 +19,8 @@ from .delivery_session import DeliverySessionError
 from .github_actions import API_ORIGIN, API_VERSION, GitHubActionsClient, GitHubActionsError, _slug
 
 _MAX_BYTES = 2 * 1024 * 1024
-_ALLOWED = re.compile(r'/repos/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/(?:pulls(?:\?.*)?|rulesets(?:\?.*)?|commits/[0-9a-f]{40}/check-runs(?:\?.*)?)$')
+# Allow exact, read-only effective branch-rule reads.  Branch slashes must be URL-encoded as %2F; never relax method/slug/origin checks.
+_ALLOWED = re.compile(r'/repos/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/(?:pulls(?:\?.*)?|rulesets(?:\?.*)?|rules/branches/(?:[A-Za-z0-9._-]|%2[Ff]){1,600}|commits/[0-9a-f]{40}/check-runs(?:\?.*)?)$')
 
 
 def classify_provider_error(exc: BaseException) -> str:

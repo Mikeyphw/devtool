@@ -401,6 +401,17 @@ def confirm_intent(identity: str, operation: str, key: str,
             value = proof.get('pr_number')
             if type(value) is not int or value < 1:
                 raise DeliverySessionError('PR evidence requires an exact PR number')
+        if operation == 'push':
+            # This records ONLY an independently observed exact native push.
+            # Never equate an arbitrary confirmed intent with remote verification.
+            exact = f"{record['repository']}:refs/heads/{record['head']}:{record['head_sha']}"
+            if key != exact or set(proof) != {'head_sha'}:
+                raise DeliverySessionError('Push verification must bind exact origin/ref/HEAD')
+            live = _identity(Path(record['repo_root']), head=record['head'], base=record['base'])
+            if (live['head_sha'] != record['head_sha'] or
+                    live['git_dir'] != record['git_dir'] or
+                    live['repository'].casefold() != record['repository'].casefold()):
+                raise DeliverySessionError('Push verification source identity changed')
         key_hash = hashlib.sha256(key.encode('utf-8')).hexdigest()
         items = [x for x in record['intents'] if x['operation'] == operation and x['key_sha256'] == key_hash]
         if not items:
@@ -413,6 +424,14 @@ def confirm_intent(identity: str, operation: str, key: str,
         if found['state'] == 'confirmed':
             if found.get('evidence') != proof:
                 raise DeliverySessionError('Conflicting mutation reconciliation evidence')
+            if operation == 'push' and record.get('remote_verified') is not True:
+                # Idempotent migration for previously confirmed native push
+                # intents: caller has just read the same HEAD from origin.
+                record['remote_verified'] = True
+                record['updated_at'] = _utc()
+                record['events'].append({'kind':'remote_head_verified',
+                    'at':record['updated_at'],'commit':record['head_sha']})
+                _write(path, record)
             return {'state':'confirmed','confirmed':True,'reconciled':False}
         if found['state'] != 'unresolved':
             raise DeliverySessionError('Mutation intent state is invalid')
@@ -422,6 +441,10 @@ def confirm_intent(identity: str, operation: str, key: str,
         record['updated_at'] = _utc()
         record['events'].append({'kind':'mutation_confirmed','at':record['updated_at'],
                                  'operation':operation, 'intent_id':found['id']})
+        if operation == 'push':
+            record['remote_verified'] = True
+            record['events'].append({'kind':'remote_head_verified',
+                'at':record['updated_at'],'commit':record['head_sha']})
         _write(path,record)
         return {'state':'confirmed','confirmed':True,'reconciled':True}
 

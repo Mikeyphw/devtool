@@ -359,6 +359,91 @@ def test_branch_rules_verifies_required_actions_job_context(ctx):
     assert strict(ctx,cli)['state']=='CHECKS_EVIDENCE_PENDING'
 
 
+
+def test_native_provider_branch_rules_get_is_exactly_allowlisted_and_read_only():
+    from devtool.delivery_provider import request_json
+    from devtool.delivery_session import DeliverySessionError
+    from urllib.error import HTTPError
+    import io
+
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def read(self, limit): return b'[]'
+    class Opener:
+        def __init__(self): self.paths=[]
+        def open(self, req, timeout):
+            self.paths.append((req.get_method(), req.full_url))
+            return Response()
+    class Client:
+        def __init__(self):
+            self._token='fake'; self.timeout=1; self._opener=Opener()
+    client=Client()
+    base='/repos/Mikeyphw/devtool/rules/branches/main'
+    assert request_json(client,'GET',base)==[]
+    assert client._opener.paths==[('GET','https://api.github.com'+base)]
+    assert request_json(client,'GET','/repos/Mikeyphw/devtool/rules/branches/release%2Fv1')==[]
+    assert len(client._opener.paths)==2
+    for verb, invalid in (
+        ('POST',base),('GET',base+'?per_page=100'),
+        ('GET','/repos/Mikeyphw/devtool/rules/branches/../main'),
+        ('GET','/repos/Mikeyphw/devtool/rules/branches/main%2F..'),
+        ('GET','/repos/Mikeyphw/devtool/rules/branches/main?token=secret'),
+        ('GET','/repos/Mikeyphw/devtool/unsafe/branches/main'),
+    ):
+        with pytest.raises(DeliverySessionError):
+            request_json(client,verb,invalid)
+    assert len(client._opener.paths)==2
+
+
+def test_actual_ci_registrar_reads_encoded_branch_rules_via_bounded_provider(ctx,monkeypatch):
+    item,_,_=ctx
+    # This tests the registrar's real path into the provider, not the fake
+    # `Client.branch_rules` fast-path used by earlier unit tests.
+    class ReadOnly:
+        def __init__(self):
+            self._token='fake'; self.timeout=1
+            self.paths=[]
+            self._opener=self
+        def _get(self,path):
+            assert path.endswith('/branches/main')
+            return {'protected':False}
+        def open(self, req, timeout):
+            self.paths.append(req.full_url)
+            class Response:
+                status=200
+                def __enter__(self):return self
+                def __exit__(self,*args):return False
+                def read(self,limit):return b'[]'
+            return Response()
+    client=ReadOnly()
+    receipt=reg.audit_branch_rules(client,item,[])
+    assert receipt['ruleset_checked'] is True and receipt['required_status_contexts']==[]
+    assert client.paths==['https://api.github.com/repos/Mikeyphw/devtool/rules/branches/main']
+    # A branch with a slash is URL-encoded, never treated as an extra path.
+    release={**item,'base':'release/v1'}
+    def branch_get(path):
+        assert path.endswith('/branches/release/v1')
+        return {'protected':False}
+    client._get=branch_get
+    assert reg.audit_branch_rules(client,release,[])['ruleset_checked'] is True
+    assert client.paths[-1].endswith('/rules/branches/release%2Fv1')
+
+
+def test_protected_ruleset_outage_remains_unqualified_through_provider(ctx):
+    from devtool.delivery_session import DeliverySessionError
+    from urllib.error import HTTPError
+    item,_,_=ctx
+    class Outage:
+        def __init__(self):self._token='fake';self.timeout=1;self._opener=self
+        def _get(self,path):return {'protected':True}
+        def open(self, req, timeout):
+            raise HTTPError(req.full_url,403,'permission denied',{},None)
+    with pytest.raises(DeliverySessionError,match='permission_unavailable'):
+        reg.audit_branch_rules(Outage(),item,[])
+
+
 def test_extra_ruleset_context_blocks_green_workflow(ctx):
     item,_,_=ctx
     cli=Client(item,[row(item)])
