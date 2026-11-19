@@ -115,7 +115,7 @@ def _require_v2_source_contract(manifest: dict[str, Any]) -> None:
         raise ValueError('Executable v2 requires a complete format-1 inventory')
     inventory = inv['entries']
     paths: list[str] = []
-    expected: dict[str, str] = {}
+    expected: dict[str, str | None] = {}
     before: dict[str, str | None] = {}
     for row in inventory:
         if not isinstance(row, dict) or row.get('action') not in {'add', 'modify', 'delete'}:
@@ -132,7 +132,12 @@ def _require_v2_source_contract(manifest: dict[str, Any]) -> None:
             before[name] = digest
         else:
             before[name] = None
-        if action != 'delete':
+        if action == 'delete':
+            # The general exact-tree base contract requires the deleted path
+            # with a null postimage.  Omitting it made v2 delete artifacts
+            # impossible to validate against both native contracts.
+            expected[name] = None
+        else:
             digest = row.get('sha256')
             if not isinstance(digest, str) or not _HASH.fullmatch(digest):
                 raise ValueError('Executable v2 requires post hash for all payload files')
