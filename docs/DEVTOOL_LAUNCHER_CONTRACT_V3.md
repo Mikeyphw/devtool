@@ -8,7 +8,7 @@
 
 Before any module import, the bootstrap checks Devtool's exact pinned HEAD and tree with Git replacement objects disabled. The v3 module then verifies selected worktree/origin/cleanliness, committed schema and module blobs, imported module path and the native CLI contract. The target and runtime execution worktrees are separated by the exact-runtime resolver before any native overlay mutation. A caller can run the launcher inside its target worktree, including a Devtool worktree; the runtime is resolved to a stable exact pinned checkout or detached cache. Never silently repin an existing immutable package after its commit.
 
-All mutation uses the native `delivery adoption scaffold` -> `validate overlay` -> `apply overlay --yes --commit ... --static-validate --keep-artifact` transaction, followed by a fresh source-bound `delivery session start`. `check` itself runs the **native scaffold plus validator** but does not apply the overlay, write Git refs or contact GitHub. Native RUN-V3/LIFE cleanup receipts are preserved and reported, not deleted or reinterpreted as release evidence. Remote push/PR must be requested with `--approve-remote`; required-CI qualification uses the exact committed Devtool policy and session, never guessed workflow names. When the policy is absent, delivery continues with an explicit warning and CI qualification is **skipped**, not passed. If a committed policy exists, non-green required CI returns exit code 3 even when native observation completed successfully.
+All mutation uses the native `delivery adoption scaffold` -> `validate overlay` -> `apply overlay --yes --commit ... --keep-artifact (with --static-validate only for bounded static packages)` transaction, followed by a fresh source-bound `delivery session start`. `check` itself runs the **native scaffold plus validator** but does not apply the overlay, write Git refs or contact GitHub. Native RUN-V3/LIFE cleanup receipts are preserved and reported, not deleted or reinterpreted as release evidence. Remote push/PR must be requested with `--approve-remote`; required-CI qualification uses the exact committed Devtool policy and session, never guessed workflow names. When the policy is absent, delivery continues with an explicit warning and CI qualification is **skipped**, not passed. If a committed policy exists, non-green required CI returns exit code 3 even when native observation completed successfully.
 
 The optional native paths use *existing* Devtool `plan`, `capabilities`, `overlay recovery-plan`, `artifacts verify --receipt`, `delivery session resume`, `status`, and `report`, without another implementation of those features. Planning is read-only and does not execute a DAG. `diagnose` never automatically rolls back. `verify-artifact` verifies a specific receipt but does not establish signing, production authenticity, or formal release authorization.
 
@@ -224,3 +224,22 @@ committed apply, use the same durable session ID and native `delivery session
 ci` (or a rebuilt source-bound launcher `ci`) instead of reapplying an overlay.
 Older immutable launcher packages are never repinned or rewritten; this fix
 becomes available to packages built from the reviewed updated Devtool source.
+
+## Targeted validation default (2026-11)
+
+When executable validation is requested without an explicit test/task/profile
+selection, Devtool uses its existing affected-file and native test-selection
+facilities. Unresolvable or empty affected scope fails closed; it never
+activates whole-project validation implicitly. Embedded required validators
+and exact manifest tests/tasks retain their declared authority.
+
+Explicit comprehensive validation can be requested through the existing
+`--test-profile full` interface when a repository does not declare a custom
+`full` test profile. `validate-all` aggregates validation errors; it does not opt into whole-repository test coverage.
+A custom named `full` profile retains its configured semantics. In the
+interactive menu, choose **Full configured validation** deliberately.
+
+The launcher schema's `delivery_validation_mode: full` indicates *executable*
+validation, not comprehensive test coverage. Bounded static validation is a
+separate execution mode. Neither mode disables native source/payload checks,
+required artifact validators, atomic transaction validation or CI policy.

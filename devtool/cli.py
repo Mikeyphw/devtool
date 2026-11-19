@@ -3301,6 +3301,121 @@ def _runner_option_delta(base: dict, current: dict) -> dict:
     return delta
 
 
+def _apply_implicit_targeted_validation(config: ProjectConfig, args: argparse.Namespace, selection: dict) -> None:
+    """Use the existing native test-selection machinery for implicit validation.
+
+    Never create another test runner or select the whole repository merely
+    because the affected scope is unavailable. Explicit selectors and native
+    artifact policy remain authoritative.
+    """
+    command = str(getattr(args, "command", "") or "")
+    if command not in {"validate", "v", "validate-all", "wine-validate", "wv", *APPLY_COMMANDS}:
+        return
+    if (getattr(args, "_devtool_validation_api_action", "") or
+            str(getattr(args, "validate_scope", "") or "").strip().lower() in {
+                "continue", "resume", "retry", "status", "plan", "checkpoint",
+                "events", "report", "finalize", "abort", "recover", "reset",
+                "accept-plan-change", "pause", "stop"} or
+            str(getattr(args, "action", "") or "").strip().lower() in {
+                "continue", "resume", "retry", "status", "plan", "checkpoint",
+                "events", "report", "finalize", "abort", "recover", "reset",
+                "accept-plan-change", "pause", "stop"}):
+        # Durable control commands (including direct internal-session callers)
+        # must preserve their pinned plan instead of recomputing Git selection.
+        return
+    if (getattr(args, "sequential", False) or getattr(args, "resume", False)
+            or getattr(args, "validation_next", False)
+            or getattr(args, "validation_complete", False)
+            or str(getattr(args, "through", "") or "").strip()
+            or str(getattr(args, "validation_scope", "") or "").strip().lower()
+                in {"start", "continue", "next", "resume", "retry", "run"}):
+        # Explicit phased/durable execution uses its approved session plan,
+        # including its selected prerequisites; never recompute test scope.
+        return
+    if any(bool(getattr(args, item, False)) for item in ("no_validate", "defer_validate", "static_validate")):
+        return
+    if command in APPLY_COMMANDS:
+        manifest = (getattr(args, "_devtool_declared_manifest", None)
+                    or getattr(args, "_devtool_artifact_manifest", None) or {})
+        required = bool(artifact_validation_policy(manifest).get("required", False))
+        if not (getattr(args, "validate", False) or getattr(args, "validate_only", False) or required):
+            return
+    if all(_validation_skip_values(args)):
+        # A required checked validator/test-only artifact may legitimately
+        # disable all three built-in lifecycle phases.
+        return
+    profile = str(selection.get("profile") or "").strip().lower()
+    profiles = config.runner_options.get("test_profiles", {})
+    profiles = profiles if isinstance(profiles, dict) else {}
+    if profile == "full" and "full" not in profiles:
+        # Existing --test-profile is canonical-schema supported. Reserve its
+        # otherwise-undefined 'full' value as an explicit comprehensive choice.
+        selection.clear()
+        config.runner_options["test_selection"] = {}
+        config.runner_options.setdefault("validation", {})["selection_origin"] = "explicit-full"
+        return
+
+    # Existing explicit project, invocation and artifact selections win. Avoid
+    # touching pytest project defaults when they are already configured.
+    explicit_keys = {"profile", "selectors", "ids", "tags", "exclude_tags", "paths",
+                     "classes", "methods", "filter", "tasks", "task", "failed",
+                     "changed", "pytest_tests", "pytest_markers", "pytest_k", "pytest_args",
+                     "instrumented"}
+    if any(bool(selection.get(key)) for key in explicit_keys):
+        return
+    python_options = config.runner_options.get("python", {})
+    pytest_defaults = python_options.get("pytest", {}) if isinstance(python_options, dict) else {}
+    if isinstance(pytest_defaults, dict) and any(pytest_defaults.get(key) for key in ("tests", "markers", "k")):
+        return
+
+    validation = config.runner_options.setdefault("validation", {})
+    if not isinstance(validation, dict):
+        validation = {}
+        config.runner_options["validation"] = validation
+    declared = validation.get("changed_paths")
+    if isinstance(declared, (list, tuple)) and declared:
+        paths = [str(p).replace("\\", "/") for p in declared if str(p).strip()]
+        source = str(validation.get("changed_paths_source") or "artifact-inventory")
+    else:
+        from .affected import git_changed_paths
+        base = str(getattr(args, "affected_base", "") or "").strip()
+        head = str(getattr(args, "affected_head", "") or "").strip()
+        paths = list(git_changed_paths(config.repo_root, base=base, head=head))
+        source = "git-range" if (base or head) else "working-tree"
+    if not paths:
+        raise SystemExit("TARGETED_VALIDATION_SCOPE_EMPTY: no verifiable affected paths; select exact tests/tasks, an explicit range, or --test-profile full")
+
+    root = Path(config.repo_root).expanduser().resolve()
+    project = Path(config.project_root or config.repo_root).expanduser().resolve()
+    try:
+        prefix = project.relative_to(root).as_posix().strip("./")
+    except ValueError as exc:
+        raise SystemExit("TARGETED_VALIDATION_PROJECT_OUTSIDE_REPOSITORY") from exc
+    relative = [p[len(prefix)+1:] if prefix and p.startswith(prefix+"/") else p
+                for p in paths if not prefix or p.startswith(prefix+"/")]
+    if not relative:
+        raise SystemExit("TARGETED_VALIDATION_NO_PROJECT_CHANGES: selected target has no affected paths")
+
+    if config.kind in {"android", "gradle"}:
+        # The existing Android scope resolver knows source/resources/tests/docs;
+        # its 'full' fallback is not permitted for implicit coverage.
+        from .android_integration import android_validation_change_scope
+        validation["changed_paths"] = paths
+        validation["changed_paths_source"] = source
+        scope = android_validation_change_scope(config)
+        if scope == "full":
+            raise SystemExit("TARGETED_VALIDATION_ANDROID_SCOPE_UNCERTAIN: select explicit tasks or --test-profile full")
+        validation["selection_origin"] = "implicit-affected"
+        return
+
+    # apply_test_selection resolves these paths into native pytest/.NET/Go/etc.
+    # filters, and refuses unsupported/empty selections rather than broadening.
+    selection["paths"] = list(dict.fromkeys(relative))
+    validation["selection_origin"] = "implicit-affected"
+    validation["changed_paths"] = paths
+    validation["changed_paths_source"] = source
+
+
 def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -> None:
     if str(getattr(args, "proot_distro", "") or "").strip():
         config.execution_environment = EXECUTION_PROOT_DISTRO
@@ -3544,6 +3659,7 @@ def _apply_runner_cli_options(config: ProjectConfig, args: argparse.Namespace) -
     for key, attr in (("failed", "failed"), ("changed", "changed"), ("instrumented", "instrumented")):
         if bool(getattr(args, attr, False)):
             selection[key] = True
+    _apply_implicit_targeted_validation(config, args, selection)
     if selection:
         config.runner_options["test_selection"] = selection
 

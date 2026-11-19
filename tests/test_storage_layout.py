@@ -102,7 +102,23 @@ def test_legacy_validation_and_registry_preserved(root: Path) -> None:
 def test_explicit_validation_redirection_retained(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     external = root.parent / "guest-state"
     monkeypatch.setenv("DEVTOOL_VALIDATION_STATE_REPO_ROOT",str(external))
-    assert sl.validation_session_dir(root)==external/".devtool/state/android-validation"
+    assert sl.validation_session_dir(root) == sl.external_family_dir(external, "android-validation")
+    assert not (external / ".devtool/state/android-validation").exists()
+    # An isolated transaction's redirected writer must remain in the primary
+    # repository's XDG authority and satisfy the exact migration fence.
+    from devtool.storage_layout import storage_writer_guard_for_path
+    directory = sl.validation_session_dir(root)
+    with storage_writer_guard_for_path(directory):
+        sl.ensure_private_storage_dir(directory)
+        (directory / "state-check.txt").write_text("ok", encoding="utf-8")
+    assert (directory / "state-check.txt").read_text(encoding="utf-8")
+    # A populated legacy authority still wins until explicit migration.
+    legacy = external / ".devtool/state/android-validation"
+    (directory / "state-check.txt").unlink()
+    directory.rmdir()
+    legacy.mkdir(parents=True)
+    (legacy / "active.json").write_text("{}", encoding="utf-8")
+    assert sl.validation_session_dir(root) == legacy
 
 
 def test_migration_requires_confirmation_without_mutation(root: Path) -> None:

@@ -149,7 +149,7 @@ def test_resource_overrides_are_ephemeral_config_values(tmp_path: Path) -> None:
         validation_daemon=False,
         _devtool_passthrough_args=[],
         profile="",
-        test_profile="",
+        test_profile="full",
         select=[],
         test_ids=[],
         tag=[],
@@ -496,9 +496,14 @@ def test_safe_retry_uses_supported_recommended_profile(tmp_path: Path) -> None:
     assert "revision guard: `9`" in preview
 
 
-@pytest.mark.requires_posix
-@pytest.mark.slow_external
-def test_fallback_dashboard_is_navigable_in_a_pseudo_tty(tmp_path: Path) -> None:
+def _spawn_numbered_fallback(tmp_path: Path, *, wizard: bool = False):
+    """Real pseudo-TTY fallback, with deterministic output and bounded cold-start time.
+
+    Termux subprocess/import startup is much slower than hosted Linux. Waiting
+    for a word anywhere in the menu could send input before the actual prompt;
+    matching the active Rich Prompt prevents that race. The fallback still
+    executes unmodified Devtool in a child process, not a mocked controller.
+    """
     import os
     import sys
     import warnings
@@ -510,21 +515,69 @@ def test_fallback_dashboard_is_navigable_in_a_pseudo_tty(tmp_path: Path) -> None
         encoding="utf-8",
     )
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+    env.update({
+        "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
+        "NO_COLOR": "1",
+        "CLICOLOR": "0",
+        "TERM": "dumb",
+    })
+    env.pop("FORCE_COLOR", None)
+    args = ["-m", "devtool", "-r", str(tmp_path), "validation-menu"]
+    if wizard:
+        args.append("--wizard")
+    args.append("--no-fzf")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        child = pexpect.spawn(
-            sys.executable,
-            ["-m", "devtool", "-r", str(tmp_path), "validation-menu", "--no-fzf"],
-            env=env,
-            encoding="utf-8",
-            timeout=15,
+        return pexpect.spawn(
+            sys.executable, args, env=env, encoding="utf-8",
+            dimensions=(30, 100), timeout=120,
         )
-    child.expect("validation")
-    child.sendline("0")
-    child.expect(pexpect.EOF)
-    child.close()
-    assert child.exitstatus == 0
+
+
+def _numbered_prompt(child, prompt: str) -> str:
+    """Wait for a real input prompt, never a menu heading or description."""
+    import re
+    import pexpect
+
+    # Rich Prompt defaults can display either (0) or [0] across versions.
+    expression = rf"(?m)\b{re.escape(prompt)}[ \t]*[\(\[]0[\)\]][ \t]*:[ \t]*$"
+    try:
+        child.expect(expression, timeout=120)
+    except (pexpect.TIMEOUT, pexpect.EOF) as exc:
+        tail = str(child.before or "")[-2400:]
+        pytest.fail(f"Numbered fallback did not reach {prompt!r} prompt: {exc!r}\nLast PTY output:\n{tail}", pytrace=False)
+    return str(child.before)
+
+
+def _choose_numbered_label(child, prompt: str, label: str) -> None:
+    """Exercise numbered selection without relying on brittle row positions."""
+    import re
+
+    rendered = _numbered_prompt(child, prompt)
+    pattern = rf"(?m)^[ \t]*([1-9][0-9]*)[ \t]+{re.escape(label)}(?=[ \t\r\n]|$)"
+    found = re.search(pattern, rendered)
+    assert found is not None, (
+        f"Expected selectable {label!r} in {prompt!r} menu. Last output:\n{rendered[-2200:]}"
+    )
+    child.sendline(found.group(1))
+
+
+@pytest.mark.requires_posix
+@pytest.mark.slow_external
+def test_fallback_dashboard_is_navigable_in_a_pseudo_tty(tmp_path: Path) -> None:
+    import pexpect
+
+    child = _spawn_numbered_fallback(tmp_path)
+    try:
+        rendered = _numbered_prompt(child, "validation")
+        assert "Start a new validation session" in rendered
+        child.sendline("0")
+        child.expect(pexpect.EOF, timeout=90)
+        child.close()
+        assert child.exitstatus == 0
+    finally:
+        if not child.closed:
+            child.close(force=True)
 
 
 def test_main_menu_exposes_refresh_for_numbered_fallback(tmp_path: Path) -> None:
@@ -608,41 +661,26 @@ def test_dashboard_ctrl_r_calls_real_catalog_refresh(monkeypatch, tmp_path: Path
 @pytest.mark.requires_posix
 @pytest.mark.slow_external
 def test_numbered_fallback_completes_full_guided_wizard(tmp_path: Path) -> None:
-    import os
-    import sys
-    import warnings
-
     import pexpect
 
-    (tmp_path / "pyproject.toml").write_text(
-        "[build-system]\nrequires=[]\nbuild-backend='setuptools.build_meta'\n",
-        encoding="utf-8",
-    )
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        child = pexpect.spawn(
-            sys.executable,
-            ["-m", "devtool", "-r", str(tmp_path), "validation-menu", "--wizard", "--no-fzf"],
-            env=env,
-            encoding="utf-8",
-            timeout=20,
-        )
-    for prompt, answer in (
-        ("method", "1"),
-        ("context", "9"),
-        ("pipeline", "1"),
-        ("tests", "11"),
-        ("resources", "7"),
-        ("output", "9"),
-        ("review", "8"),
-    ):
-        child.expect(prompt)
-        child.sendline(answer)
-    child.expect(pexpect.EOF)
-    child.close()
-    assert child.exitstatus == 0
+    child = _spawn_numbered_fallback(tmp_path, wizard=True)
+    try:
+        for prompt, label in (
+            ("method", "Smart one-shot"),
+            ("context", "Done"),
+            ("pipeline", "Restore + build + test"),
+            ("tests", "Done"),
+            ("resources", "Done"),
+            ("output", "Done"),
+            ("review", "Back"),
+        ):
+            _choose_numbered_label(child, prompt, label)
+        child.expect(pexpect.EOF, timeout=90)
+        child.close()
+        assert child.exitstatus == 0
+    finally:
+        if not child.closed:
+            child.close(force=True)
 
 
 def test_termux_chroot_command_round_trips_through_cli_parser() -> None:

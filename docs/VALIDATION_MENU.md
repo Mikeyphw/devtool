@@ -168,3 +168,22 @@ compiler emits `--json` and `--machine pretty|compact` as appropriate.
 Use `--profile` for validation workflow policy, `--resource-profile` for resource
 policy, and `--test-profile` for structured test selection. These namespaces are
 distinct; `--profile` is not a resource-profile alias.
+
+## Targeted validation default (2026-11)
+
+When executable validation is requested without an explicit test/task/profile
+selection, Devtool uses its existing affected-file and native test-selection
+facilities. Unresolvable or empty affected scope fails closed; it never
+activates whole-project validation implicitly. Embedded required validators
+and exact manifest tests/tasks retain their declared authority.
+
+Explicit comprehensive validation can be requested through the existing
+`--test-profile full` interface when a repository does not declare a custom
+`full` test profile. `validate-all` aggregates validation errors; it does not opt into whole-repository test coverage.
+A custom named `full` profile retains its configured semantics. In the
+interactive menu, choose **Full configured validation** deliberately.
+
+The launcher schema's `delivery_validation_mode: full` indicates *executable*
+validation, not comprehensive test coverage. Bounded static validation is a
+separate execution mode. Neither mode disables native source/payload checks,
+required artifact validators, atomic transaction validation or CI policy.

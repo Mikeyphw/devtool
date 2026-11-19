@@ -383,12 +383,13 @@ def run_catalog_dir(repo: str | Path) -> Path:
 
 
 def validation_session_dir(repo: str | Path) -> Path:
-    # Existing explicit guest/test redirection remains a deliberately local
-    # storage contract, not a new environment selector.
+    # A running isolated transaction executes against its private worktree,
+    # but its durable session belongs to the primary repository. Resolve this
+    # through the SAME XDG/legacy authority and writer fence as normal state.
+    # Returning a hard-coded in-tree directory here could fail the migration
+    # writer fence even when no legacy state exists, leaving validation stuck.
     redirected = str(os.environ.get("DEVTOOL_VALIDATION_STATE_REPO_ROOT") or "").strip()
-    if redirected:
-        return _repo(redirected) / ".devtool" / "state" / "android-validation"
-    return family_dir(repo, "android-validation")
+    return family_dir(_repo(redirected) if redirected else repo, "android-validation")
 
 
 def artifact_registry_file(repo: str | Path) -> Path:
