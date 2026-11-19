@@ -2631,6 +2631,15 @@ def validate_artifact(
     except ValueError as exc:
         ok = False
         messages.append(str(exc))
+    # M2: native source/runtime preflight, opt-in v3 only, before any apply.
+    # Structural read-only inspection does not assert runtime qualification.
+    if ok and manifest.get("schema_version") == 3 and check_source_state and check_repository_identity:
+        try:
+            from .native_runtime_preflight import preflight_manifest
+            preflight_manifest(repo_root, manifest)
+        except (ValueError, RuntimeError, OSError) as exc:
+            ok = False
+            messages.append(str(exc))
     if not _validate_inventory_shape(manifest, messages):
         ok = False
     inventory_entries = artifact_inventory_entries(manifest)
