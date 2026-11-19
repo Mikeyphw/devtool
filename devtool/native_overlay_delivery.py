@@ -17,23 +17,33 @@ from .delivery_session import DeliverySessionError, adopt_applied, status, resum
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='operation', required=True)
-    adopt = sub.add_parser('adopt-committed', help='Adopt an already native-committed, qualified overlay')
-    adopt.add_argument('--repo', required=True, type=Path)
-    adopt.add_argument('--overlay', required=True, type=Path)
-    adopt.add_argument('--base', default='main')
-    adopt.add_argument('--base-repo',default=None,help='Explicit upstream base GitHub repository')
-    adopt.add_argument('--head-repo',default=None,help='Must match checked-out fork origin')
-    adopt.add_argument('--base-sha',default=None,help='Optional pinned upstream base SHA')
+    for name in ('adopt-committed', 'recover-committed'):
+        adopt = sub.add_parser(name, help='Adopt or reconcile qualified native committed history; never reapply')
+        adopt.add_argument('--repo', required=True, type=Path)
+        adopt.add_argument('--overlay', required=True, type=Path)
+        adopt.add_argument('--base', default=None)
+        adopt.add_argument('--base-repo', default=None, help='Explicit upstream base GitHub repository')
+        adopt.add_argument('--head-repo', default=None, help='Must match checked-out fork origin')
+        adopt.add_argument('--base-sha', default=None, help='Optional pinned upstream base SHA')
     observe = sub.add_parser('status', help='Read-only native delivery session status')
     observe.add_argument('--id', required=True)
     observe = sub.add_parser('resume', help='Read-only source-bound session reconciliation')
     observe.add_argument('--id', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.operation == 'adopt-committed':
-            result = adopt_applied(args.repo, args.overlay, base=args.base,
-                                   base_repository=args.base_repo,
-                                   head_repository=args.head_repo, base_sha=args.base_sha)
+        if args.operation in ('adopt-committed', 'recover-committed'):
+            from .native_delivery_continuity import is_committed_v3, reconcile_committed
+            if is_committed_v3(args.repo, args.overlay):
+                result = reconcile_committed(
+                    args.repo, args.overlay, requested_base=args.base,
+                    requested_base_repository=args.base_repo,
+                    requested_head_repository=args.head_repo, requested_base_sha=args.base_sha)
+            else:
+                # Immutable v1/v2 executable bootstraps retain their existing
+                # native adoption authority and default main-base semantics.
+                result = adopt_applied(args.repo, args.overlay, base=args.base or 'main',
+                                       base_repository=args.base_repo,
+                                       head_repository=args.head_repo, base_sha=args.base_sha)
         else:
             result = {'status': status, 'resume': resume}[args.operation](args.id)
     except (DeliverySessionError, OSError, RuntimeError, ValueError) as exc:
