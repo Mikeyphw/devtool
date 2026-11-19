@@ -54,6 +54,28 @@ on:
       - docs/LAUNCHER_RUNTIME_COMPATIBILITY.md
       - docs/CI_RUN_PAGINATION.md
       - .github/workflows/devtool-launcher-v3.yml
+      - devtool/native_delivery_contract_v3.py
+      - devtool/artifacts.py
+      - devtool/artifact_lifecycle.py
+      - devtool/artifact_inspection.py
+      - devtool/executable_overlay.py
+      - config/delivery-required-ci.json
+      - tests/test_native_delivery_contract_v3.py
+      - tests/test_artifact_v2.py
+      - tests/test_artifact_lifecycle_ui.py
+      - tests/test_artifact_inspection.py
+      - tests/test_artifact_pipeline_v2.py
+      - tests/test_artifact_validation_fail_closed_hotfix.py
+      - tests/test_artifact_validator_payload_policy.py
+      - tests/test_g0a_executable_overlay.py
+      - tests/test_g0a_native_delivery_coordinator.py
+      - tests/test_g0c3_launcher_compatibility.py
+      - tests/test_validation_manifest_skip_contract.py
+      - tests/test_delivery_ci_policy.py
+      - docs/DEVTOOL_NATIVE_DELIVERY_V3_M0_AUDIT.md
+      - docs/DEVTOOL_NATIVE_DELIVERY_V3_M0_TEST_MATRIX.md
+      - docs/DEVTOOL_NATIVE_DELIVERY_V3_M1_CONTRACT.md
+      - docs/DEVTOOL_NATIVE_OVERLAY_DELIVERY_V3_ROADMAP.md
   workflow_dispatch:
 permissions:
   contents: read
@@ -107,6 +129,21 @@ jobs:
         run: python3 -B -m unittest discover -s tests -p 'test_launcher_validation_delivery.py' -v
       - name: Verify native adoption/source validation backwards compatibility
         run: python3 -B -m pytest -q tests/test_delivery_adoption.py tests/test_delivery_adoption_cli.py tests/test_artifact_validator_payload_policy.py
+      - name: Verify M0 lifecycle and M1 v3 contract with native regression tests
+        run: |
+          python3 -B -m pytest -q \
+            tests/test_native_delivery_contract_v3.py \
+            tests/test_artifact_v2.py \
+            tests/test_artifact_lifecycle_ui.py \
+            tests/test_artifact_inspection.py \
+            tests/test_artifact_pipeline_v2.py \
+            tests/test_artifact_validation_fail_closed_hotfix.py \
+            tests/test_artifact_validator_payload_policy.py \
+            tests/test_g0a_executable_overlay.py \
+            tests/test_g0a_native_delivery_coordinator.py \
+            tests/test_g0c3_launcher_compatibility.py \
+            tests/test_validation_manifest_skip_contract.py \
+            tests/test_delivery_ci_policy.py
       - name: Verify package import and builder CLI
         run: |
           python3 -B -m devtool.launcher_contract_v3 --help

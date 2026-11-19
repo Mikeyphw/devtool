@@ -98,7 +98,7 @@ _SHA40 = re.compile(r'[0-9a-f]{40}\Z')
 
 def _require_v2_source_contract(manifest: dict[str, Any]) -> None:
     """Require exact source, target and changed-file identity on new PYZs."""
-    if (manifest.get('schema_version') != 2
+    if (manifest.get('schema_version') not in (2, 3)
             or manifest.get('base_contract_mode') != 'exact-tree'
             or any(not isinstance(manifest.get(k), str) or not _SHA40.fullmatch(manifest[k])
                    for k in ('base_commit', 'base_tree'))):
