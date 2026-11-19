@@ -676,7 +676,11 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
                 raise DeliverySessionError('Existing native transaction proof differs from applied history')
             if prior is not None and prior != inspected['overlay']:
                 raise DeliverySessionError('Existing native session binds another overlay for this commit')
-            if prior is None:
+            # An earlier launcher can start a PLANNED session with the exact
+            # artifact already bound, but without the postcommit native receipt.
+            # Reconcile that case through the SAME verified history and atomic
+            # journal writer, never by starting another session or reapplying.
+            if prior is None or existing.get('native_apply') is None:
                 if (existing.get('intents') or existing.get('pr') or existing.get('ci')
                         or existing.get('stage') != 'PLANNED'):
                     raise DeliverySessionError('Existing remote-mutated or progressed session cannot be rebound')

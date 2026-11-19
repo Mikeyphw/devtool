@@ -57,6 +57,29 @@ authority. Explicit contradictory `--base`, `--base-repo`, `--head-repo`, or
 v1/v2 behavior remains as before; the executable adapter itself is not
 modified or repackaged.
 
+## Recovery of a pre-bound PLANNED artifact session
+
+An earlier launcher may create a `PLANNED` durable delivery session already
+bound to the correct artifact digest and resulting commit, but omit
+`native_apply`. `adopt_applied` now reconciles this state through the existing
+canonical native history/transaction/session authority. Recovery must first
+verify the **unique** qualified history record, completed native transaction,
+exact HEAD/parent/tree and changed-file inventory, original archive digest,
+passed unskipped required steps, and identical existing overlay identity.
+Only an unprogressed `PLANNED` session with **no remote intents, PR or CI** may
+receive the missing `native_apply` evidence. Its session ID and overlay binding
+remain unchanged; the journal update is atomic, audited and idempotent. Wrong
+or ambiguous history, a failed/skipped step, a mismatched artifact, conflicting
+journal receipt or remote progress fails closed with no second session or
+Git replay. Existing v1/v2 session contracts remain supported.
+
+A durable session remains bound to its **original exact commit**. If a later
+native correction creates another commit on that branch, the earlier session
+remains immutable historical evidence and cannot qualify/push the new HEAD.
+The new commit needs its own separately verified native delivery session.
+Neither this repair nor the original historical session automatically grants
+push, draft PR, CI, device or release acceptance.
+
 ## Limitations and acceptance
 
 - A v3 overlay must request actual native commit + required validation.

@@ -139,6 +139,93 @@ def test_adopt_reuses_existing_native_planned_session_without_journal_duplicatio
     assert len(list(state.glob('*.json'))) == 1
 
 
+def test_reconcile_prebound_planned_overlay_preserves_identity_and_history(tmp_path, monkeypatch):
+    # Regression: the original launcher binds the artifact before it records
+    # native_apply. Adoption must augment that SAME session after receipt proof.
+    repo, overlay, state, receipt = repo_fixture(tmp_path, monkeypatch)
+    prebound = start(repo, overlay=overlay, state_root=state)
+    journal = state / (prebound['id'] + '.json')
+    original_commit = git(repo, 'rev-parse', 'HEAD')
+    before = status(prebound['id'], state_root=state)
+    assert before['overlay']['sha256'] == receipt['sha256']
+    assert 'native_apply' not in before
+    applied = adopt_applied(repo, overlay, state_root=state)
+    assert applied['id'] == prebound['id']
+    assert applied['reused'] and applied['native_apply_replayed'] is False
+    observed = status(prebound['id'], state_root=state)
+    assert observed['stage'] == 'PLANNED' and observed['native_apply']['state'] == 'COMMITTED'
+    assert observed['native_apply']['commit'] == original_commit
+    assert observed['native_apply']['transaction_status'] == 'completed'
+    assert observed['native_apply']['validation_status'] == 'ok'
+    assert len(list(state.glob('*.json'))) == 1
+    assert git(repo, 'rev-parse', 'HEAD') == original_commit
+    persisted = journal.read_bytes()
+    twice = adopt_applied(repo, overlay, state_root=state)
+    assert twice['id'] == prebound['id'] and twice['reused']
+    assert journal.read_bytes() == persisted  # idempotent, no extra event
+    assert resume(prebound['id'], state_root=state)['operation_replayed'] is False
+
+
+@pytest.mark.parametrize('fault', [
+    'missing_history', 'duplicate_history', 'wrong_commit', 'bad_parent',
+    'incomplete_transaction', 'skipped_validation', 'failed_validation',
+    'changed_digest',
+])
+def test_prebound_recovery_refuses_unverified_native_evidence(tmp_path, monkeypatch, fault):
+    repo, overlay, state, receipt = repo_fixture(tmp_path, monkeypatch)
+    prebound = start(repo, overlay=overlay, state_root=state)
+    journal = state / (prebound['id'] + '.json')
+    original_bytes = journal.read_bytes()
+    original_commit = git(repo, 'rev-parse', 'HEAD')
+    if fault == 'missing_history':
+        monkeypatch.setattr(artifacts, 'load_history', lambda root: [])
+    elif fault == 'duplicate_history':
+        monkeypatch.setattr(artifacts, 'load_history', lambda root: [receipt, receipt])
+    elif fault == 'wrong_commit':
+        receipt['commit_hash'] = '0' * 40
+    elif fault == 'bad_parent':
+        receipt['manifest']['base_commit'] = '0' * 40
+    elif fault == 'incomplete_transaction':
+        receipt['transaction']['status'] = 'pending'
+    elif fault == 'skipped_validation':
+        receipt['validation_plan']['validation_step_outcomes'][0]['skipped'] = True
+    elif fault == 'failed_validation':
+        receipt['validation_plan']['validation_step_outcomes'][0]['outcome'] = 'failed'
+    elif fault == 'changed_digest':
+        receipt['sha256'] = '0' * 64
+    with pytest.raises(DeliverySessionError):
+        adopt_applied(repo, overlay, state_root=state)
+    assert journal.read_bytes() == original_bytes
+    assert git(repo, 'rev-parse', 'HEAD') == original_commit
+    assert len(list(state.glob('*.json'))) == 1
+
+
+def test_prebound_recovery_refuses_remote_intent_without_mutating_journal(tmp_path, monkeypatch):
+    repo, overlay, state, _ = repo_fixture(tmp_path, monkeypatch)
+    prebound = start(repo, overlay=overlay, state_root=state)
+    record_intent(prebound['id'], 'push', 'origin:feature/test', approved=True, state_root=state)
+    journal = state / (prebound['id'] + '.json')
+    before = journal.read_bytes()
+    with pytest.raises(DeliverySessionError, match='remote-mutated or progressed'):
+        adopt_applied(repo, overlay, state_root=state)
+    assert journal.read_bytes() == before
+    assert len(list(state.glob('*.json'))) == 1
+
+
+def test_prebound_recovery_refuses_conflicting_transaction_evidence(tmp_path, monkeypatch):
+    repo, overlay, state, _ = repo_fixture(tmp_path, monkeypatch)
+    from devtool.delivery_session import _read, _write
+    prebound = start(repo, overlay=overlay, state_root=state)
+    journal = state / (prebound['id'] + '.json')
+    record = _read(journal)
+    record['native_apply'] = {'state':'COMMITTED', 'commit':'0' * 40}
+    _write(journal, record)  # a valid *fixture* journal with conflicting native evidence
+    before = journal.read_bytes()
+    with pytest.raises(DeliverySessionError, match='transaction proof differs'):
+        adopt_applied(repo, overlay, state_root=state)
+    assert journal.read_bytes() == before
+
+
 def test_adopt_refuses_ambiguous_native_delivery_sessions(tmp_path, monkeypatch):
     repo, overlay, state, _ = repo_fixture(tmp_path, monkeypatch)
     start(repo, state_root=state)
