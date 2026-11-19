@@ -123,3 +123,44 @@ be qualified at the eventual final PR HEAD through its own verified session.
   checks must be independently observed before final acceptance.
 - Termux must use the supported native stdout/stderr, no full-screen hosts,
   and `--no-clipboard`; CI and device/release evidence remain distinct.
+
+## Source-bound native adoption before remote delivery
+
+Native Launcher v3.2.1 now calls the existing `devtool.native_overlay_delivery`
+`adopt-committed` authority after successful native apply and exact postimage
+verification and **before** creating or remotely delivering a session. This
+reuses Devtool's authoritative completed history, original artifact digest,
+completed transaction, unskipped passed validation, source parent/tree, and
+committed file inventory. It never generates a replacement history record.
+A failed adoption is a post-commit recovery stop; `apply` must never be replayed.
+
+The historical session `0a035632873e4fb3827ebc51ad3570e3` for commit
+`53303e7bd4831d42fd65d18540bcdfc050228ef4` has an independently present
+completed native history `ed6ec39021e7c90edc0d066dd7594728`, but is already
+remote-progressed and lacks a bound `native_apply`. Existing guards correctly
+refuse retroactive mutation of that session. Preserve its audit trail; qualify
+subsequent source commits with new adopted sessions. Integrating the PR #36
+delete-contract test/source into PR #35 does not assert Git ancestry or bypass
+hosted exact-PR-HEAD/24-shard regression qualification. This is a content
+integration only, not a Git merge or a release authorization.
+
+## Committed hook output directories and Guardian recovery
+
+Devtool's existing native `adopt_applied` authority now permits files changed
+under explicitly declared `preflight`, `validation`, or `finalize` hook output
+directories when the original native child hook succeeded without skipping.
+It uses the same component-boundary rule as `devtool.hooks.isolation`, and
+classifies directories from the authenticated Git trees at `HEAD` and `HEAD^`.
+Inventory payload paths and file-scope hook outputs remain exact. Renames are
+checked as separate delete and add changes. Any unlisted, prefix-lookalike,
+root/traversal or symlink path fails closed. Full source parent/tree, payload
+posthashes, unique original history, completed transaction and validation
+proofs are unchanged. No legacy executable bootstrap was repackaged.
+
+The externally reported Guardian v0.12.5 source commit `3159bb513fd7e1cbe0055c44a608624fd33dd6d6`
+and original history `c9ad337cc8b864750f517927f4683cb0` are regression
+context, **not acceptance evidence**. This Devtool PR does not open or modify
+Guardian or invoke `recover-committed` there. After the merged Devtool
+runtime is verified on the Guardian device, authorized recovery of its own
+existing, source-qualified history must be performed separately and independently
+confirmed. No overlay reapply, journal synthesis or original-commit rewriting.

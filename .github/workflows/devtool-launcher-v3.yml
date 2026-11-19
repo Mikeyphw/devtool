@@ -78,10 +78,12 @@ on:
       - tests/test_artifact_validation_fail_closed_hotfix.py
       - tests/test_artifact_validator_payload_policy.py
       - tests/test_g0a_executable_overlay.py
+      - tests/test_executable_overlay_deletion.py
       - tests/test_g0a_native_delivery_coordinator.py
       - tests/test_g0c3_launcher_compatibility.py
       - tests/test_validation_manifest_skip_contract.py
       - tests/test_delivery_ci_policy.py
+      - docs/EXECUTABLE_OVERLAY_DELETIONS.md
       - docs/DEVTOOL_NATIVE_DELIVERY_V3_M0_AUDIT.md
       - docs/DEVTOOL_NATIVE_DELIVERY_V3_M0_TEST_MATRIX.md
       - docs/DEVTOOL_NATIVE_DELIVERY_V3_M1_CONTRACT.md
@@ -151,6 +153,7 @@ jobs:
             tests/test_artifact_inspection.py \
             tests/test_artifact_pipeline_v2.py \
             tests/test_g0a_executable_overlay.py \
+            tests/test_executable_overlay_deletion.py \
             tests/test_g0a_native_delivery_coordinator.py \
             tests/test_g0c3_launcher_compatibility.py \
             tests/test_validation_manifest_skip_contract.py \

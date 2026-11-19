@@ -1271,6 +1271,54 @@ def verify_postcommit_status(repo:Path)->None:
         say('LAUNCHER_V3_PRESERVED_DEVTOOL_LIFE_RECEIPT path='+relative+' (untracked; not deleted)')
 
 
+
+def native_adopt_committed(repo:Path,devtool_root:Path,archive:Path,commit:str)->dict[str,Any]:
+    """Use only Devtool's existing committed-history/session adoption authority.
+
+    A failed post-commit adoption is a recovery stop, not an apply retry. Native
+    source/validation/transaction attestations remain mandatory, and sessions
+    with remote progress cannot be retroactively rebound to guessed evidence.
+    """
+    if archive.is_symlink() or not archive.is_file():
+        raise Refused('NATIVE_ADOPTION_ARCHIVE_NOT_REGULAR')
+    archive_hash=digest(archive.read_bytes())
+    output=exec_cmd([sys.executable,'-B','-m','devtool.native_overlay_delivery',
+                     'adopt-committed','--repo',str(repo),'--overlay',str(archive)],
+                     stage='native-committed-history-adoption',cwd=devtool_root,
+                     devtool_root=devtool_root,target_root=repo,timeout=180)
+    try:
+        value=json.loads(output)
+    except ValueError as exc:
+        raise Refused('NATIVE_ADOPTION_INVALID_RECEIPT; status/recover, never reapply') from exc
+    if not isinstance(value,dict):
+        raise Refused('NATIVE_ADOPTION_RESULT_INVALID')
+    native_apply=value.get('native_apply') or {}
+    overlay=value.get('overlay') or {}
+    session=value.get('id')
+    if (not isinstance(session,str) or not SESSION32.fullmatch(session)
+            or value.get('head_sha') != commit
+            or value.get('repo_root') != str(repo.resolve())
+            or value.get('stage') != 'PLANNED'
+            or native_apply.get('state') != 'COMMITTED'
+            or native_apply.get('commit') != commit
+            or native_apply.get('transaction_status') != 'completed'
+            or native_apply.get('validation_status') not in ('ok','passed','success')
+            or not isinstance(native_apply.get('history_id'),str)
+            or not native_apply.get('history_id')
+            or not isinstance(native_apply.get('transaction_id'),str)
+            or not native_apply.get('transaction_id')
+            or native_apply.get('artifact_sha256') != archive_hash
+            or overlay.get('sha256') != archive_hash
+            or overlay.get('path') != str(archive.resolve())
+            or value.get('intents')
+            or value.get('pr')
+            or value.get('ci')):
+        raise Refused('NATIVE_ADOPTION_SOURCE_OR_EVIDENCE_UNQUALIFIED; status/recover, never reapply')
+    say('LAUNCHER_V3_NATIVE_COMMIT_VERIFIED history='+native_apply['history_id']+
+        ' transaction='+native_apply['transaction_id'])
+    return value
+
+
 def apply_package(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,bytes],approve_remote:bool,
                   *,watch_ci:bool=False,checks:int=25,interval:int=8)->int:
     require_feature_delivery_branch(m)
@@ -1311,12 +1359,10 @@ def apply_package(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,b
         if not new.is_file() or digest(new.read_bytes())!=c['payload_sha256']:
             raise Refused('POST_COMMIT_PAYLOAD_MISMATCH '+c['path'])
     say('LAUNCHER_V3_COMMITTED source='+after['source_sha'])
-    receipt=native_json(repo,devtool_root,'delivery','session','start',
-                        '--base',m['delivery']['base'],'--head',m['source']['branch'],
-                        '--overlay',str(archive),stage='native-session-start')
-    sid=receipt.get('id')
-    if receipt.get('head_sha')!=after['source_sha'] or not isinstance(sid,str) or not SESSION32.fullmatch(sid):
-        raise Refused('DELIVERY_SESSION_IDENTITY_MISMATCH; use native delivery session status/report to recover')
+    # The existing native authority MUST adopt the original committed artifact
+    # history before a session may authorize push/PR/CI. No synthetic receipts.
+    receipt=native_adopt_committed(repo,devtool_root,archive,after['source_sha'])
+    sid=receipt['id']
     say('LAUNCHER_V3_SESSION_ID '+sid)
     say('LAUNCHER_V3_RESUME_COMMAND: python3 -B PACKAGE.pyz status --repo PATH --devtool-repo PATH --session-id '+sid)
     if approve_remote:
