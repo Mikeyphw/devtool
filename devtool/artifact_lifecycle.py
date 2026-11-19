@@ -515,6 +515,27 @@ def _semantic_identity(manifest: Mapping[str, Any], subtype: ArtifactSubtype, co
     return _digest(normalized)
 
 
+def _has_required_inline_validation_tests(manifest: Mapping[str, Any]) -> bool:
+    """Recognize real native validation.tests declarations without running them.
+
+    This is the lifecycle readiness check, not another test runner. Optional,
+    empty, reference-only or non-executable declarations cannot qualify here.
+    References remain handled by the existing test_refs contract.
+    """
+    # Reuse the native v2 declaration normalizer (including shlex command
+    # strings and Gradle task shape); do not implement a second parser.
+    from .artifacts import artifact_validation_tests
+    try:
+        declarations = artifact_validation_tests(dict(manifest))
+    except ValueError:
+        return False  # The native artifact verifier reports the actual error.
+    return any(
+        declaration.get('required', True) is True and bool(
+            declaration.get('command') or declaration.get('task'))
+        for declaration in declarations
+    )
+
+
 def _validation_contract(manifest: Mapping[str, Any]) -> ResolvedValidationContract:
     raw = manifest.get("validation") if isinstance(manifest.get("validation"), Mapping) else {}
     tasks_raw = raw.get("tasks") or raw.get("gradle_tasks") or raw.get("test_tasks") or raw.get("task") or []
@@ -824,6 +845,7 @@ class ArtifactEnvelopeResolver:
         validation_executable = bool(
             validation_contract.tasks
             or validation_contract.test_refs
+            or _has_required_inline_validation_tests(envelope.manifest)
             or validation_script
             or not validation_contract.required
         )

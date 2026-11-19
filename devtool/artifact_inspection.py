@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .artifact_lifecycle import ArtifactEnvelopeResolver
+from .native_delivery_contract_v3 import inspect_delivery_contract
 from .artifacts import (
     artifact_commit_policy,
     artifact_finalize_phases,
@@ -262,6 +263,7 @@ def inspect_artifact(
         "size": path.stat().st_size,
         "kind": "overlay_bundle" if bundle else str(manifest.get("type") or "overlay"),
         "schema_version": manifest.get("schema_version", manifest.get("version", 1)),
+        "delivery_contract": inspect_delivery_contract(manifest),
         "name": str(manifest.get("name") or path.stem),
         "description": str(manifest.get("description") or ""),
         "repository": repository,

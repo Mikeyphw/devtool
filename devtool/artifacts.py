@@ -992,9 +992,10 @@ def _schema_version(manifest: dict[str, Any], messages: list[str], *, bundle: bo
     if key_value <= 0:
         messages.append(("Bundle" if bundle else "Artifact") + " schema_version must be greater than zero.")
         return None
-    if key_value > 2:
+    maximum = 2 if bundle else 3
+    if key_value > maximum:
         messages.append(
-            f"Unsupported {'bundle' if bundle else 'artifact'} schema_version {key_value}; maximum supported version is 2."
+            f"Unsupported {'bundle' if bundle else 'artifact'} schema_version {key_value}; maximum supported version is {maximum}."
         )
         return None
     return key_value
@@ -2623,6 +2624,13 @@ def validate_artifact(
 
     if manifest and _schema_version(manifest, messages) is None:
         ok = False
+    # M1: strict optional v3 is data-only; no overlay orchestration here.
+    try:
+        from .native_delivery_contract_v3 import normalize_delivery_contract
+        normalize_delivery_contract(manifest)
+    except ValueError as exc:
+        ok = False
+        messages.append(str(exc))
     if not _validate_inventory_shape(manifest, messages):
         ok = False
     inventory_entries = artifact_inventory_entries(manifest)
