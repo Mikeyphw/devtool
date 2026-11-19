@@ -619,6 +619,37 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
         if blob.returncode != 0 or hashlib.sha256(blob.stdout).hexdigest() != digest_post:
             raise DeliverySessionError(f'Applied committed payload does not match overlay: {path}')
 
+    # M3 extends *only* v3 receipts with exact committed Git evidence;
+    # existing v1/v2 durable records remain byte-for-byte compatible.
+    if manifest.get('schema_version') == 3:
+        from .native_delivery_contract_v3 import normalize_delivery_contract
+        normalize_delivery_contract(manifest)
+        if not native_apply['history_id'] or not native_apply['operation_id']:
+            raise DeliverySessionError('M3 requires durable native history and operation identities')
+        if not {str(item['path']) for item in entries}.issubset(actual_mutations):
+            raise DeliverySessionError('M3 committed path inventory omits a declared mutation')
+        if not 1 <= len(actual_mutations) <= 256 or not 1 <= len(outcomes or []) <= 64:
+            raise DeliverySessionError('M3 committed paths/validation evidence exceeds bounded contract')
+        committed_blobs = {}
+        for path in sorted(actual_mutations):
+            ref = _git(root, 'rev-parse', 'HEAD:' + path, optional=True)
+            if ref and not _SHA.fullmatch(ref):
+                raise DeliverySessionError('M3 invalid committed Git blob identity: ' + path)
+            committed_blobs[path] = ref or None
+        native_apply.update({
+            'source_commit': old_commit,
+            'result_parent': _git(root, 'rev-parse', 'HEAD^'),
+            'result_commit': inspected['head_sha'],
+            'result_tree': _git(root, 'rev-parse', 'HEAD^{tree}'),
+            'changed_paths': sorted(actual_mutations),
+            'committed_blobs': committed_blobs,
+            'validation_steps': [
+                {'name': str(outcome.get('name') or ''),
+                 'outcome': str(outcome['outcome']), 'returncode': outcome['returncode'],
+                 'skipped': False}
+                for outcome in outcomes
+            ],
+        })
     folder = _state_root(state_root)
     with _locked(folder):
         same_commit: list[dict[str, Any]] = []
