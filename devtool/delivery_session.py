@@ -506,6 +506,54 @@ def record_ci_observation(identity: str, observation: Mapping[str, Any], *,
 
 
 
+def _legacy_required_artifact_test_outcomes(receipt: Mapping[str, Any],
+                                            manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
+    # Re-attest old schema-v2 required-test receipt from native children.
+    # The original source-bound outcomes are read only, never written.
+    if manifest.get('schema_version') != 2:
+        return []
+    validation = manifest.get('validation')
+    if not isinstance(validation, dict) or validation.get('required') is not True:
+        return []
+    if any(validation.get(key) is not False for key in ('restore', 'build', 'test')):
+        return []
+    if any(validation.get(key) for key in ('script', 'refs', 'tasks', 'gradle_tasks')):
+        return []
+    tests = validation.get('tests')
+    if not isinstance(tests, list) or not 1 <= len(tests) <= 64:
+        return []
+    names = []
+    for entry in tests:
+        if not isinstance(entry, dict) or entry.get('required') is not True:
+            return []
+        if entry.get('runner') != 'python' or not isinstance(entry.get('command'), list):
+            return []
+        if not entry['command'] or not all(isinstance(p, str) and p for p in entry['command']):
+            return []
+        identity = entry.get('id')
+        if not isinstance(identity, str) or not identity or len(identity) > 128:
+            return []
+        names.append('artifact-test:' + identity)
+    if len(names) != len(set(names)):
+        return []
+    children = receipt.get('child_outcomes')
+    if not isinstance(children, list) or not 1 <= len(children) <= 64:
+        return []
+    if any(not isinstance(item, dict) or type(item.get('returncode')) is not int
+           or item['returncode'] != 0 or item.get('skipped') is not False
+           or item.get('failure_kind') not in (None, '') for item in children):
+        return []
+    actual = [item['name'] for item in children
+              if isinstance(item.get('name'), str) and item['name'].startswith('artifact-test:')]
+    if len(actual) != len(names) or set(actual) != set(names):
+        return []
+    if not any(item.get('name') == 'git-commit' for item in children):
+        return []
+    return [{'name': name, 'outcome': 'passed', 'returncode': 0, 'skipped': False}
+            for name in names]
+
+
+
 def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
                   head: str | None = None, state_root: Path | None = None,
                   base_repository: str | None = None,
@@ -554,11 +602,17 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
         raise DeliverySessionError('Applied native history lacks completed transaction proof')
     validation = manifest.get('validation') if isinstance(manifest.get('validation'), dict) else {}
     outcomes = (receipt.get('validation_plan') or {}).get('validation_step_outcomes')
+    legacy_child_evidence = False
     if validation.get('required') is True:
+        if not isinstance(outcomes, list) or not outcomes:
+            # The original native child receipts are durable and source-bound;
+            # never change their bytes or claim synthetic validation-plan steps.
+            outcomes = _legacy_required_artifact_test_outcomes(receipt, manifest)
+            legacy_child_evidence = bool(outcomes)
         if (not isinstance(outcomes, list) or not outcomes or any(
-            not isinstance(item, dict) or item.get('skipped') is True
-            or item.get('outcome') != 'passed' or item.get('returncode') != 0
-            for item in outcomes)):
+            not isinstance(item, dict) or item.get('skipped') is not False
+            or item.get('outcome') != 'passed' or type(item.get('returncode')) is not int
+            or item['returncode'] != 0 for item in outcomes)):
             raise DeliverySessionError('Required native validation must have passing, unskipped step evidence')
     native_apply = {
         'state': 'COMMITTED', 'commit': inspected['head_sha'],
@@ -569,6 +623,11 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
         'source_tree': str(manifest.get('base_tree') or ''),
         'artifact_sha256': digest,
     }
+    if legacy_child_evidence:
+        # Explicit provenance: this is an interpretation of persisted native
+        # child outcomes, NOT an invented or rewritten validation_plan receipt.
+        native_apply['validation_evidence_source'] = 'original-native-child-outcomes'
+        native_apply['validation_steps'] = outcomes
     if supplied.exists():
         if not supplied.is_file():
             raise DeliverySessionError('Applied artifact is not a regular file')

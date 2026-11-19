@@ -80,6 +80,31 @@ The new commit needs its own separately verified native delivery session.
 Neither this repair nor the original historical session automatically grants
 push, draft PR, CI, device or release acceptance.
 
+## Schema-v2 native child receipt compatibility for committed applies
+
+Native Launcher v3.2.1 may persist a completed, source-bound artifact history
+entry with `validation_status=ok`, but an empty `validation_plan`: the recorder
+previously omitted `artifact-test:<id>` results from step collection despite
+persisting them in the original `child_outcomes` list. Current recording now
+includes those results as explicit validation-plan steps.
+
+For an **already committed** schema-v2 required-tests-only archive (no restore,
+build, project test or other validation surfaces), the existing canonical
+`adopt_applied` verifier may accept the **unchanged** native child outcomes as
+validation evidence if every required declared Python artifact-test ID matches
+one distinct, successful, unskipped child outcome, the commit child succeeded,
+and all children have clean outcomes. All other native receipt, transaction,
+source parent/tree, inventory, archive hash, session and remote-intent guards
+remain mandatory. This fallback does not write or rewrite artifact history;
+the delivery session marks `validation_evidence_source=original-native-child-outcomes`
+so that a recovered v2 receipt is never misrepresented as a v3 step receipt.
+A missing, failed, skipped, duplicate, unexpected or unlisted test refuses.
+
+The previously committed session `9b6de5c872b042d4b49b87f8178a727c`
+is bound to `b1cca136879f220a5f5fe2caed5aec0d594ed345`. Never relabel it
+as evidence for a later corrective commit. Native delivery and hosted CI must
+be qualified at the eventual final PR HEAD through its own verified session.
+
 ## Limitations and acceptance
 
 - A v3 overlay must request actual native commit + required validation.

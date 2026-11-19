@@ -226,6 +226,115 @@ def test_prebound_recovery_refuses_conflicting_transaction_evidence(tmp_path, mo
     assert journal.read_bytes() == before
 
 
+def _legacy_history_fixture(tmp_path, monkeypatch):
+    repo, overlay, state, receipt = repo_fixture(tmp_path, monkeypatch)
+    receipt['manifest']['validation'] = {
+        'required': True, 'restore': False, 'build': False, 'test': False,
+        'tests': [{'id': 'prebound-native-session-and-security', 'runner': 'python',
+                   'required': True, 'command': ['python3', '-B', '-m', 'pytest', '-q', 'tests/test.py']}],
+    }
+    receipt['validation_plan'] = {}
+    receipt['child_outcomes'] = [
+        {'name': 'apply-overlay', 'returncode': 0, 'skipped': False, 'failure_kind': ''},
+        {'name': 'artifact-test:prebound-native-session-and-security',
+         'returncode': 0, 'skipped': False, 'failure_kind': ''},
+        {'name': 'git-commit', 'returncode': 0, 'skipped': False, 'failure_kind': ''},
+    ]
+    return repo, overlay, state, receipt
+
+
+def test_native_schema_v2_prebound_recovery_uses_original_child_evidence(tmp_path, monkeypatch):
+    repo, overlay, state, receipt = _legacy_history_fixture(tmp_path, monkeypatch)
+    prebound = start(repo, overlay=overlay, state_root=state)
+    journal = state / (prebound['id'] + '.json')
+    first = adopt_applied(repo, overlay, state_root=state)
+    assert first['id'] == prebound['id'] and first['reused']
+    assert first['native_apply']['state'] == 'COMMITTED'
+    assert first['native_apply']['validation_evidence_source'] == 'original-native-child-outcomes'
+    assert first['native_apply']['validation_steps'][0]['name'] == 'artifact-test:prebound-native-session-and-security'
+    assert receipt['validation_plan'] == {}  # original native evidence is never edited
+    assert len(list(state.glob('*.json'))) == 1
+    saved = journal.read_bytes()
+    again = adopt_applied(repo, overlay, state_root=state)
+    assert again['id'] == prebound['id'] and journal.read_bytes() == saved
+    assert git(repo, 'rev-parse', 'HEAD') == receipt['commit_hash']
+
+
+@pytest.mark.parametrize('fault', [
+    'missing_test', 'duplicate_test', 'extra_test', 'skipped_test',
+    'failed_test', 'missing_commit', 'failed_commit', 'bad_step_kind',
+    'v3_schema', 'changed_digest', 'incomplete_transaction', 'extra_required_test',
+])
+def test_native_schema_v2_prebound_refuses_unproven_child_evidence(tmp_path, monkeypatch, fault):
+    repo, overlay, state, receipt = _legacy_history_fixture(tmp_path, monkeypatch)
+    prebound = start(repo, overlay=overlay, state_root=state)
+    journal = state / (prebound['id'] + '.json')
+    before = journal.read_bytes()
+    children = receipt['child_outcomes']
+    if fault == 'missing_test':
+        children.pop(1)
+    elif fault == 'duplicate_test':
+        children.append(dict(children[1]))
+    elif fault == 'extra_test':
+        children.append(dict(children[1], name='artifact-test:unlisted'))
+    elif fault == 'skipped_test':
+        children[1]['skipped'] = True
+    elif fault == 'failed_test':
+        children[1]['returncode'] = 1
+    elif fault == 'missing_commit':
+        children.pop(2)
+    elif fault == 'failed_commit':
+        children[2]['returncode'] = 1
+    elif fault == 'bad_step_kind':
+        children[1]['failure_kind'] = 'validation_failure'
+    elif fault == 'v3_schema':
+        receipt['manifest']['schema_version'] = 3
+    elif fault == 'changed_digest':
+        receipt['sha256'] = '0' * 64
+    elif fault == 'incomplete_transaction':
+        receipt['transaction']['status'] = 'pending'
+    elif fault == 'extra_required_test':
+        receipt['manifest']['validation']['tests'].append({
+            'id': 'another-required-test', 'runner': 'python', 'required': True,
+            'command': ['python3', '-B', '-m', 'pytest', '-q', 'tests/other.py'],
+        })
+    with pytest.raises(DeliverySessionError):
+        adopt_applied(repo, overlay, state_root=state)
+    assert journal.read_bytes() == before
+    assert len(list(state.glob('*.json'))) == 1
+
+
+def test_native_history_projects_artifact_test_as_validation_step(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from devtool import cli
+    repo, overlay, state, receipt = repo_fixture(tmp_path, monkeypatch)
+    captured = []
+    # Use the actual native make_history_entry() constructor.  A minimal
+    # dictionary stub formerly omitted validation_status and hid the field's
+    # provenance; this assertion must test the native recorder, not a mock.
+    monkeypatch.setattr(cli, 'append_history', lambda root, item, **kw:
+                        (captured.append(item) or state / 'native-history.json'))
+    monkeypatch.setattr(cli, 'latest_commit_hash', lambda root: receipt['commit_hash'])
+    monkeypatch.setattr(cli, 'collect_hook_events', lambda results: [])
+    monkeypatch.setattr(cli, '_apply_transaction_path', lambda results: '')
+    monkeypatch.setattr(cli, '_repo_local_artifact_history_enabled', lambda root: False)
+    monkeypatch.setattr(cli, 'publish_event', lambda event: None)
+    args = SimpleNamespace(command='apply-overlay', validate=True, validate_only=False,
+                           preview=False, artifact=str(overlay), commit='source-bound native',
+                           _devtool_artifact_manifest=receipt['manifest'], _devtool_run_id='test-run')
+    results = [
+        cli.OperationResult('apply-overlay', [], 0, 0.0, '', []),
+        cli.OperationResult('artifact-test:prebound-native-session-and-security', [], 0, 0.0, '', []),
+        cli.OperationResult('git-commit', [], 0, 0.0, '', []),
+    ]
+    cli._record_apply_history(SimpleNamespace(repo_root=repo), args, results)
+    assert len(captured) == 1
+    steps = captured[0]['validation_plan']['validation_step_outcomes']
+    assert len(steps) == 1 and steps[0]['name'] == 'artifact-test:prebound-native-session-and-security'
+    assert steps[0]['outcome'] == 'passed' and steps[0]['skipped'] is False
+    assert captured[0]['validation_status'] == 'ok'
+
+
 def test_adopt_refuses_ambiguous_native_delivery_sessions(tmp_path, monkeypatch):
     repo, overlay, state, _ = repo_fixture(tmp_path, monkeypatch)
     start(repo, state_root=state)

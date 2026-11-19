@@ -6845,6 +6845,7 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
         and (
             bool((r.metadata or {}).get("validation_pipeline"))
             or r.name.startswith("artifact-valid")
+            or r.name.startswith("artifact-test:")
             or r.name == "validation-contract"
         )
     ]
