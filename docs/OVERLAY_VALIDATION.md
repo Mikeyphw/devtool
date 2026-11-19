@@ -75,7 +75,7 @@ rather than mutated in place.
 CLI flags still win:
 
 - `--no-validate` disables manifest-requested validation and ignores manifest tasks.
-- `--validate` enables validation even when the manifest says `mode=disabled`.
+- `--validate` requests validation even when the manifest says `mode=disabled`; it does not reenable phases explicitly disabled by the manifest.
 - `--task` / `--test-task` replaces `validation.tasks`.
 
 Overlay bundles may declare tasks at the bundle level:
@@ -220,3 +220,22 @@ modified report files inside the repository.
 ## Automatic repair transaction boundary
 
 Automatic source repairs are repository-relative mutations. Diagnostic paths are canonicalized and rejected if absolute or escaping with `..`/symlink resolution. During artifact apply, a repair path is registered with the active apply transaction *before* its first write, so a later validation/commit/apply rollback restores both the artifact payload and any repaired source files atomically.
+
+## Targeted validation default (2026-11)
+
+When executable validation is requested without an explicit test/task/profile
+selection, Devtool uses its existing affected-file and native test-selection
+facilities. Unresolvable or empty affected scope fails closed; it never
+activates whole-project validation implicitly. Embedded required validators
+and exact manifest tests/tasks retain their declared authority.
+
+Explicit comprehensive validation can be requested through the existing
+`--test-profile full` interface when a repository does not declare a custom
+`full` test profile. `validate-all` aggregates validation errors; it does not opt into whole-repository test coverage.
+A custom named `full` profile retains its configured semantics. In the
+interactive menu, choose **Full configured validation** deliberately.
+
+The launcher schema's `delivery_validation_mode: full` indicates *executable*
+validation, not comprehensive test coverage. Bounded static validation is a
+separate execution mode. Neither mode disables native source/payload checks,
+required artifact validators, atomic transaction validation or CI policy.

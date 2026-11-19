@@ -668,7 +668,7 @@ def _configure_pytest(ui: TerminalUI, draft: ValidationDraft, catalog: Validatio
 
 def _configure_tests(ui: TerminalUI, draft: ValidationDraft, catalog: ValidationCatalog) -> bool:
     selected = ui.choose([
-        Choice("all", "All configured tests", "Clear interactive selectors and use repository defaults."),
+        Choice("all", "Automatic targeted selection", "Clear selectors; use existing affected tests/tasks."),
         Choice("profile", "Saved test profile", draft.test_profile or "none", disabled=not catalog.test_profiles),
         Choice("tasks", "Native tasks or scripts", _list_label(draft.tasks), disabled=not catalog.tasks),
         Choice("refresh-tasks", "Refresh Gradle task catalog", "Run `gradlew tasks --all -q` and reopen this page.", disabled=catalog.config.kind not in {"android", "gradle"}),
@@ -685,12 +685,16 @@ def _configure_tests(ui: TerminalUI, draft: ValidationDraft, catalog: Validation
         # Deliberately placed after Done so the established numbered-fallback
         # positions remain stable for scripted/keyboard users.
         Choice("pytest", "Pytest selection", _list_label(draft.pytest_tests) if draft.pytest_tests else "native exact tests and filters", disabled=catalog.config.kind != "python"),
+        Choice("full", "Full configured validation", "Explicitly run the complete configured suite; never the implicit default."),
     ], prompt="tests", header="Choose a test selector to configure")
     if selected is None:
         return False
     key = selected.key
     if key == "all":
         _clear_test_selection(draft)
+    elif key == "full":
+        _clear_test_selection(draft)
+        draft.test_profile = "full"
     elif key == "profile":
         value = ui.choose([Choice(item, item) for item in catalog.test_profiles], prompt="profile")
         if value:

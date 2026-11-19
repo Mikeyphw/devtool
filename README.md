@@ -938,3 +938,22 @@ The command runs pytest with Devtool slow-test reporting enabled, preserves the 
 ### Overlay 15 target split
 
 The final remediation seal is split by configured Devtool target. Apply the Python `devtool` target final overlay with `--target devtool`, then apply the Android HUD target final overlay with `--target android_hud`. The repository-wide `devtool final-seal --strict` requires both target seals and `FINAL_REMEDIATION_COVERAGE.json` before the campaign is complete.
+
+## Targeted validation default (2026-11)
+
+When executable validation is requested without an explicit test/task/profile
+selection, Devtool uses its existing affected-file and native test-selection
+facilities. Unresolvable or empty affected scope fails closed; it never
+activates whole-project validation implicitly. Embedded required validators
+and exact manifest tests/tasks retain their declared authority.
+
+Explicit comprehensive validation can be requested through the existing
+`--test-profile full` interface when a repository does not declare a custom
+`full` test profile. `validate-all` aggregates errors, not test coverage.
+A custom named `full` profile retains its configured semantics. In the
+interactive menu, choose **Full configured validation** deliberately.
+
+The launcher schema's `delivery_validation_mode: full` indicates *executable*
+validation, not comprehensive test coverage. Bounded static validation is a
+separate execution mode. Neither mode disables native source/payload checks,
+required artifact validators, atomic transaction validation or CI policy.

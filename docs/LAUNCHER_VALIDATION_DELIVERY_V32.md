@@ -91,6 +91,17 @@ To observe CI during delivery, run an immutable package with `apply
 interrupted/failed, **never apply again**. Use the original package's
 `status`, `report`, `ci`, and `deliver` with the durable session ID.
 
+## Durable validation storage / native ownership
+
+An isolated transaction must persist its durable validation session in the
+**primary repository's canonical XDG authority** (or its verified legacy authority
+until explicitly migrated), even when runner execution occurs in a detached
+transaction worktree. Native writer fencing and migration markers remain active.
+Validation-management commands claim the exact pending transaction through the
+existing native reservation resolver; unrelated operations remain blocked.
+Continuation of a session uses its persisted test scope rather than recomputing
+implicit affected paths from the worker checkout.
+
 ## Acceptance matrix
 
 - **Static**: exact origin, branch, HEAD/tree/blobs, content hashes, native
@@ -105,3 +116,47 @@ Test with `tests/test_launcher_validation_delivery.py`, the original launcher
 contract/adoption tests, artifact-validator payload negatives, native
 `validate-overlay`, native apply and durable CI receipts. Do not delete or
 bypass existing regression/security gates to make validation green.
+
+## Targeted validation default (2026-11)
+
+When executable validation is requested without an explicit test/task/profile
+selection, Devtool uses its existing affected-file and native test-selection
+facilities. Unresolvable or empty affected scope fails closed; it never
+activates whole-project validation implicitly. Embedded required validators
+and exact manifest tests/tasks retain their declared authority.
+
+Explicit comprehensive validation can be requested through the existing
+`--test-profile full` interface when a repository does not declare a custom
+`full` test profile. `validate-all` aggregates validation errors; it does not opt into whole-repository test coverage.
+A custom named `full` profile retains its configured semantics. In the
+interactive menu, choose **Full configured validation** deliberately.
+
+The launcher schema's `delivery_validation_mode: full` indicates *executable*
+validation, not comprehensive test coverage. Bounded static validation is a
+separate execution mode. Neither mode disables native source/payload checks,
+required artifact validators, atomic transaction validation or CI policy.
+
+
+## Device-safe native overlay qualification versus hosted regression (2026-11)
+
+An immutable native launcher package must provide **required executable
+validation**, but its embedded validator must be bounded for low-power Termux
+hosts. Source-bound launcher preflight, hashes, tree/blob checks, native
+transaction reservations, writer fencing, rollback, and durable session
+integrity remain mandatory. These are independent of the embedded script.
+
+The targeted-default delivery package performs a bounded, device-safe
+smoke selection: selection defaults, manifest precedence, XDG redirection and
+writer fencing, durable abort/continue safety, fail-closed required-check
+accounting, and non-PTY validation menu behavior. A test failure blocks the
+atomic commit. The package does **not** execute the complete selected-regression
+suite locally, nor the 24-shard whole-repository suite.
+
+The `devtool-launcher-v3.yml` hosted PR workflow runs the broader targeted
+regressions on the exact PR HEAD, including pseudo-TTY integration and session
+storage. All hosted required checks must be verified before delivery is
+qualified; a local apply is **not** proof of hosted CI success. The full
+repository 24-shard run remains separately selectable and is not silently
+inferred from `delivery_validation_mode: full`. Do not change an already
+checksummed `.pyz` in place to alter its validator; rebuild a new immutable
+source-pinned native package and validate the new manifest.
