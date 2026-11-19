@@ -172,6 +172,67 @@ class ContractTests(unittest.TestCase):
         g(root,'checkout','--detach',first)
         self.assertEqual(lc.git(root,'rev-parse','HEAD^{tree}'),identity['source_tree'])
 
+    def test_large_cli_schema_payload_roundtrips_without_raising_total_budget(self):
+        root=fixture(self.root)
+        g(root,'switch','-c','feature/schema-capacity')
+        folder=self.root/'payload';dest=folder/'devtool/core_cli_schema.json'
+        dest.parent.mkdir(parents=True)
+        prefix=b'{"schema":"';suffix=b'"}'
+        actual=4*1024*1024
+        schema=prefix+(b'a'*(actual-len(prefix)-len(suffix)))+suffix
+        dest.write_bytes(schema)
+        plan={'schema_version':1,'changes':[{'path':'devtool/core_cli_schema.json','action':'add'}]}
+        inventory,payload=lc.payload_contract(plan,folder,root)
+        self.assertGreater(len(schema),2*1024*1024)
+        self.assertLessEqual(len(schema),lc.MAX_ONE)
+        self.assertEqual(lc.MAX_TOTAL,6*1024*1024)
+        runtime={'repository':'Mikeyphw/devtool','source_sha':'a'*40,
+                 'source_tree':'b'*40,'module_blob':'c'*40,
+                 'launcher_version':'3.2.1'}
+        manifest=lc.make_manifest('large-schema-capacity',lc.repo_identity(root,clean=True),
+            runtime,inventory,'test: source-bounded schema','Large schema fixture',
+            '','main','d'*40)
+        package=self.root/'large-schema.pyz'
+        package.write_bytes(lc.zip_bytes({'__main__.py':lc.bootstrap_content(manifest['devtool']).encode(),
+            'manifest.json':json.dumps(manifest,sort_keys=True).encode(),**payload}))
+        observed,bytes_by_name=lc.read_embedded_package(package)
+        self.assertEqual(observed,manifest)
+        self.assertEqual(bytes_by_name['payload/devtool/core_cli_schema.json'],schema)
+
+    def test_per_file_budget_rejects_any_non_schema_oversize(self):
+        root=fixture(self.root);folder=self.root/'payload';folder.mkdir()
+        (folder/'oversized.bin').write_bytes(b'x'*(lc.MAX_ONE+1))
+        with self.assertRaisesRegex(lc.Refused,'PAYLOAD_FILE_TOO_LARGE'):
+            lc.payload_contract({'schema_version':1,
+                'changes':[{'path':'oversized.bin','action':'add'}]},folder,root)
+
+    def test_aggregate_payload_budget_remains_six_mebibytes(self):
+        root=fixture(self.root);folder=self.root/'payload';folder.mkdir()
+        (folder/'a.bin').write_bytes(b'a'*(4*1024*1024))
+        (folder/'b.bin').write_bytes(b'b'*(2*1024*1024+1))
+        with self.assertRaisesRegex(lc.Refused,'PAYLOAD_TOTAL_TOO_LARGE'):
+            lc.payload_contract({'schema_version':1,
+                'changes':[{'path':'a.bin','action':'add'},
+                           {'path':'b.bin','action':'add'}]},folder,root)
+
+    def test_oversized_zip_member_refused_before_decompression(self):
+        root=fixture(self.root);g(root,'switch','-c','feature/zip-budget')
+        payload=b'x'*(lc.MAX_ONE+1)
+        inventory=[{'path':'oversized.bin','action':'add','source_blob_sha':'',
+                    'payload_sha256':lc.digest(payload)}]
+        runtime={'repository':'Mikeyphw/devtool','source_sha':'a'*40,
+                 'source_tree':'b'*40,'module_blob':'c'*40,
+                 'launcher_version':'3.2.1'}
+        manifest=lc.make_manifest('zip-overbudget-negative',lc.repo_identity(root,clean=True),
+            runtime,inventory,'test: zip member guard','Archive budget negative',
+            '','main','d'*40)
+        package=self.root/'overbudget.pyz'
+        package.write_bytes(lc.zip_bytes({'__main__.py':lc.bootstrap_content(manifest['devtool']).encode(),
+            'manifest.json':json.dumps(manifest).encode(),
+            'payload/oversized.bin':payload}))
+        with self.assertRaisesRegex(lc.Refused,'PACKAGE_MEMBER_TOO_LARGE'):
+            lc.read_embedded_package(package)
+
     def test_a11_payload_pins(self):
         root=fixture(self.root);folder=self.root/'payload';folder.mkdir()
         (folder/'original.txt').write_text('AFTER\n');(folder/'extra.txt').write_text('EXTRA\n')

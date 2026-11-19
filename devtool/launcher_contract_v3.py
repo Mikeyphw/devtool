@@ -30,7 +30,7 @@ from .launcher_validation_contract import (
 )
 
 SCHEMA = 'devtool.launcher-contract.v3'
-LAUNCHER_CONTRACT_VERSION = '3.2.0'
+LAUNCHER_CONTRACT_VERSION = '3.2.1'
 from .launcher_runtime_compat import (
     require_version, declared_version, IncompatibleLauncherRuntime)
 SHA40 = re.compile(r'[0-9a-f]{40}\Z')
@@ -38,8 +38,11 @@ SHA256 = re.compile(r'[0-9a-f]{64}\Z')
 SESSION32 = re.compile(r'[0-9a-f]{32}\Z')
 GHREPO = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z')
 MAX_FILES = 48
+# The aggregate executable payload remains capped at 6 MiB.  A single
+# source file (notably the generated core CLI schema) may use at most 5 MiB.
+# The extra 1 MiB headroom and existing metadata ceilings remain mandatory.
 MAX_TOTAL = 6 * 1024 * 1024
-MAX_ONE = 2 * 1024 * 1024
+MAX_ONE = 5 * 1024 * 1024
 
 try:
     from rich.console import Console as _RichConsole
@@ -560,11 +563,18 @@ def read_embedded_package(package: Path) -> tuple[dict[str,Any],dict[str,bytes]]
     if not zipfile.is_zipfile(package):raise Refused('NOT_A_PYTHON_ZIPAPP')
     with zipfile.ZipFile(package) as z:
         infos=z.infolist();names=[i.filename for i in infos]
-        if len(names)!=len(set(names)) or z.testzip() is not None:raise Refused('DUPLICATE_OR_CORRUPT_ZIPAPP')
+        if len(names)!=len(set(names)):
+            raise Refused('DUPLICATE_OR_CORRUPT_ZIPAPP')
         if '__main__.py' not in names  or 'manifest.json' not in names:
             raise Refused('MISSING_REQUIRED_PACKAGE_MODULE')
+        # Enforce the decompressed budget *before* z.testzip() touches payload
+        # members.  The native builder and verifier share the same upper bound.
         if sum(i.file_size for i in infos)>MAX_TOTAL+MAX_TOTAL_HOOK_BYTES+300000:
             raise Refused('PACKAGE_TOO_LARGE')
+        if any(i.filename.startswith('payload/') and i.file_size>MAX_ONE for i in infos):
+            raise Refused('PACKAGE_MEMBER_TOO_LARGE')
+        if z.testzip() is not None:
+            raise Refused('DUPLICATE_OR_CORRUPT_ZIPAPP')
         for info in infos:
             p=info.filename
             if p.endswith('/') or p.startswith('/') or '\\' in p or any(s in ('','..','.') for s in p.split('/')):

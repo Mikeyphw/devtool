@@ -243,3 +243,22 @@ The launcher schema's `delivery_validation_mode: full` indicates *executable*
 validation, not comprehensive test coverage. Bounded static validation is a
 separate execution mode. Neither mode disables native source/payload checks,
 required artifact validators, atomic transaction validation or CI policy.
+
+## Launcher v3.2.1 — bounded larger source files
+
+Native delivery retains the exact source/origin/HEAD/tree/blobs, SHA-256 payload
+inventory, 48-file ceiling, executable validation, 6 MiB **aggregate source**
+budget and independent hook-metadata limits. A **single** regular payload is
+now allowed up to **5 MiB** (previously 2 MiB), so the generated
+`devtool/core_cli_schema.json` (3,982,295 bytes in the pinned M3 tree) can be
+included in a single source-pinned overlay. Files larger than 5 MiB, packages
+whose combined source payload exceeds 6 MiB, malformed archives and oversized
+uncompressed ZIP payload members still fail closed. The ZIP verifier checks
+sizes before decompressing members. The native overlay artifact engine retains
+its separate archive and source-integrity budgets; this change does not
+relax them, alter immutable v1/v2 packages, or grant remote authorization.
+
+The canonical CLI schema remains unchanged by this compatibility milestone.
+New CLI option registration (including future `--auth app`) requires a separate
+source-pinned overlay, generator/CLI parity validation and exact-HEAD hosted
+checks after this native launcher fix is committed.
