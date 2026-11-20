@@ -83,6 +83,38 @@ def _inspection(package: Path) -> dict[str, Any]:
     return receipt
 
 
+def _require_zip_v3_commit_session(package: Path) -> None:
+    """Reject unsafe ZIP apply *before* native validation or commit.
+
+    The existing native M3 adapter emits a committed session only for a
+    schema-v3 overlay with a validated delivery contract. Legacy schema-v2
+    S7 scaffolds are still inspectable/checkable, but their apply cannot
+    truthfully promise a post-commit M3 session.
+    """
+    import zipfile
+    from .native_delivery_contract_v3 import normalize_delivery_contract
+
+    if not zipfile.is_zipfile(package):
+        raise NativeM5Refused('M5_ZIP_CONTAINER_INVALID')
+    try:
+        with zipfile.ZipFile(package) as archive:
+            entries = [x for x in archive.infolist()
+                       if x.filename == '.devtool-artifact.json']
+            if len(entries) != 1 or not 0 < entries[0].file_size <= 128 * 1024:
+                raise NativeM5Refused('M5_ZIP_UNIQUE_MANIFEST_REQUIRED')
+            manifest = json.loads(archive.read(entries[0]))
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile):
+        raise NativeM5Refused('M5_ZIP_MANIFEST_UNREADABLE') from None
+    if not isinstance(manifest, dict) or manifest.get('schema_version') != 3:
+        raise NativeM5Refused('M5_ZIP_V3_REQUIRED_FOR_APPLY; legacy ZIP inspect/check only')
+    try:
+        contract = normalize_delivery_contract(manifest)
+    except (ValueError, TypeError, KeyError):
+        raise NativeM5Refused('M5_ZIP_V3_DELIVERY_CONTRACT_INVALID') from None
+    if not isinstance(contract, dict) or contract.get('schema') != 'devtool.native-delivery-contract.v1':
+        raise NativeM5Refused('M5_ZIP_V3_CONTINUITY_UNPROVEN')
+
+
 def _child_env() -> dict[str, str]:
     env=os.environ.copy()
     env.update(DEVTOOL_EXECUTION_PRESENTATION='plain',DEVTOOL_JOB_UI='plain',
@@ -203,6 +235,10 @@ def main(args: argparse.Namespace) -> int:
                 print(json.dumps(data,indent=2,sort_keys=True),flush=True)
                 return 0
             kind=_preverify(path)
+            # Prevent a legacy ZIP commit without an M3 session receipt.
+            # Validate the complete native v3 contract before any child is run.
+            if op=='apply' and kind=='native-zip':
+                _require_zip_v3_commit_session(path)
             if kind=='verified-pyz-v3':
                 runtime=_safe_root(str(getattr(args,'devtool_repo','') or repo))
                 command=[sys.executable,'-B',str(path), 'check',

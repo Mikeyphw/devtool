@@ -9,7 +9,7 @@ from unittest import mock
 import pytest
 from devtool.native_delivery_m5 import (
     NativeM5Refused, _artifact, _inspection, _preverify, _session_id,
-    _summary, _child_env, main,
+    _summary, _child_env, _require_zip_v3_commit_session, main,
 )
 from devtool.cli import build_parser
 from devtool.core_parser import parser_identity_projection
@@ -95,3 +95,100 @@ def test_no_auto_delivery_mutation_without_yes(tmp_path,monkeypatch):
     with mock.patch('devtool.native_delivery_m5._run') as runner:
         assert main(p)==2
         runner.assert_not_called()
+
+
+def _test_zip_manifest(tmp_path, manifest):
+    import zipfile
+    archive = tmp_path / 'fixture.zip'
+    with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('.devtool-artifact.json', json.dumps(manifest))
+    return archive
+
+
+def test_legacy_zip_check_allowed_but_apply_refused_precommit(tmp_path, monkeypatch):
+    archive = _test_zip_manifest(tmp_path, {'schema_version': 2, 'type': 'overlay'})
+    with pytest.raises(NativeM5Refused, match='M5_ZIP_V3_REQUIRED_FOR_APPLY'):
+        _require_zip_v3_commit_session(archive)
+    from devtool.native_delivery_m5 import _preverify
+    assert _preverify(archive) == 'native-zip'
+    called = []
+    monkeypatch.setattr('devtool.native_delivery_m5._run', lambda *a, **kw: called.append(a))
+    args = SimpleNamespace(native_command='apply', repo=str(tmp_path), artifact=str(archive), yes=True)
+    assert main(args) == 2
+    assert not called, 'no native subprocess may start for legacy ZIP apply'
+
+
+def test_malformed_v3_zip_refused_before_any_native_subprocess(tmp_path, monkeypatch):
+    archive = _test_zip_manifest(tmp_path, {'schema_version': 3, 'type': 'overlay'})
+    with pytest.raises(NativeM5Refused, match='M5_ZIP_V3_DELIVERY_CONTRACT_INVALID'):
+        _require_zip_v3_commit_session(archive)
+    with mock.patch('devtool.native_delivery_m5._run') as child:
+        args = SimpleNamespace(native_command='apply', repo=str(tmp_path), artifact=str(archive), yes=True)
+        assert main(args) == 2
+        child.assert_not_called()
+
+
+def test_valid_schema_v3_zip_contract_allows_native_engine_to_own_apply(tmp_path):
+    from devtool.native_delivery_contract_v3 import normalize_delivery_contract
+    import zipfile
+    # A real canonical v3 declaration (no mocked normalizer). It authorizes
+    # the native engine to perform its own independent artifact validation.
+    one, two, base, checksum = 'a'*40, 'b'*40, 'c'*40, 'd'*64
+    declaration = {
+        'schema_version': 3, 'type': 'overlay',
+        'base_contract_mode': 'exact-tree', 'base_commit': one, 'base_tree': two,
+        'repository': {'remote': 'git@github.com:Mikeyphw/devtool.git',
+                       'branch': 'feature/m5-native-zip-acceptance',
+                       'enforce_remote': True, 'enforce_branch': True},
+        'inventory': {'format': 1, 'entries': [
+            {'path': 'docs/m5-test.txt', 'action': 'add', 'sha256': checksum, 'size': 10}]},
+        'touched_paths': ['docs/m5-test.txt'],
+        'source_sha256': {'docs/m5-test.txt': None},
+        'expected_post_sha256': {'docs/m5-test.txt': checksum},
+        'validation': {'required': True, 'restore': False, 'build': False, 'test': False,
+                       'tests': [{'id': 'native-m5-gate', 'runner': 'python', 'required': True,
+                                  'command': ['python3', '-B', '-m', 'pytest', '-q',
+                                              'tests/test_native_delivery_m5.py']}]},
+        'apply': {'atomic': True, 'requires_clean_worktree': True,
+                  'commit': {'enabled': True, 'strategy': 'single',
+                             'message': 'test: native M5 ZIP acceptance'}},
+        'delivery_contract': {
+            'version': 1,
+            'runtime': {'compatibility': {'minimum': '3.2.0', 'major': 3},
+                        'resolution': 'trusted-verified-compatible',
+                        'verify': ['commit', 'tree', 'launcher-module-blob', 'cli-schema-blob']},
+            'session': {'after_commit': 'adopt-or-resume',
+                        'bind_to': ['artifact-digest', 'transaction-id', 'result-commit', 'branch']},
+            'remote': {'base_repository': 'Mikeyphw/devtool', 'base_branch': 'main',
+                       'base_sha': base, 'push': 'requires-explicit-approval',
+                       'pull_request': {'mode': 'requires-explicit-approval',
+                                        'draft': True, 'title': 'test: M5 ZIP acceptance'}},
+            'ci': {'policy_path': 'config/delivery-required-ci.json',
+                   'observe': 'on-explicit-request', 'exact_pr_head': True,
+                   'qualification': 'required-workflows-only'},
+            'recovery': {'after_commit': 'resume-only',
+                         'unknown_remote_outcome': 'read-only-reconcile'},
+        },
+    }
+    assert normalize_delivery_contract(declaration)['schema'] == 'devtool.native-delivery-contract.v1'
+    archive = _test_zip_manifest(tmp_path, declaration)
+    assert _require_zip_v3_commit_session(archive) is None
+
+
+def test_zip_missing_and_duplicate_manifest_both_refused(tmp_path):
+    import zipfile
+    a = tmp_path / 'missing.zip'
+    with zipfile.ZipFile(a, 'w') as z:
+        z.writestr('README', 'test')
+    with pytest.raises(NativeM5Refused, match='M5_ZIP_UNIQUE_MANIFEST_REQUIRED'):
+        _require_zip_v3_commit_session(a)
+    b = tmp_path / 'duplicates.zip'
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UserWarning)
+        with zipfile.ZipFile(b, 'w') as z:
+            z.writestr('.devtool-artifact.json', '{}')
+            z.writestr('.devtool-artifact.json', '{}')
+    with pytest.raises(NativeM5Refused, match='M5_ZIP_UNIQUE_MANIFEST_REQUIRED'):
+        _require_zip_v3_commit_session(b)
+
