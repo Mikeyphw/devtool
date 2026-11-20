@@ -20,7 +20,7 @@ from .models import (
 FEDERATION_SCHEMA_VERSION = 1
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _FEDERATION_KEYS = frozenset({"schema", "repositories", "interfaces", "groups", "workflows"})
-_REPOSITORY_KEYS = frozenset({"path", "required", "exports", "requires"})
+_REPOSITORY_KEYS = frozenset({"path", "required", "exports", "requires", "auth"})
 _GROUP_KEYS = frozenset({"repositories", "members", "interface"})
 _WORKFLOW_KEYS = frozenset({"depends_on", "steps", "integration_policy", "publish_barrier"})
 _WORKFLOW_STEP_KEYS = frozenset({"id", "ref", "depends_on", "inputs", "stage"})
@@ -120,6 +120,15 @@ def _bool(value: object, *, path: str, default: bool) -> bool:
         return default
     if not isinstance(value, bool):
         raise _fail(f"{path} must be true or false")
+    return value
+
+
+def _federation_auth(value: object, *, path: str) -> str:
+    """Explicit auth mode only; do not silently select a PAT or an App."""
+    if value is None:
+        return "git"
+    if not isinstance(value, str) or value not in ("git", "app"):
+        raise _fail(f"{path} must be 'git' or 'app'")
     return value
 
 
@@ -686,6 +695,7 @@ def load_federation_config(
             available=available,
             exports=_capability_exports(item.get("exports"), path=f"[federation.repositories.{name}.exports]"),
             requires=_capability_requires(item.get("requires"), path=f"[federation.repositories.{name}.requires]"),
+            auth=_federation_auth(item.get("auth"), path=f"federation.repositories.{name}.auth"),
         )
 
     interfaces_raw = _table(raw.get("interfaces"), path="[federation.interfaces]")
@@ -849,6 +859,7 @@ def federation_as_dict(config: FederationConfig) -> dict[str, Any]:
                 "root": repo.root,
                 "required": repo.required,
                 "available": repo.available,
+                **({"auth": repo.auth} if repo.auth != "git" else {}),
                 "exports": {"capabilities": list(repo.exports)},
                 "requires": {
                     "capabilities": [

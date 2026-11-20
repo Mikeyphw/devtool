@@ -322,8 +322,13 @@ def run_git_authenticated(repo: str | Path, argv: list[str], access: Installatio
     """One native Git operation with an ephemeral, fd-backed AskPass token."""
     repo = Path(repo).resolve()
     _https_origin(repo,access.repository)
-    if not argv or argv[0] not in ('ls-remote','push'):
+    if not argv or argv[0] not in ('ls-remote','push','fetch'):
         raise GitHubAppError('APP_GIT_COMMAND_NOT_APPROVED')
+    # Federation only needs this exact fetch form. Reject arbitrary refspecs,
+    # --upload-pack, -c, URLs, credential helpers and argument injection.
+    if argv[0] == 'fetch' and (argv != ['fetch','--prune','origin']
+                                or access.capability != 'repository_read'):
+        raise GitHubAppError('APP_GIT_FETCH_SCOPE_OR_ARGUMENTS_REFUSED')
     if access.expires_at <= int(time.time())+120:
         raise GitHubAppError('APP_TOKEN_TOO_CLOSE_TO_EXPIRY_FOR_GIT')
     if argv[0]=='push' and access.capability!='branch_write':
