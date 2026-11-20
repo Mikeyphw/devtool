@@ -242,6 +242,100 @@ def _download_blob(client: GitHubActionsClient, signed: str, output: Path) -> tu
     return digest.hexdigest(), size
 
 
+def _publish_verified_archive_no_clobber(source: Path, target: Path, expected: str) -> None:
+    """Portable no-clobber verified publication (works without os.link).
+
+    O_CREAT|O_EXCL reserves the final path, never replaces someone else's file.
+    The content was verified as an authenticated ZIP in the private temporary
+    path before this call; it is checked AGAIN while copying and before registry
+    insertion. If killed during the copy, a partial file may remain, which the
+    existing-archive SHA-256 recovery gate MUST refuse (not adopt or overwrite).
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(target, flags, 0o600)
+    except FileExistsError:
+        raise GitHubActionsError("Artifact already downloaded; use actions verify instead of overwriting") from None
+    except OSError as exc:
+        raise GitHubActionsError("Cannot reserve verified artifact path without overwriting") from exc
+    checksum = hashlib.sha256()
+    try:
+        with os.fdopen(fd, "wb") as output, source.open("rb") as original:
+            initial = os.fstat(output.fileno())
+            if not stat.S_ISREG(initial.st_mode) or initial.st_nlink != 1:
+                raise GitHubActionsError("Exclusive archive target is not an unlinked regular file")
+            for block in iter(lambda: original.read(1024 * 1024), b""):
+                output.write(block)
+                checksum.update(block)
+            output.flush()
+            os.fsync(output.fileno())
+        final = target.stat(follow_symlinks=False)
+        if (not stat.S_ISREG(final.st_mode) or final.st_nlink != 1 or
+            (initial.st_dev, initial.st_ino) != (final.st_dev, final.st_ino) or
+            stat.S_IMODE(final.st_mode) & 0o077 or
+            checksum.hexdigest() != expected or final.st_size != source.stat().st_size):
+            raise GitHubActionsError("Published archive integrity or exclusive identity verification failed")
+    except BaseException:
+        # Intentionally preserve incomplete evidence for explicit inspection.
+        # Never automatically remove or overwrite a path after a possible race.
+        raise
+
+
+def _adopt_existing_verified_archive(repo_root: Path, path: Path, *, slug: str,
+                                     identity: int, artifact_id: int, remote: dict[str, Any],
+                                     artifact: dict[str, Any], expected: str) -> dict[str, Any]:
+    """Adopt an interrupted post-download/pre-registry artifact, never overwrite.
+
+    The remote run/attempt/artifact and archive digest were already independently
+    queried; a previously registered artifact is *not* re-registered.
+    """
+    if path.is_symlink() or not path.is_file():
+        raise GitHubActionsError("Existing artifact is not a regular safe file")
+    original_stat = path.stat(follow_symlinks=False)
+    if (original_stat.st_nlink != 1 or
+        (os.name == "posix" and stat.S_IMODE(original_stat.st_mode) & 0o077)):
+        raise GitHubActionsError("Existing artifact permissions or link identity are unsafe")
+    if path.parent != _storage(repo_root):
+        raise GitHubActionsError("Existing artifact outside canonical download directory")
+    records = load_registry(repo_root).get("items", [])
+    for row in records:
+        meta = row.get("metadata") if isinstance(row, dict) else None
+        if (isinstance(meta, dict) and
+            str(meta.get("remote_repository") or "").lower() == slug.lower() and
+            meta.get("remote_run_id") == identity and
+            meta.get("remote_artifact_id") == artifact_id):
+            raise GitHubActionsError("Artifact already downloaded; use actions verify instead of overwriting")
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    if digest.hexdigest() != expected:
+        raise GitHubActionsError("Existing archive SHA256 conflicts with authenticated GitHub digest; preserved")
+    zip_check = check_zip(path)
+    embedded = verify_embedded_debug_receipt(path, slug=slug, remote=remote)
+    meta = {"producer": "github-actions", "state": "downloaded-unqualified",
+            "remote_repository": slug, "remote_run_id": identity,
+            "remote_run_attempt": remote.get("run_attempt"),
+            "remote_workflow_id": remote.get("workflow_id"),
+            "remote_head_sha": remote.get("head_sha"),
+            "remote_artifact_id": artifact_id,
+            "remote_digest": f"sha256:{expected}", "archive_digest_verified": True,
+            "archive_members": zip_check["members"], "qualified_release": False,
+            "embedded_build_receipt": embedded,
+            "signing_verified": False, "extracted": False, "verification_status": "archive-sha256-only"}
+    registered = register_paths(repo_root, [path], metadata=meta)
+    if len(registered) != 1 or registered[0]["sha256"] != expected:
+        raise GitHubActionsError("Existing archive could not be registered with exact SHA256")
+    # Preserve auditability of a post-register disk race: native verify must
+    # still independently re-query GitHub and validate immutable contents.
+    return {"phase": "ACTIONS-04", "repository": slug, "run_id": identity,
+            "artifact": artifact, "file": str(path), "sha256": expected,
+            "bytes": path.stat().st_size, "zip_validation": zip_check,
+            "embedded_build_receipt": embedded,
+            "registry_id": registered[0]["id"], "download_verified": True,
+            "adopted_existing": True, "extracted": False, "qualified_release": False}
+
+
 def download_artifact(client: GitHubActionsClient, slug: str, identity: int, artifact_id: int,
                       repo_root: Path) -> dict[str, Any]:
     slug = _slug(slug)
@@ -251,6 +345,13 @@ def download_artifact(client: GitHubActionsClient, slug: str, identity: int, art
     artifact = _metadata(client.get_artifact(slug, artifact_id), slug, remote, exact_id=artifact_id)
     expected = _digest(artifact["digest"])
     folder = _storage(repo_root)
+    target = folder / f"github-{slug.replace('/', '_')}-run{identity}-artifact{artifact_id}-{expected[:16]}.zip"
+    if target.is_symlink():
+        raise GitHubActionsError("Existing artifact path is a symlink")
+    if target.exists():
+        return _adopt_existing_verified_archive(repo_root, target, slug=slug,
+            identity=identity, artifact_id=artifact_id, remote=remote,
+            artifact=artifact, expected=expected)
     fd, tmp_name = tempfile.mkstemp(prefix=".download-", suffix=".zip", dir=folder)
     os.close(fd)
     tmp = Path(tmp_name)
@@ -261,10 +362,7 @@ def download_artifact(client: GitHubActionsClient, slug: str, identity: int, art
             raise GitHubActionsError("GitHub artifact sha256 mismatch; discarded archive")
         zip_check = check_zip(tmp)
         embedded = verify_embedded_debug_receipt(tmp, slug=slug, remote=remote)
-        target = folder / f"github-{slug.replace('/', '_')}-run{identity}-artifact{artifact_id}-{expected[:16]}.zip"
-        if target.is_symlink() or target.exists():
-            raise GitHubActionsError("Artifact already downloaded; use actions verify instead of overwriting")
-        os.replace(tmp, target)
+        _publish_verified_archive_no_clobber(tmp, target, expected)
         dfd = os.open(folder, os.O_RDONLY)
         try: os.fsync(dfd)
         finally: os.close(dfd)

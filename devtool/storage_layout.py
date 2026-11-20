@@ -312,6 +312,27 @@ def _has_payload(path: Path) -> bool:
         raise StorageLayoutError(f"Cannot inspect storage directory: {path}") from exc
 
 
+def _artifact_registry_lock_only(path: Path) -> bool:
+    """An idle zero-byte registry.lock is not a second artifact authority.
+
+    This is deliberately specific: no other storage family, symlink, nonempty
+    lock, special file, or additional file qualifies as an empty authority.
+    Migration still requires explicit confirmation and writer fencing.
+    """
+    if not path.is_dir() or path.is_symlink():
+        return False
+    children = list(path.iterdir())
+    if len(children) != 1 or children[0].name != "registry.lock":
+        return False
+    lock = children[0]
+    if lock.is_symlink():
+        return False
+    info = lock.stat(follow_symlinks=False)
+    return (stat.S_ISREG(info.st_mode) and info.st_size == 0 and
+            info.st_nlink == 1 and
+            (os.name != "posix" or stat.S_IMODE(info.st_mode) & 0o077 == 0))
+
+
 def _marker(repo: str | Path, family: str) -> Path:
     return state_dir() / "repositories" / repository_key(repo) / ".layout-markers" / (family + ".json")
 
@@ -369,7 +390,9 @@ def family_dir(repo: str | Path, family: str) -> Path:
     populated = [path for path in old if _has_payload(path)]
     if len(populated) > 1:
         raise StorageLayoutError(f"Multiple legacy {family} authorities; reconcile before proceeding")
-    if populated and _has_payload(target):
+    if populated and _has_payload(target) and not (
+        family == "artifact-registry" and _artifact_registry_lock_only(target)
+    ):
         raise StorageLayoutError(f"Legacy and XDG {family} both contain data; migrate or reconcile first")
     if populated:
         return populated[0]
@@ -701,6 +724,35 @@ def _migrate_storage_locked(root: Path) -> dict[str, Any]:
             skipped.append({"family":name,"reason":"already-external"})
             continue
         source_hash,count,size = _fingerprint_dir(source)
+        # DTB-014: a previous aborted registry read can create only the XDG
+        # lock sentinel. Hold the repository migration writer fence AND the
+        # independent registry.lock lock before preserving it. Never drop it.
+        # If interrupted, the legacy source remains intact and the preserved
+        # sentinel is available for forensic inspection before native retry.
+        if name == "artifact-registry" and dest.exists() and _artifact_registry_lock_only(dest):
+            destination_lock = dest / "registry.lock"
+            fd = os.open(destination_lock, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                try:
+                    flock(fd, LOCK_EX | LOCK_NB)
+                except (OSError, BlockingIOError) as exc:
+                    raise StorageLayoutError("Active artifact registry lock protects storage") from exc
+                try:
+                    if not _artifact_registry_lock_only(dest):
+                        raise StorageLayoutError("Artifact registry lock-only identity drift")
+                    preserve_parent = _marker(root,name).parent
+                    ensure_private_storage_dir(preserve_parent)
+                    preserved = preserve_parent / ("artifact-registry-lock-only-" + source_hash[:20])
+                    if preserved.is_symlink() or preserved.exists():
+                        raise StorageLayoutError("Existing preserved registry lock requires reconciliation")
+                    os.replace(dest, preserved)  # same-filesystem, no original bytes discarded
+                    dfd = os.open(dest.parent, os.O_RDONLY)
+                    try: os.fsync(dfd)
+                    finally: os.close(dfd)
+                finally:
+                    flock(fd, LOCK_UN)
+            finally:
+                os.close(fd)
         if dest.exists():
             # For cleanup receipts, both archives are readable; merge only
             # non-conflicting named evidence, never replace a newer receipt.

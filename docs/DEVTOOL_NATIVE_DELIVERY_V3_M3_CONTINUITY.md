@@ -164,3 +164,24 @@ Guardian or invoke `recover-committed` there. After the merged Devtool
 runtime is verified on the Guardian device, authorized recovery of its own
 existing, source-qualified history must be performed separately and independently
 confirmed. No overlay reapply, journal synthesis or original-commit rewriting.
+
+## Canonical native validator child name (Guardian v0.12.5 receipt)
+
+The embedded validation hook is recorded as `artifact-validate-script` by
+`run_artifact_validation_script` and by the original native operation history.
+During committed-history adoption, this precise successful, unskipped child
+name is required before declared `validation.write_paths` can authorize
+descendant outputs under a verified Git-tree directory. The previously used
+synthetic spelling `artifact-validation-script` is **not** a valid success
+receipt and must not grant authority. This aligns the scope guard with the
+actual native execution and recorder, rather than rewriting earlier receipts.
+
+This correction is limited to native adoption and current regression fixtures.
+An unchanged Guardian commit, unique authoritative history, parent/tree and
+postimage proofs, completed transaction, passed validation steps, safe scope,
+and original remote approvals remain mandatory. Re-run only `recover-committed`
+after the Devtool correction is merged; never reapply the Guardian overlay.
+
+The canonical validator operation name is `artifact-validate-script`, while
+the manifest policy key remains `validation`. These two identities are
+intentionally distinct and independently validated during adoption.

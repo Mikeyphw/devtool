@@ -51,7 +51,8 @@ def run_delivery_command(args: Any) -> int:
             if Path(bound['repo_root']).resolve() != root:
                 raise DeliverySessionError('Session belongs to another repository/worktree')
             if operation == 'push':
-                payload = push(identity,yes=bool(getattr(args,'yes',False)))
+                payload = push(identity,yes=bool(getattr(args,'yes',False)),
+                               auth=str(getattr(args,'auth','auto') or 'auto'))
             elif operation == 'pr':
                 payload = pr(identity,yes=bool(getattr(args,'yes',False)),
                              title=str(getattr(args,'title','') or ''),
@@ -67,8 +68,13 @@ def run_delivery_command(args: Any) -> int:
                 if fork_delivery:
                     from .github_actions import GitHubActionsClient, resolve_token
                     from .delivery_ci_policy import load_upstream_policy
-                    token,_ = resolve_token(str(getattr(args,'auth','auto') or 'auto'))
-                    client_for_policy = GitHubActionsClient(token)
+                    auth_mode=str(getattr(args,'auth','auto') or 'auto')
+                    if auth_mode=='app':
+                        from .github_app import make_app_client
+                        client_for_policy=make_app_client(repo_name,'checks_read')
+                    else:
+                        token,_=resolve_token(auth_mode)
+                        client_for_policy=GitHubActionsClient(token)
                     policy, base_at_start = load_upstream_policy(
                         client_for_policy,expected_repository=repo_name,
                         expected_base=base_branch,expected_base_sha=bound.get('base_sha'))
@@ -93,8 +99,14 @@ def run_delivery_command(args: Any) -> int:
                     from .github_actions import GitHubActionsClient, resolve_token
                     from .delivery_remote_logs import fetch_selected_run_logs
                     def _fetch_logs(run):
-                        token,_=resolve_token(str(getattr(args,'auth','auto') or 'auto'))
-                        return fetch_selected_run_logs(GitHubActionsClient(token),repo_name,run)
+                        auth_mode=str(getattr(args,'auth','auto') or 'auto')
+                        if auth_mode=='app':
+                            from .github_app import make_app_client
+                            log_client=make_app_client(repo_name,'checks_read')
+                        else:
+                            token,_=resolve_token(auth_mode)
+                            log_client=GitHubActionsClient(token)
+                        return fetch_selected_run_logs(log_client,repo_name,run)
                     rich_monitor.log_fetcher=_fetch_logs
                 def progress(s:dict[str,Any])->None:
                     if rich_monitor.enabled:
@@ -132,7 +144,8 @@ def run_delivery_command(args: Any) -> int:
         return 2
     except Exception as exc:
         from .github_actions import GitHubActionsError
-        if isinstance(exc,GitHubActionsError):
+        from .github_app import GitHubAppError
+        if isinstance(exc,(GitHubActionsError,GitHubAppError)):
             print(f'Devtool delivery: GitHub observation failed ({exc})',file=sys.stderr,flush=True)
             return 2
         raise

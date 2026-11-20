@@ -74,11 +74,21 @@ def resolve_repository(explicit: str, local_root: Path) -> str:
     return parse_github_remote(proc.stdout)
 
 
-def resolve_token(mode: str = "auto", *, environ: Mapping[str, str] | None = None) -> tuple[str | None, str]:
+def resolve_token(mode: str = "auto", *, environ: Mapping[str, str] | None = None,
+                  repository: str = "", capability: str = "repository_read") -> tuple[str | None, str]:
     """Credentials exist in memory only. gh is queried without a shell."""
     env = os.environ if environ is None else environ
-    if mode not in ("auto", "env", "gh", "none"):
+    if mode not in ("auto", "env", "gh", "none", "app"):
         raise GitHubActionsError("Unsupported authentication mode")
+    if mode == "app":
+        # Opt-in only. Auto/PAT/gh identities remain unchanged.
+        from .github_app import AppInstallationProvider, GitHubAppError
+        expected = str(repository or env.get("DEVTOOL_GITHUB_APP_REPOSITORY", "")).strip()
+        try:
+            scope = AppInstallationProvider.from_environment(env).issue(expected, capability)
+        except GitHubAppError as exc:
+            raise GitHubActionsError(str(exc)) from None
+        return scope.token, "github-app"
     if mode == "none":
         return None, "anonymous"
     if mode in ("auto", "env"):

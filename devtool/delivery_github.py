@@ -50,15 +50,21 @@ def _checked(session_id: str, *, state_root: Path | None = None) -> dict[str, An
     return session
 
 
-def _ls_remote(repo: str, branch: str) -> str | None:
+def _ls_remote(repo: str, branch: str, *, runner=None) -> str | None:
     """None means *verified absent*, not network uncertainty."""
     if not _REF.fullmatch(branch) or branch.startswith('/') or '..' in branch:
         raise DeliverySessionError('Invalid delivery branch')
     try:
-        p = subprocess.run(['git', '-C', repo, 'ls-remote', '--exit-code',
-                            'origin', f'refs/heads/{branch}'],
-                           text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           env={**os.environ, 'GIT_TERMINAL_PROMPT': '0'}, timeout=35)
+        if runner is None:
+            p = subprocess.run(['git', '-C', repo, 'ls-remote', '--exit-code',
+                                'origin', f'refs/heads/{branch}'],
+                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               env={**os.environ, 'GIT_TERMINAL_PROMPT': '0'}, timeout=35)
+        else:
+            # M4 uses the same canonical remote-result parser; only the
+            # one-operation credentialed Git transport differs.
+            p = runner(repo, ['ls-remote', '--exit-code', 'origin',
+                              f'refs/heads/{branch}'], timeout=35)
     except (OSError, subprocess.SubprocessError) as exc:
         raise DeliverySessionError('Cannot inspect remote branch safely') from exc
     if p.returncode == 2 and not p.stdout.strip():
@@ -94,7 +100,30 @@ def _assert_nonforce_fast_forward(repo: str, old_sha: str, new_sha: str) -> None
 
 def push(session_id: str, *, yes: bool = False, state_root: Path | None = None,
          remote_probe: Callable[[str, str], str | None] = _ls_remote,
-         git_push: Callable[[str, str], int] | None = None) -> dict[str, Any]:
+         git_push: Callable[[str, str], int] | None = None,
+         auth: str = 'auto') -> dict[str, Any]:
+    if auth == 'app':
+        # One scoped credential, checked before any mutation intent.
+        # Native push(), intent journal and read-only reconciliation stay authoritative.
+        if remote_probe is not _ls_remote or git_push is not None:
+            raise DeliverySessionError('App push cannot override native credential transport')
+        from .github_app import AppInstallationProvider, run_git_authenticated
+        bound = _checked(session_id, state_root=state_root)
+        provider = AppInstallationProvider.from_environment()
+        credential = provider.issue(bound['repository'], 'branch_write')
+        def app_remote_probe(root, branch):
+            return _ls_remote(root, branch, runner=lambda r, argv, timeout:
+                run_git_authenticated(r, argv, credential, timeout=timeout))
+        def app_git_push(root, branch):
+            return run_git_authenticated(root,
+                ['push','--porcelain','origin',f'refs/heads/{branch}:refs/heads/{branch}'],
+                credential,timeout=150).returncode
+        result = push(session_id,yes=yes,state_root=state_root,
+                      remote_probe=app_remote_probe,git_push=app_git_push,auth='auto')
+        result['credential'] = credential.public_receipt()
+        return result
+    if auth not in ('auto',):
+        raise DeliverySessionError('Unsupported GitHub push authentication mode')
     item = _checked(session_id, state_root=state_root)
     key = f"{item['repository']}:refs/heads/{item['head']}:{item['head_sha']}"
     current = remote_probe(item['repo_root'], item['head'])
@@ -224,10 +253,18 @@ def pr(session_id: str, *, yes: bool = False, title: str = '',
     base_repo = _slug(item.get('base_repository') or slug)
     head_repo = _slug(item.get('head_repository') or slug)
     pinned_base = item.get('base_sha')
+    if auth == 'app':
+        from .github_app import make_app_client
     if client is None:
-        token, _ = resolve_token(auth)
-        client = GitHubActionsClient(token)
-    remote = _remote_head(client, head_repo, head)
+        if auth == 'app':
+            client = make_app_client(base_repo,'pr_create')
+        else:
+            token, _ = resolve_token(auth)
+            client = GitHubActionsClient(token)
+    head_client = (make_app_client(head_repo,'repository_read',role='head')
+                   if auth == 'app' and head_repo.casefold()!=base_repo.casefold()
+                   else client)
+    remote = _remote_head(head_client, head_repo, head)
     if remote != sha:
         raise DeliverySessionError('Remote branch is missing or has different SHA; push/reconcile first')
     base_tip = _remote_head(client, base_repo, base)
@@ -290,7 +327,7 @@ def pr(session_id: str, *, yes: bool = False, title: str = '',
     if created is None:
         raise DeliverySessionError('PR response did not prove exact source identity; reconcile manually')
     # Confirm from a subsequent independent read, never just trust POST body.
-    if _remote_head(client, head_repo, head) != sha or (
+    if _remote_head(head_client, head_repo, head) != sha or (
             pinned_base is not None and _remote_head(client, base_repo, base) != pinned_base):
         raise DeliverySessionError('Remote source or pinned base moved after PR POST; reconcile without retry')
     selected = [_pr_match(x,base_repo,head,base,sha,
@@ -405,9 +442,17 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
     # Required PR CI executes in the upstream repository, but the branch
     # source is independently checked in the fork on every observation.
     item = {**item, 'repository': base_repo}
+    if auth == 'app':
+        from .github_app import make_app_client
     if client is None:
-        token, _ = resolve_token(auth)
-        client = GitHubActionsClient(token)
+        if auth == 'app':
+            client = make_app_client(base_repo,'checks_read')
+        else:
+            token, _ = resolve_token(auth)
+            client = GitHubActionsClient(token)
+    head_client = (make_app_client(head_repo,'repository_read',role='head')
+                   if auth == 'app' and head_repo.casefold()!=base_repo.casefold()
+                   else client)
     pr_info = item.get('pr')
     if pr_info and pr_info.get('head_sha') != item['head_sha']:
         raise DeliverySessionError('Saved PR provenance is stale')
@@ -446,7 +491,7 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
     def live_provenance() -> str | None:
         # Check the remote source on EVERY observation, even if no PR exists.
         # Never infer a successful check from an old head or merge ref.
-        actual_head = _remote_head(client, head_repo, item['head'])
+        actual_head = _remote_head(head_client, head_repo, item['head'])
         if actual_head != item['head_sha']:
             raise DeliverySessionError('Remote branch moved during CI; qualification blocked')
         if not pr_info:
