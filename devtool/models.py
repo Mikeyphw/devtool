@@ -315,6 +315,8 @@ class FederatedRepositoryConfig:
     available: bool = False
     exports: tuple[str, ...] = ()
     requires: tuple[FederationCapabilityRequirement, ...] = ()
+    # Explicit per-repository Git transport choice; default preserves SSH/PAT.
+    auth: str = "git"
 
 
 @dataclass(slots=True, frozen=True)

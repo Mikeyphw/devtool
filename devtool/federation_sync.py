@@ -61,6 +61,33 @@ def _git(root: Path, *args: str, timeout: float = 30.0) -> str:
     return result.stdout.strip()
 
 
+def _repository_auth(parent: Any, repository: str) -> str:
+    entry = parent.federation.repositories.get(repository)
+    if entry is None:
+        raise FederationSyncError('APP_FEDERATION_REPOSITORY_NOT_ENROLLED')
+    auth = str(getattr(entry, 'auth', 'git'))
+    if auth not in ('git', 'app'):
+        raise FederationSyncError('APP_FEDERATION_AUTH_UNSUPPORTED')
+    return auth
+
+
+def _fetch_origin(root: Path, *, auth: str, locked_locator: str) -> None:
+    if auth == 'git':
+        _git(root, 'fetch', '--prune', 'origin', timeout=120)
+        return
+    if auth != 'app':
+        raise FederationSyncError('APP_FEDERATION_AUTH_UNSUPPORTED')
+    from .federation_app_auth import fetch_from_github_app
+    from .github_app import GitHubAppError
+    try:
+        result = fetch_from_github_app(root, locked_locator)
+    except GitHubAppError as exc:
+        # App-specific errors are already sanitized. Never print remote stderr.
+        raise FederationSyncError(str(exc)) from None
+    if result.returncode != 0:
+        raise FederationSyncError('APP_FEDERATION_FETCH_FAILED rc='+str(result.returncode))
+
+
 def _raw_remote_fingerprint(root: Path) -> str:
     result = _run_git(root, "config", "--get", "remote.origin.url")
     if result.returncode != 0:
@@ -283,6 +310,7 @@ class FederationSyncReport:
 def _plan_bootstrap(parent: Any, locked: FederationSourceRepository, *, apply: bool, operation_id: str) -> FederationSyncAction:
     name = locked.repository
     root = _destination(parent, name)
+    auth = _repository_auth(parent, name)
     if root.exists():
         try:
             state = collect_git_state(root)
@@ -307,6 +335,14 @@ def _plan_bootstrap(parent: Any, locked: FederationSourceRepository, *, apply: b
             name, str(root), "bootstrap", "blocked-missing-source-locator",
             reason="frozen lock predates FRX-Y11 safe clone locator evidence; refreeze while the source checkout is available",
         )
+    if auth == 'app':
+        from .federation_app_auth import github_slug_for_locator
+        from .github_app import GitHubAppError
+        try:
+            github_slug_for_locator(locator)
+        except GitHubAppError as exc:
+            return FederationSyncAction(name, str(root), 'bootstrap', 'blocked-app-origin',
+                                        reason=str(exc))
     commands = (
         ("git", "init", str(root)),
         ("git", "-C", str(root), "remote", "add", "origin", locator),
@@ -322,7 +358,7 @@ def _plan_bootstrap(parent: Any, locked: FederationSourceRepository, *, apply: b
     try:
         _git(staging, "init", "-q")
         _git(staging, "remote", "add", "origin", locator)
-        _git(staging, "fetch", "--prune", "origin", timeout=120)
+        _fetch_origin(staging, auth=auth, locked_locator=locator)
         if not _commit_exists(staging, locked.start_commit):
             raise FederationSyncError(f"locked commit {locked.start_commit} is unavailable from origin")
         if locked.branch:
@@ -355,6 +391,7 @@ def _plan_bootstrap(parent: Any, locked: FederationSourceRepository, *, apply: b
 def _plan_sync(parent: Any, locked: FederationSourceRepository, *, apply: bool, operation_id: str) -> FederationSyncAction:
     name = locked.repository
     root = _destination(parent, name)
+    auth = _repository_auth(parent, name)
     if not root.is_dir():
         return FederationSyncAction(
             name, str(root), "sync", "needs-bootstrap", reason="repository checkout is unavailable"
@@ -381,6 +418,14 @@ def _plan_sync(parent: Any, locked: FederationSourceRepository, *, apply: bool, 
             reason="remote.origin identity differs from the frozen lock",
             identity=_checkout_identity(root, locked),
         )
+    if auth == 'app':
+        from .federation_app_auth import github_slug_for_locator
+        from .github_app import GitHubAppError
+        try:
+            github_slug_for_locator(str(locked.remote_locator or ''))
+        except GitHubAppError as exc:
+            return FederationSyncAction(name, str(root), 'sync', 'blocked-app-origin',
+                                        reason=str(exc))
     current = str(state.head.get("sha") or "")
     branch = str(state.head.get("branch") or "")
     if locked.branch and branch != locked.branch:
@@ -415,7 +460,7 @@ def _plan_sync(parent: Any, locked: FederationSourceRepository, *, apply: bool, 
 
     try:
         recovery = _establish_recovery(parent, name, root, operation_id)
-        _git(root, "fetch", "--prune", "origin", timeout=120)
+        _fetch_origin(root, auth=auth, locked_locator=str(locked.remote_locator or ''))
         if not _commit_exists(root, locked.start_commit):
             raise FederationSyncError(f"locked commit {locked.start_commit} is unavailable after fetch")
         if locked.branch:
