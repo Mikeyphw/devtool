@@ -141,8 +141,13 @@ def test_native_child_respects_explicit_preferences_and_never_synthesizes_deprec
         assert env["DEVTOOL_TEXTUAL_APPLY_HOST"]=="0"
     # Native Devtool owns actual overlay and session authority. No clipboard copy.
     assert "--no-clipboard" in inspect.getsource(launcher.native)
-    assert "delivery','session','start" in inspect.getsource(launcher.apply_package)
-    assert "apply','overlay" in inspect.getsource(launcher.apply_package)
+    apply_source=inspect.getsource(launcher.apply_package)
+    adoption_source=inspect.getsource(launcher.native_adopt_committed)
+    assert "apply','overlay" in apply_source
+    assert "native_adopt_committed(" in apply_source
+    assert "'adopt-committed'" in adoption_source
+    assert "delivery','session','start" not in apply_source
+    assert apply_source.index('native_adopt_committed(') < apply_source.index('if approve_remote:')
 
 
 def test_existing_hosted_gate_runs_current_compatibility_tests_without_losing_previous_checks():

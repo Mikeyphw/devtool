@@ -144,6 +144,7 @@ class RichMonitorTests(unittest.TestCase):
         from unittest.mock import patch
         import tempfile
         import hashlib
+        import zipfile
         from pathlib import Path
         from devtool import launcher_contract_v3 as lc
         with tempfile.TemporaryDirectory() as dirname:
@@ -158,18 +159,22 @@ class RichMonitorTests(unittest.TestCase):
                    {'path':'config/delivery-required-ci.json','action':'add'}]},
                'inventory':[{'action':'add','path':'config/delivery-required-ci.json',
                    'payload_sha256':hashlib.sha256(policy.read_bytes()).hexdigest()}]}
+            archive=root/'candidate.zip'
+            with zipfile.ZipFile(archive,'w') as candidate:
+                candidate.writestr('fixture.txt',b'verified adoption fixture archive')
             with (patch.object(lc,'check_source'),
                   patch.object(lc,'runtime_probe'),
                   patch.object(lc,'repo_identity',return_value={'branch':'feature/ux-rich',
                             'source_sha':'b'*40}),
                   patch.object(lc,'verify_postcommit_status'),
-                  patch.object(lc,'scaffold',return_value=root/'candidate.zip'),
+                  patch.object(lc,'scaffold',return_value=archive),
                   patch.object(lc,'native'),
-                  patch.object(lc,'native_json',return_value={'id':'c'*32,'head_sha':'b'*40}),
+                  patch.object(lc,'native_adopt_committed',return_value={'id':'c'*32}) as adoption,
                   patch.object(lc,'required_ci_preflight',side_effect=[None,{'policy_sha256':'e'*64}]) as preflight):
                 result=lc.apply_package(root,root,m,{},False,watch_ci=True)
             self.assertEqual(result,0)
             self.assertEqual(preflight.call_count,2)
+            adoption.assert_called_once_with(root,root,archive,'b'*40)
 
     def test_noninteractive_view_does_not_mutate_logs_or_clipboard(self):
         original=os.environ.copy()
