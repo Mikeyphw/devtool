@@ -75,7 +75,7 @@ def test_standalone_constrained_builder_can_omit_max_metaspace() -> None:
 
 def test_termux_profile_can_be_bypassed_for_one_invocation(tmp_path: Path) -> None:
     parser = build_parser()
-    args = parser.parse_args(["--no-termux-resource-profile", "validate", "--resource-profile", "standard"])
+    args = parser.parse_args(["--no-termux-resource-profile", "validate", "--test-profile", "full", "--resource-profile", "standard"])
     config = ProjectConfig(
         repo_root=tmp_path,
         project_root=str(tmp_path),

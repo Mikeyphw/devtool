@@ -3340,6 +3340,15 @@ def _apply_implicit_targeted_validation(config: ProjectConfig, args: argparse.Na
         required = bool(artifact_validation_policy(manifest).get("required", False))
         if not (getattr(args, "validate", False) or getattr(args, "validate_only", False) or required):
             return
+    if (command in {"validate", "v", *APPLY_COMMANDS}
+            and bool(getattr(args, "_devtool_cli_test_task_explicit", False))
+            and _cli_string_list(getattr(args, "test_task", None))
+            and not bool(getattr(args, "affected", False))
+            and not str(getattr(args, "affected_base", "") or "").strip()
+            and not str(getattr(args, "affected_head", "") or "").strip()):
+        # Explicit legacy validation tasks are resolved by the native task
+        # path, not test_selection. Avoid inferring an unrelated Git scope.
+        return
     if all(_validation_skip_values(args)):
         # A required checked validator/test-only artifact may legitimately
         # disable all three built-in lifecycle phases.

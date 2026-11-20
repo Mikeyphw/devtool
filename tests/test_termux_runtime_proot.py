@@ -862,7 +862,7 @@ class ProotRunnerTests(unittest.TestCase):
                 repo_root=root, project_root=str(root), kind="python", execution_environment="auto",
                 runner_options={},
             )
-            args = build_parser().parse_args(["--proot-distro", "ubuntu", "validate"])
+            args = build_parser().parse_args(["--proot-distro", "ubuntu", "validate", "--test-profile", "full"])
             with patch.dict(os.environ, TERMUX_ENV, clear=True):
                 _apply_runner_cli_options(config, args)
             self.assertEqual(config.execution_environment, "proot-distro")
@@ -881,7 +881,7 @@ class ProotRunnerTests(unittest.TestCase):
                         repo_root=root, project_root=str(root), kind="python",
                         execution_environment=execution_environment, runner_options={},
                     )
-                    args = build_parser().parse_args(argv)
+                    args = build_parser().parse_args([*argv, "--test-profile", "full"])
                     with patch.dict(os.environ, TERMUX_ENV, clear=True):
                         _apply_runner_cli_options(config, args)
                     self.assertNotIn("max_workers", config.runner_options.get("gradle", {}))
