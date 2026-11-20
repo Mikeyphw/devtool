@@ -23,8 +23,10 @@ from .launcher_validation_contract import inspect_delivery_plan, ValidationContr
 _SOURCE = re.compile(r"[0-9a-f]{40}\Z")
 _REMOTE = re.compile(r"(?:git@github\.com:|ssh://git@github\.com/|https://github\.com/)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?:\.git)?/?\Z")
 _MAX_CHANGES = 32
-_MAX_FILE = 1024 * 1024
-_MAX_TOTAL = 4 * 1024 * 1024
+# Align native scaffold with Launcher v3.2.1's bounded 5 MiB/file and
+# 6 MiB total source-bound payload budgets; preserve all other guards.
+_MAX_FILE = 5 * 1024 * 1024
+_MAX_TOTAL = 6 * 1024 * 1024
 _MAX_PLAN = 64 * 1024
 _ALLOWED = {"add", "modify"}
 _DUPLICATE_HINTS = ("gh pr create", "gh run watch", "gh run list", "git push", "workflow_dispatch", "gh workflow run")
