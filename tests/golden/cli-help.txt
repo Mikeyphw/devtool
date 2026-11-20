@@ -17,18 +17,18 @@ usage: devtool [-h] [-r REPO] [-c CONFIG] [--target TARGET] [--group GROUP]
                [--ui-motion {auto,full,reduced}]
                [--ui-verbosity {compact,normal,detailed,debug}] [--auto-hud]
                [--no-hud] [--hud-mode HUD_MODE] [--hud-overlay |
-               --hud-no-overlay] [--host] [--chroot CHROOT] [--ssh HOST]
-               [--ssh-profile NAME] [--proot-distro DISTRO]
-               [--execution-environment {auto,native-termux,chroot,desktop-linux,desktop-macos,desktop-windows,host,android-device,external-device,ssh,proot-distro}]
-               [--ssh-port PORT] [--ssh-user USER] [--ssh-identity PATH]
-               [--ssh-session NAME] [--ssh-cwd PATH] [--ssh-tool COMMAND]
-               [--ssh-mode {devtool,commands}] [--ssh-stage-dir PATH]
-               [--ssh-no-artifact-copy] [--ssh-detached] [--proot-user USER]
-               [--proot-cwd PATH] [--proot-repo-mount PATH]
-               [--proot-bind HOST:GUEST] [--proot-env NAME=VALUE]
-               [--proot-no-auto-bind-repo] [--proot-shared-home]
-               [--proot-shared-tmp] [--proot-isolated | --proot-minimal]
-               [--proot-stage-dir PATH]
+               --hud-no-overlay] [--host | --chroot CHROOT | --ssh HOST |
+               --proot-distro DISTRO |
+               --execution-environment {auto,native-termux,chroot,desktop-linux,desktop-macos,desktop-windows,host,android-device,external-device,ssh,proot-distro}]
+               [--ssh-profile NAME] [--ssh-port PORT] [--ssh-user USER]
+               [--ssh-identity PATH] [--ssh-session NAME] [--ssh-cwd PATH]
+               [--ssh-tool COMMAND] [--ssh-mode {devtool,commands}]
+               [--ssh-stage-dir PATH] [--ssh-no-artifact-copy]
+               [--ssh-detached] [--proot-user USER] [--proot-cwd PATH]
+               [--proot-repo-mount PATH] [--proot-bind HOST:GUEST]
+               [--proot-env NAME=VALUE] [--proot-no-auto-bind-repo]
+               [--proot-shared-home] [--proot-shared-tmp] [--proot-isolated |
+               --proot-minimal] [--proot-stage-dir PATH]
                [--termux-resource-profile {auto,automatic,conservative,balanced,performance,off,none} |
                --no-termux-resource-profile] [--termux-wake-lock |
                --no-termux-wake-lock]
@@ -49,12 +49,12 @@ usage: devtool [-h] [-r REPO] [-c CONFIG] [--target TARGET] [--group GROUP]
                [--android-build-tools-provider {auto,commit451,none,sdk,termux}]
                [--aapt2-provider {auto,termux,sdk,revanced,none}]
                [--ui {compact,full,plain}]
-               {gradle,restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,release,rel,clean,cl,inspect,info,status,st,doctor,dr,variants,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,delivery,repo-pack,signing-identity,tui,cleanup,batch,init-config,init,logs,runs,tag,release-notes,completion,completion-state,wrapper,compatibility,compat,final-seal,seal,pytest,audit,git,campaign,federation,fed,core,registry,config,ssh,oci,bootstrap,android,instrumentation,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,target-local-jobs,tlj,workflows,wf,plan,pl,invoke,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server,actions,transaction,evidence,artifacts,adopt-batch,migration,workflow,capabilities,onboard} ...
+               {gradle,restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,release,rel,clean,cl,inspect,info,status,st,doctor,dr,variants,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,delivery,repo-pack,signing-identity,tui,cleanup,batch,init-config,init,logs,runs,tag,release-notes,completion,completion-state,wrapper,compatibility,compat,final-seal,seal,pytest,audit,git,campaign,federation,fed,core,registry,config,ssh,oci,bootstrap,android,instrumentation,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,target-local-jobs,tlj,workflows,wf,plan,pl,invoke,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server,actions,transaction,evidence,artifacts,adopt-batch,migration,workflow,capabilities,onboard,native} ...
 
 Apply artifacts, validate projects, and produce reviewable handoff commits.
 
 positional arguments:
-  {gradle,restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,release,rel,clean,cl,inspect,info,status,st,doctor,dr,variants,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,delivery,repo-pack,signing-identity,tui,cleanup,batch,init-config,init,logs,runs,tag,release-notes,completion,completion-state,wrapper,compatibility,compat,final-seal,seal,pytest,audit,git,campaign,federation,fed,core,registry,config,ssh,oci,bootstrap,android,instrumentation,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,target-local-jobs,tlj,workflows,wf,plan,pl,invoke,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server,actions,transaction,evidence,artifacts,adopt-batch,migration,workflow,capabilities,onboard}
+  {gradle,restore,rs,build,b,test,t,lint,validate,v,validate-all,wine-validate,wv,run,rn,package,pkg,release,rel,clean,cl,inspect,info,status,st,doctor,dr,variants,start-validation,sv,resume-validation,rv,validation-menu,vm,menu,ai-prompt,ap,commit,ci,apply-overlay,ao,apply-overlays,aos,apply-snapshot,as,apply,validate-overlay,vo,validate-overlays,vos,overlay,plugin,plugins,inspect-artifact,ia,bundle,artifact,delivery,repo-pack,signing-identity,tui,cleanup,batch,init-config,init,logs,runs,tag,release-notes,completion,completion-state,wrapper,compatibility,compat,final-seal,seal,pytest,audit,git,campaign,federation,fed,core,registry,config,ssh,oci,bootstrap,android,instrumentation,termux,detect,handoff,hud,android-hud-bridge,termux-hud-bridge,history,rollback,validation-status,vs,validation-plan,vplan,validation-pause,vpause,validation-stop,vstop,validation-events,vevents,validation-report,vreport,validation-abort,va,validation-finalize,vf,validation-recover,vrec,validation-reset,vreset,validation-accept-plan-change,vapc,targets,tg,groups,gr,jobs,jb,target-local-jobs,tlj,workflows,wf,plan,pl,invoke,affected,aff,ui-contract,uic,preflight,pf,control-center,gui,ipc-server,actions,transaction,evidence,artifacts,adopt-batch,migration,workflow,capabilities,onboard,native}
     gradle              Inspect and control canonical Gradle execution
     variants            List Android variant execution profiles for the
                         selected target
@@ -176,6 +176,8 @@ positional arguments:
                         capability inventory
     onboard             RM20 review-first whole-repository in-place onboarding
                         and ownership inventory
+    native              M5 native ZIP/PYZ check, apply and durable delivery
+                        lifecycle
 
 options:
   -h, --help            show this help message and exit
