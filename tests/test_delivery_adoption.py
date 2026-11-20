@@ -246,3 +246,49 @@ def test_exclusive_publish_failure_cleans_own_output(consumer, monkeypatch):
     assert not output.exists()
     assert not list(output.parent.glob(".s7-scaffold-*.zip"))
     assert git(root, "status", "--porcelain") == ""
+
+
+# Current v3.2.1 native scaffold must share the source-bound launcher byte budget.
+# Retain original symlink, traversal, exact-tree, no-clobber and I/O-failure tests.
+def test_native_scaffold_capacity_matches_launcher_contract():
+    from devtool import delivery_adoption as ad, launcher_contract_v3 as launcher
+    assert ad._MAX_FILE == launcher.MAX_ONE == 5 * 1024 * 1024
+    assert ad._MAX_TOTAL == launcher.MAX_TOTAL == 6 * 1024 * 1024
+
+
+def _capacity_fixture(consumer, sizes):
+    root, payload, plan, output = consumer
+    inventory=[]
+    for i, n in enumerate(sizes):
+        path=f'capacity/file{i}.bin'
+        target=payload/path
+        target.parent.mkdir(parents=True,exist_ok=True)
+        target.write_bytes(b'x'*n)
+        inventory.append({'path':path,'action':'add'})
+    plan.write_text(json.dumps({'schema_version':1,'changes':inventory}))
+    return root,payload,plan,output
+
+
+def test_scaffold_accepts_four_mib_source_bounded_file(consumer):
+    root,payload,plan,output=_capacity_fixture(consumer,[4*1024*1024])
+    sha=git(root,'rev-parse','HEAD')
+    receipt=scaffold_overlay(root,payload,plan,output,expected_head=sha)
+    assert receipt['source_sha']==sha
+    with zipfile.ZipFile(output) as z:
+        assert len(z.read('capacity/file0.bin')) == 4*1024*1024
+        assert z.testzip() is None
+    assert git(root,'status','--porcelain')==''
+
+
+def test_scaffold_rejects_file_over_five_mib(consumer):
+    root,payload,plan,output=_capacity_fixture(consumer,[5*1024*1024+1])
+    with pytest.raises(AdoptionError,match='oversized'):
+        scaffold_overlay(root,payload,plan,output,expected_head=git(root,'rev-parse','HEAD'))
+    assert not output.exists()
+
+
+def test_scaffold_rejects_total_over_six_mib(consumer):
+    root,payload,plan,output=_capacity_fixture(consumer,[4*1024*1024,2*1024*1024+1])
+    with pytest.raises(AdoptionError,match='byte budget'):
+        scaffold_overlay(root,payload,plan,output,expected_head=git(root,'rev-parse','HEAD'))
+    assert not output.exists()
