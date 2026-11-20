@@ -13459,6 +13459,13 @@ def _main_impl(argv: list[str] | None = None) -> int:
     parse_argv, universal_json = extract_universal_json_flag(parse_argv)
     parser = build_parser()
     args = parser.parse_args(parse_argv)
+    # M5: source-bound native ZIP/PYZ operator dispatch precedes project, HUD,
+    # clipboard, logger and workspace initialization. Never replace Devtool
+    # atomic apply, committed history or delivery-session authorities.
+    if args.command == "native":
+        from .native_delivery_m5 import main as native_delivery_m5
+        args._devtool_json = bool(universal_json)
+        return native_delivery_m5(args)
     # S7 P02 adoption is intentionally read-only with respect to the consumer.
     # Dispatch before normal CLI workspace initialization: that initializer can
     # create .devtool state even for otherwise observational operations.
