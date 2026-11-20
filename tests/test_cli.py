@@ -141,7 +141,7 @@ class CliTests(unittest.TestCase):
             parser = build_parser()
             args = parser.parse_args([
                 "-r", str(root), "--target", "api",
-                "validate", "--matrix", "debug,release", "--matrix-mode", "variant",
+                "validate", "--test-profile", "full", "--matrix", "debug,release", "--matrix-mode", "variant",
             ])
             config = load_project_config(str(root), None, target_name="api")
             specs = _validation_specs_for_args(config, args, parser)
@@ -710,7 +710,7 @@ class CliTests(unittest.TestCase):
                 patch("devtool.cli.run_specs", side_effect=fake_run_specs),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "validate", "--skip-restore", "--skip-build"])
+                rc = main(["--repo", str(root), "validate", "--test-profile", "full", "--skip-restore", "--skip-build"])
 
             self.assertEqual(rc, 0)
             self.assertEqual(captured, ["test"])
@@ -733,7 +733,7 @@ class CliTests(unittest.TestCase):
                 patch("devtool.cli.run_specs", side_effect=fake_run_specs),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "validate-all"])
+                rc = main(["--repo", str(root), "validate-all", "--test-profile", "full"])
 
             self.assertEqual(rc, 1)
             self.assertEqual(captured, [True])
@@ -753,7 +753,7 @@ class CliTests(unittest.TestCase):
                 patch("devtool.cli.run_specs", side_effect=fake_run_specs),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--fail-fast", "validate-all"])
+                rc = main(["--repo", str(root), "--fail-fast", "validate-all", "--test-profile", "full"])
 
             self.assertEqual(rc, 1)
             self.assertEqual(captured, [False])
@@ -773,7 +773,7 @@ class CliTests(unittest.TestCase):
                 patch("devtool.cli.run_specs", side_effect=fake_run_specs),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "validate"])
+                rc = main(["--repo", str(root), "validate", "--test-profile", "full"])
 
             self.assertEqual(rc, 1)
             self.assertEqual(captured, [True])
@@ -793,7 +793,7 @@ class CliTests(unittest.TestCase):
                 patch("devtool.cli.run_specs", side_effect=fake_run_specs),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--fail-fast", "validate"])
+                rc = main(["--repo", str(root), "--fail-fast", "validate", "--test-profile", "full"])
 
             self.assertEqual(rc, 1)
             self.assertEqual(captured, [False])
@@ -1593,7 +1593,7 @@ artifact-cleanup: ok exit=0 time=0.10s
             machine_file = root / "machine.json"
 
             with patch("devtool.cli.console.print"):
-                rc = main(["--repo", str(root), "--machine-file", str(machine_file), "--dry-run", "validate"])
+                rc = main(["--repo", str(root), "--machine-file", str(machine_file), "--dry-run", "validate", "--test-profile", "full"])
 
             self.assertEqual(rc, 0)
             self.assertTrue(machine_file.is_file())
@@ -1612,7 +1612,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli.copy_text", return_value=__import__("devtool.clipboard").clipboard.ClipboardResult(False, backend="xclip", reason="nope")),
                 patch("devtool.cli.console.print") as mock_print,
             ):
-                rc = main(["--repo", str(root), "--copy", "--dry-run", "validate"])
+                rc = main(["--repo", str(root), "--copy", "--dry-run", "validate", "--test-profile", "full"])
 
             self.assertEqual(rc, 0)
             rendered = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
@@ -1636,7 +1636,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli._finish_live_progress", side_effect=finish_progress),
                 patch("devtool.cli.copy_text", side_effect=copy_summary),
             ):
-                rc = main(["--repo", str(root), "--copy", "--dry-run", "validate"])
+                rc = main(["--repo", str(root), "--copy", "--dry-run", "validate", "--test-profile", "full"])
 
         self.assertEqual(rc, 0)
         self.assertEqual(events[-2:], ["finish", "copy"])
@@ -1718,7 +1718,7 @@ artifact-cleanup: ok exit=0 time=0.10s
             (root / "App.sln").write_text("", encoding="utf-8")
             stream = io.StringIO()
             with redirect_stdout(stream):
-                rc = main(["--repo", str(root), "--json", "--dry-run", "validate"])
+                rc = main(["--repo", str(root), "--json", "--dry-run", "validate", "--test-profile", "full"])
             self.assertEqual(rc, 0)
             payload = json.loads(stream.getvalue())
             self.assertEqual(payload["schema_version"], 1)
@@ -1741,7 +1741,7 @@ artifact-cleanup: ok exit=0 time=0.10s
             (root / "App.sln").write_text("", encoding="utf-8")
             stream = io.StringIO()
             with redirect_stdout(stream):
-                rc = main(["--repo", str(root), "--stdout-payload", "summary", "--dry-run", "validate"])
+                rc = main(["--repo", str(root), "--stdout-payload", "summary", "--dry-run", "validate", "--test-profile", "full"])
             self.assertEqual(rc, 0)
             output = stream.getvalue()
             self.assertTrue(output.strip())
@@ -1961,7 +1961,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 1, 0.0, "failed", [])], "validate output")),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate", "--skip-restore", "--skip-build", "--delete-artifact-on-failure", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--test-profile", "full", "--validate", "--skip-restore", "--skip-build", "--delete-artifact-on-failure", str(artifact)])
 
             self.assertEqual(rc, 1)
             self.assertFalse(artifact.exists())
@@ -2301,7 +2301,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli.run_specs", return_value=([__import__("devtool.models").models.OperationResult("test", ["dotnet", "test"], 0, 0.0, "ok", [])], "validate output")) as mock_run_specs,
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--validate-only", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--test-profile", "full", "--validate-only", str(artifact)])
 
             self.assertEqual(rc, 0)
             mock_apply.assert_not_called()
@@ -2328,7 +2328,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli.run_specs", side_effect=fake_run_specs),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--keep-artifact", "--validate", "--skip-restore", "--skip-build", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--test-profile", "full", "--keep-artifact", "--validate", "--skip-restore", "--skip-build", str(artifact)])
 
             self.assertEqual(rc, 0)
             self.assertEqual(captured, ["test"])
@@ -2377,7 +2377,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli.run_specs", side_effect=fake_run_specs),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--keep-artifact", "--validate", "--skip-restore", "--skip-build", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--test-profile", "full", "--keep-artifact", "--validate", "--skip-restore", "--skip-build", str(artifact)])
 
             self.assertEqual(rc, 0)
             self.assertTrue(any("apps/S3pe.Modern.sln" in " ".join(argv) for argv in captured))
@@ -2404,7 +2404,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli.git_commit", side_effect=fake_git_commit),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--keep-artifact", "--validate", "--commit", "handoff commit", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-overlay", "--test-profile", "full", "--keep-artifact", "--validate", "--commit", "handoff commit", str(artifact)])
 
             self.assertEqual(rc, 0)
             self.assertEqual(commit_calls, ["handoff commit"])
@@ -2638,7 +2638,7 @@ artifact-cleanup: ok exit=0 time=0.10s
                 patch("devtool.cli.git_commit", side_effect=fake_git_commit),
                 patch("devtool.cli.render_summary"),
             ):
-                rc = main(["--repo", str(root), "--yes", "apply-snapshot", "--keep-artifact", "--validate", "--commit", "snapshot handoff", str(artifact)])
+                rc = main(["--repo", str(root), "--yes", "apply-snapshot", "--test-profile", "full", "--keep-artifact", "--validate", "--commit", "snapshot handoff", str(artifact)])
 
             self.assertEqual(rc, 0)
             self.assertEqual(commit_calls, ["snapshot handoff"])

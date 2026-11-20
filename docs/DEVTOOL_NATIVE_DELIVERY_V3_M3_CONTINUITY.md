@@ -57,6 +57,54 @@ authority. Explicit contradictory `--base`, `--base-repo`, `--head-repo`, or
 v1/v2 behavior remains as before; the executable adapter itself is not
 modified or repackaged.
 
+## Recovery of a pre-bound PLANNED artifact session
+
+An earlier launcher may create a `PLANNED` durable delivery session already
+bound to the correct artifact digest and resulting commit, but omit
+`native_apply`. `adopt_applied` now reconciles this state through the existing
+canonical native history/transaction/session authority. Recovery must first
+verify the **unique** qualified history record, completed native transaction,
+exact HEAD/parent/tree and changed-file inventory, original archive digest,
+passed unskipped required steps, and identical existing overlay identity.
+Only an unprogressed `PLANNED` session with **no remote intents, PR or CI** may
+receive the missing `native_apply` evidence. Its session ID and overlay binding
+remain unchanged; the journal update is atomic, audited and idempotent. Wrong
+or ambiguous history, a failed/skipped step, a mismatched artifact, conflicting
+journal receipt or remote progress fails closed with no second session or
+Git replay. Existing v1/v2 session contracts remain supported.
+
+A durable session remains bound to its **original exact commit**. If a later
+native correction creates another commit on that branch, the earlier session
+remains immutable historical evidence and cannot qualify/push the new HEAD.
+The new commit needs its own separately verified native delivery session.
+Neither this repair nor the original historical session automatically grants
+push, draft PR, CI, device or release acceptance.
+
+## Schema-v2 native child receipt compatibility for committed applies
+
+Native Launcher v3.2.1 may persist a completed, source-bound artifact history
+entry with `validation_status=ok`, but an empty `validation_plan`: the recorder
+previously omitted `artifact-test:<id>` results from step collection despite
+persisting them in the original `child_outcomes` list. Current recording now
+includes those results as explicit validation-plan steps.
+
+For an **already committed** schema-v2 required-tests-only archive (no restore,
+build, project test or other validation surfaces), the existing canonical
+`adopt_applied` verifier may accept the **unchanged** native child outcomes as
+validation evidence if every required declared Python artifact-test ID matches
+one distinct, successful, unskipped child outcome, the commit child succeeded,
+and all children have clean outcomes. All other native receipt, transaction,
+source parent/tree, inventory, archive hash, session and remote-intent guards
+remain mandatory. This fallback does not write or rewrite artifact history;
+the delivery session marks `validation_evidence_source=original-native-child-outcomes`
+so that a recovered v2 receipt is never misrepresented as a v3 step receipt.
+A missing, failed, skipped, duplicate, unexpected or unlisted test refuses.
+
+The previously committed session `9b6de5c872b042d4b49b87f8178a727c`
+is bound to `b1cca136879f220a5f5fe2caed5aec0d594ed345`. Never relabel it
+as evidence for a later corrective commit. Native delivery and hosted CI must
+be qualified at the eventual final PR HEAD through its own verified session.
+
 ## Limitations and acceptance
 
 - A v3 overlay must request actual native commit + required validation.
@@ -75,3 +123,44 @@ modified or repackaged.
   checks must be independently observed before final acceptance.
 - Termux must use the supported native stdout/stderr, no full-screen hosts,
   and `--no-clipboard`; CI and device/release evidence remain distinct.
+
+## Source-bound native adoption before remote delivery
+
+Native Launcher v3.2.1 now calls the existing `devtool.native_overlay_delivery`
+`adopt-committed` authority after successful native apply and exact postimage
+verification and **before** creating or remotely delivering a session. This
+reuses Devtool's authoritative completed history, original artifact digest,
+completed transaction, unskipped passed validation, source parent/tree, and
+committed file inventory. It never generates a replacement history record.
+A failed adoption is a post-commit recovery stop; `apply` must never be replayed.
+
+The historical session `0a035632873e4fb3827ebc51ad3570e3` for commit
+`53303e7bd4831d42fd65d18540bcdfc050228ef4` has an independently present
+completed native history `ed6ec39021e7c90edc0d066dd7594728`, but is already
+remote-progressed and lacks a bound `native_apply`. Existing guards correctly
+refuse retroactive mutation of that session. Preserve its audit trail; qualify
+subsequent source commits with new adopted sessions. Integrating the PR #36
+delete-contract test/source into PR #35 does not assert Git ancestry or bypass
+hosted exact-PR-HEAD/24-shard regression qualification. This is a content
+integration only, not a Git merge or a release authorization.
+
+## Committed hook output directories and Guardian recovery
+
+Devtool's existing native `adopt_applied` authority now permits files changed
+under explicitly declared `preflight`, `validation`, or `finalize` hook output
+directories when the original native child hook succeeded without skipping.
+It uses the same component-boundary rule as `devtool.hooks.isolation`, and
+classifies directories from the authenticated Git trees at `HEAD` and `HEAD^`.
+Inventory payload paths and file-scope hook outputs remain exact. Renames are
+checked as separate delete and add changes. Any unlisted, prefix-lookalike,
+root/traversal or symlink path fails closed. Full source parent/tree, payload
+posthashes, unique original history, completed transaction and validation
+proofs are unchanged. No legacy executable bootstrap was repackaged.
+
+The externally reported Guardian v0.12.5 source commit `3159bb513fd7e1cbe0055c44a608624fd33dd6d6`
+and original history `c9ad337cc8b864750f517927f4683cb0` are regression
+context, **not acceptance evidence**. This Devtool PR does not open or modify
+Guardian or invoke `recover-committed` there. After the merged Devtool
+runtime is verified on the Guardian device, authorized recovery of its own
+existing, source-qualified history must be performed separately and independently
+confirmed. No overlay reapply, journal synthesis or original-commit rewriting.

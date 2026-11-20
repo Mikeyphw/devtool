@@ -284,7 +284,16 @@ class ValidationAwareDeliveryContractTests(unittest.TestCase):
         self.assertIn('inspect_delivery_plan',inspect.getsource(adoption.scaffold_overlay))
         self.assertIn('validation_execution_mode',inspect.getsource(launcher.apply_package))
         self.assertIn('validate-overlay',inspect.getsource(launcher.scaffold))
-        self.assertIn("'delivery','session','start'",inspect.getsource(launcher.apply_package))
+        apply_source=inspect.getsource(launcher.apply_package)
+        adoption_source=inspect.getsource(launcher.native_adopt_committed)
+        self.assertIn("receipt=native_adopt_committed(",apply_source)
+        self.assertIn("sid=receipt['id']",apply_source)
+        self.assertIn("'adopt-committed','--repo'",adoption_source)
+        self.assertIn('NATIVE_ADOPTION_SOURCE_OR_EVIDENCE_UNQUALIFIED',adoption_source)
+        self.assertLess(apply_source.index("native(repo,devtool_root,'apply','overlay'"),
+                        apply_source.index('receipt=native_adopt_committed('))
+        self.assertLess(apply_source.index('receipt=native_adopt_committed('),
+                        apply_source.index('push_pr(repo,devtool_root,m,sid)'))
 
     def test_legacy_scaffold_mock_remains_compatible_but_new_metadata_is_strict(self):
         # Existing v3.1 ABI test uses a mocked scaffold receipt with placeholder

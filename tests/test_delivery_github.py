@@ -100,6 +100,50 @@ def test_push_approval_and_verified_remote_confirm(session):
                        git_push=lambda *a:pushed.append(True) or 0)
     assert result['state']=='PUSH_VERIFIED' and pushed == [True]
     assert status(data['id'],state_root=root)['resumable']
+    assert status(data['id'],state_root=root)['remote_verified'] is True
+
+
+def test_confirmed_push_backfills_verified_remote_without_replay(session):
+    from devtool.delivery_session import _read, _write
+    data,root=session
+    seq=[None,data['head_sha']]
+    assert target.push(data['id'],yes=True,state_root=root,
+                       remote_probe=lambda *a:seq.pop(0), git_push=lambda *a:0)['pushed_now']
+    path=root/(data['id']+'.json')
+    original=_read(path)
+    assert original['remote_verified'] is True
+    original['remote_verified']=False
+    original['events']=[e for e in original['events'] if e.get('kind')!='remote_head_verified']
+    _write(path,original)
+    assert status(data['id'],state_root=root)['remote_verified'] is False
+    events_before=status(data['id'],state_root=root)['events_count']
+    reconciled=target.push(data['id'],state_root=root,
+                           remote_probe=lambda *a:data['head_sha'])
+    assert reconciled['pushed_now'] is False
+    now=status(data['id'],state_root=root)
+    assert now['remote_verified'] is True
+    assert now['events_count']==events_before+1
+    assert target.push(data['id'],state_root=root,
+        remote_probe=lambda *a:data['head_sha'])['pushed_now'] is False
+    assert status(data['id'],state_root=root)['events_count']==now['events_count']
+
+
+def test_wrong_push_key_and_failed_push_never_qualify_remote(session):
+    from devtool.delivery_session import record_intent, confirm_intent
+    data,root=session
+    wrong='wrong-repo:refs/heads/'+data['head']+':'+data['head_sha']
+    record_intent(data['id'],'push',wrong,approved=True,state_root=root)
+    with pytest.raises(DeliverySessionError,match='exact origin/ref/HEAD'):
+        confirm_intent(data['id'],'push',wrong,{'head_sha':data['head_sha']},state_root=root)
+    assert status(data['id'],state_root=root)['remote_verified'] is False
+
+
+def test_failed_push_cannot_persist_remote_qualification(session):
+    data,root=session
+    with pytest.raises(DeliverySessionError,match='uncertain'):
+        target.push(data['id'],yes=True,state_root=root,remote_probe=lambda *a:None,
+                    git_push=lambda *a:1)
+    assert status(data['id'],state_root=root)['remote_verified'] is False
 
 
 def test_pr_existing_does_not_post_and_binds_exact_source(session,monkeypatch):

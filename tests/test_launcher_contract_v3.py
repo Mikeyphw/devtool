@@ -172,6 +172,67 @@ class ContractTests(unittest.TestCase):
         g(root,'checkout','--detach',first)
         self.assertEqual(lc.git(root,'rev-parse','HEAD^{tree}'),identity['source_tree'])
 
+    def test_large_cli_schema_payload_roundtrips_without_raising_total_budget(self):
+        root=fixture(self.root)
+        g(root,'switch','-c','feature/schema-capacity')
+        folder=self.root/'payload';dest=folder/'devtool/core_cli_schema.json'
+        dest.parent.mkdir(parents=True)
+        prefix=b'{"schema":"';suffix=b'"}'
+        actual=4*1024*1024
+        schema=prefix+(b'a'*(actual-len(prefix)-len(suffix)))+suffix
+        dest.write_bytes(schema)
+        plan={'schema_version':1,'changes':[{'path':'devtool/core_cli_schema.json','action':'add'}]}
+        inventory,payload=lc.payload_contract(plan,folder,root)
+        self.assertGreater(len(schema),2*1024*1024)
+        self.assertLessEqual(len(schema),lc.MAX_ONE)
+        self.assertEqual(lc.MAX_TOTAL,6*1024*1024)
+        runtime={'repository':'Mikeyphw/devtool','source_sha':'a'*40,
+                 'source_tree':'b'*40,'module_blob':'c'*40,
+                 'launcher_version':'3.2.1'}
+        manifest=lc.make_manifest('large-schema-capacity',lc.repo_identity(root,clean=True),
+            runtime,inventory,'test: source-bounded schema','Large schema fixture',
+            '','main','d'*40)
+        package=self.root/'large-schema.pyz'
+        package.write_bytes(lc.zip_bytes({'__main__.py':lc.bootstrap_content(manifest['devtool']).encode(),
+            'manifest.json':json.dumps(manifest,sort_keys=True).encode(),**payload}))
+        observed,bytes_by_name=lc.read_embedded_package(package)
+        self.assertEqual(observed,manifest)
+        self.assertEqual(bytes_by_name['payload/devtool/core_cli_schema.json'],schema)
+
+    def test_per_file_budget_rejects_any_non_schema_oversize(self):
+        root=fixture(self.root);folder=self.root/'payload';folder.mkdir()
+        (folder/'oversized.bin').write_bytes(b'x'*(lc.MAX_ONE+1))
+        with self.assertRaisesRegex(lc.Refused,'PAYLOAD_FILE_TOO_LARGE'):
+            lc.payload_contract({'schema_version':1,
+                'changes':[{'path':'oversized.bin','action':'add'}]},folder,root)
+
+    def test_aggregate_payload_budget_remains_six_mebibytes(self):
+        root=fixture(self.root);folder=self.root/'payload';folder.mkdir()
+        (folder/'a.bin').write_bytes(b'a'*(4*1024*1024))
+        (folder/'b.bin').write_bytes(b'b'*(2*1024*1024+1))
+        with self.assertRaisesRegex(lc.Refused,'PAYLOAD_TOTAL_TOO_LARGE'):
+            lc.payload_contract({'schema_version':1,
+                'changes':[{'path':'a.bin','action':'add'},
+                           {'path':'b.bin','action':'add'}]},folder,root)
+
+    def test_oversized_zip_member_refused_before_decompression(self):
+        root=fixture(self.root);g(root,'switch','-c','feature/zip-budget')
+        payload=b'x'*(lc.MAX_ONE+1)
+        inventory=[{'path':'oversized.bin','action':'add','source_blob_sha':'',
+                    'payload_sha256':lc.digest(payload)}]
+        runtime={'repository':'Mikeyphw/devtool','source_sha':'a'*40,
+                 'source_tree':'b'*40,'module_blob':'c'*40,
+                 'launcher_version':'3.2.1'}
+        manifest=lc.make_manifest('zip-overbudget-negative',lc.repo_identity(root,clean=True),
+            runtime,inventory,'test: zip member guard','Archive budget negative',
+            '','main','d'*40)
+        package=self.root/'overbudget.pyz'
+        package.write_bytes(lc.zip_bytes({'__main__.py':lc.bootstrap_content(manifest['devtool']).encode(),
+            'manifest.json':json.dumps(manifest).encode(),
+            'payload/oversized.bin':payload}))
+        with self.assertRaisesRegex(lc.Refused,'PACKAGE_MEMBER_TOO_LARGE'):
+            lc.read_embedded_package(package)
+
     def test_a11_payload_pins(self):
         root=fixture(self.root);folder=self.root/'payload';folder.mkdir()
         (folder/'original.txt').write_text('AFTER\n');(folder/'extra.txt').write_text('EXTRA\n')
@@ -789,6 +850,47 @@ class NativeDeliveryClipboardAndCITests(unittest.TestCase):
         self.repo=fixture(self.root,'sample')
         self.runtime=self.root/'devtool-runtime';self.runtime.mkdir()
 
+
+    def _qualified_native_archive(self, filename: str, commit: str):
+        # The native apply and Git transaction are mocked in these *unit* tests;
+        # archive existence, digest binding and receipt validation remain real.
+        archive=self.root/filename
+        with zipfile.ZipFile(archive,'w') as package:
+            package.writestr('fixture.txt',b'unit-only native artifact')
+        digest=lc.digest(archive.read_bytes())
+        receipt={
+            'id':'b'*32, 'head_sha':commit, 'repo_root':str(self.repo.resolve()),
+            'stage':'PLANNED', 'intents':[], 'pr':None, 'ci':None,
+            'overlay':{'path':str(archive.resolve()),'sha256':digest},
+            'native_apply':{
+                'state':'COMMITTED','commit':commit,
+                'history_id':'c'*32,'transaction_id':'tx-fixture',
+                'transaction_status':'completed','validation_status':'ok',
+                'artifact_sha256':digest}}
+        return archive,json.dumps(receipt)
+
+    def _mock_native_adoption(self, receipt: str):
+        # Capture the original native executor BEFORE patching it. The
+        # optional-CI source-tree check must still run a real Git ls-tree,
+        # not consume the fake adoption JSON as Git output.
+        original=lc.exec_cmd
+        def dispatch(argv, **kwargs):
+            if (len(argv) >= 4 and argv[1:4] ==
+                    ['-B', '-m', 'devtool.native_overlay_delivery']):
+                if 'adopt-committed' not in argv:
+                    raise AssertionError('Only committed adoption may be mocked')
+                return receipt
+            return original(argv, **kwargs)
+        return dispatch
+
+    def _assert_single_native_adoption(self, executor):
+        # Required CI may issue an additional, *real* Git source-tree query.
+        # Assert only the number of native adoption calls, not all exec calls.
+        calls=[c for c in executor.call_args_list
+               if c.args and 'devtool.native_overlay_delivery' in c.args[0]]
+        self.assertEqual(len(calls),1)
+        self.assertIn('adopt-committed',calls[0].args[0])
+
     def test_native_cli_always_sets_supported_no_clipboard(self):
         with patch('devtool.launcher_contract_v3.exec_cmd',return_value='') as run:
             lc.native(self.repo,self.runtime,'apply','overlay','pkg.zip',
@@ -837,8 +939,8 @@ class NativeDeliveryClipboardAndCITests(unittest.TestCase):
         }
         changed={'repository':'Mikeyphw/sample','branch':'feature/test-targeted',
                  'source_sha':'f'*40,'source_tree':'e'*40}
-        receipt={'id':'b'*32,'head_sha':'f'*40}
-        with patch('devtool.launcher_contract_v3.check_source'),              patch('devtool.launcher_contract_v3.runtime_probe'),              patch('devtool.launcher_contract_v3.scaffold',return_value=self.root/'target.zip'),              patch('devtool.launcher_contract_v3.native') as native,              patch('devtool.launcher_contract_v3.repo_identity',return_value=changed),              patch('devtool.launcher_contract_v3.verify_postcommit_status'),              patch('devtool.launcher_contract_v3.native_json',return_value=receipt):
+        archive, native_receipt = self._qualified_native_archive('target.zip',changed['source_sha'])
+        with patch('devtool.launcher_contract_v3.check_source'),              patch('devtool.launcher_contract_v3.runtime_probe'),              patch('devtool.launcher_contract_v3.scaffold',return_value=archive),              patch('devtool.launcher_contract_v3.native') as native,              patch('devtool.launcher_contract_v3.repo_identity',return_value=changed),              patch('devtool.launcher_contract_v3.verify_postcommit_status'),              patch('devtool.launcher_contract_v3.exec_cmd',side_effect=self._mock_native_adoption(native_receipt)) as adopted:
             self.assertEqual(lc.apply_package(self.repo,self.runtime,manifest,{},False),0)
         native.assert_called_once()
         argv=native.call_args.args
@@ -852,6 +954,7 @@ class NativeDeliveryClipboardAndCITests(unittest.TestCase):
         self.assertTrue(manifest['plan']['validation']['required'])
         self.assertFalse(manifest['plan']['validation']['build'])
         self.assertFalse(manifest['plan']['validation']['test'])
+        self._assert_single_native_adoption(adopted)
 
     def test_legacy_static_still_selects_explicit_bounded_static_validation(self):
         manifest=json.loads(json.dumps(self.manifest))
@@ -869,11 +972,12 @@ class NativeDeliveryClipboardAndCITests(unittest.TestCase):
         }
         changed={'repository':'Mikeyphw/sample','branch':'feature/test-static',
                  'source_sha':'f'*40,'source_tree':'e'*40}
-        receipt={'id':'b'*32,'head_sha':'f'*40}
-        with patch('devtool.launcher_contract_v3.check_source'),              patch('devtool.launcher_contract_v3.runtime_probe'),              patch('devtool.launcher_contract_v3.scaffold',return_value=self.root/'target.zip'),              patch('devtool.launcher_contract_v3.native') as native,              patch('devtool.launcher_contract_v3.repo_identity',return_value=changed),              patch('devtool.launcher_contract_v3.verify_postcommit_status'),              patch('devtool.launcher_contract_v3.native_json',return_value=receipt):
+        archive, native_receipt = self._qualified_native_archive('target.zip',changed['source_sha'])
+        with patch('devtool.launcher_contract_v3.check_source'),              patch('devtool.launcher_contract_v3.runtime_probe'),              patch('devtool.launcher_contract_v3.scaffold',return_value=archive),              patch('devtool.launcher_contract_v3.native') as native,              patch('devtool.launcher_contract_v3.repo_identity',return_value=changed),              patch('devtool.launcher_contract_v3.verify_postcommit_status'),              patch('devtool.launcher_contract_v3.exec_cmd',side_effect=self._mock_native_adoption(native_receipt)) as adopted:
             self.assertEqual(lc.apply_package(self.repo,self.runtime,manifest,{},False),0)
         self.assertIn('--static-validate',native.call_args.args)
         self.assertNotIn('--validate',native.call_args.args)
+        self._assert_single_native_adoption(adopted)
 
     def test_native_machine_receipts_also_disable_clipboard(self):
         with patch('devtool.launcher_contract_v3.exec_cmd',return_value='{"ok":true}') as run:
@@ -932,20 +1036,24 @@ class NativeDeliveryClipboardAndCITests(unittest.TestCase):
         self.manifest['source']['branch']='feature/consumer'
         changed={'repository':'Mikeyphw/sample','branch':'feature/consumer',
                  'source_sha':'f'*40,'source_tree':'a'*40}
-        receipt={'id':'a'*32,'head_sha':'f'*40}
+        archive, native_receipt = self._qualified_native_archive('p.zip',changed['source_sha'])
         with patch('devtool.launcher_contract_v3.check_source'), \
              patch('devtool.launcher_contract_v3.runtime_probe'), \
-             patch('devtool.launcher_contract_v3.scaffold',return_value=self.root/'p.zip') as scaffold, \
+             patch('devtool.launcher_contract_v3.scaffold',return_value=archive) as scaffold, \
              patch('devtool.launcher_contract_v3.native') as native, \
              patch('devtool.launcher_contract_v3.repo_identity',return_value=changed), \
              patch('devtool.launcher_contract_v3.verify_postcommit_status'), \
-             patch('devtool.launcher_contract_v3.native_json',return_value=receipt), \
+             patch('devtool.launcher_contract_v3.exec_cmd',side_effect=self._mock_native_adoption(native_receipt)) as adopted, \
              patch('devtool.launcher_contract_v3.push_pr') as push, \
              patch('devtool.launcher_contract_v3.observe_delivery_ci') as observe:
             self.assertEqual(lc.apply_package(self.repo,self.runtime,self.manifest,{},
                                               True,watch_ci=True),0)
         scaffold.assert_called_once();native.assert_called_once();push.assert_called_once()
         observe.assert_not_called()
+        self.assertTrue(any(c.args and c.args[0][0]=='git' and 'ls-tree' in c.args[0]
+                            for c in adopted.call_args_list),
+                        'Optional-CI policy check must consult real committed Git tree')
+        self._assert_single_native_adoption(adopted)
 
     def test_committed_but_deleted_policy_is_not_missing(self):
         policy=self.repo/'config'/'delivery-required-ci.json'
@@ -1184,3 +1292,83 @@ class NativeCiWatcherDeadlineRegressionTests(unittest.TestCase):
         self.assertEqual(result, 3)
         self.assertEqual(native.call_args_list[0].kwargs['timeout'], 2100)
         self.assertEqual(native.call_args_list[0].kwargs['stage'], 'native-source-bound-ci')
+
+
+class NativeCommittedPreRemoteAdoptionTests(unittest.TestCase):
+    """M3: one authoritative native history adoption before any remote action."""
+
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo=Path(self.temp.name).resolve()
+        self.archive=self.repo/'private-native-overlay.zip'
+        self.archive.write_bytes(b'verified-artifact-byte-stream')
+        self.commit='a'*40
+
+    def result(self):
+        hash_value=lc.digest(self.archive.read_bytes())
+        return {'id':'b'*32,'head_sha':self.commit,'repo_root':str(self.repo),
+                'stage':'PLANNED','intents':[],'pr':None,'ci':None,
+                'overlay':{'path':str(self.archive),'sha256':hash_value},
+                'native_apply':{'state':'COMMITTED','commit':self.commit,
+                  'history_id':'c'*32,'transaction_id':'tx-123',
+                  'transaction_status':'completed','validation_status':'ok',
+                  'artifact_sha256':hash_value}}
+
+    def test_missing_archive_refused_before_native_adoption(self):
+        self.archive.unlink()
+        with patch('devtool.launcher_contract_v3.exec_cmd') as cli:
+            with self.assertRaisesRegex(lc.Refused,'NATIVE_ADOPTION_ARCHIVE_NOT_REGULAR'):
+                lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit)
+        cli.assert_not_called()
+
+    def test_qualified_native_adoption_uses_only_existing_canonical_authority(self):
+        response=self.result()
+        with patch('devtool.launcher_contract_v3.exec_cmd',
+                   return_value=json.dumps(response)) as cli:
+            found=lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit)
+        self.assertEqual(found['id'],'b'*32)
+        argv=cli.call_args.args[0]
+        self.assertEqual(argv[3], 'devtool.native_overlay_delivery')
+        self.assertIn('adopt-committed',argv)
+        self.assertNotIn('start',argv)
+        self.assertEqual(cli.call_args.kwargs['stage'],'native-committed-history-adoption')
+
+    def test_no_trusted_transaction_refuses(self):
+        bad=self.result();bad['native_apply']['transaction_status']='unknown'
+        with patch('devtool.launcher_contract_v3.exec_cmd',return_value=json.dumps(bad)):
+            with self.assertRaisesRegex(lc.Refused,'UNQUALIFIED'):
+                lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit)
+
+    def test_original_commit_and_artifact_are_exactly_source_bound(self):
+        bad=self.result();bad['overlay']['sha256']='0'*64
+        with patch('devtool.launcher_contract_v3.exec_cmd',return_value=json.dumps(bad)):
+            with self.assertRaisesRegex(lc.Refused,'UNQUALIFIED'):
+                lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit)
+        bad=self.result();bad['head_sha']='0'*40
+        with patch('devtool.launcher_contract_v3.exec_cmd',return_value=json.dumps(bad)):
+            with self.assertRaisesRegex(lc.Refused,'UNQUALIFIED'):
+                lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit)
+
+    def test_remote_progress_may_not_be_rebound(self):
+        for change in ({'intents':[{'operation':'push'}]},
+                       {'pr':{'number':35}},
+                       {'ci':{'state':'REQUIRED_CHECKS_PASSED'}},
+                       {'stage':'REMOTE'}):
+            with self.subTest(change=change):
+                bad={**self.result(),**change}
+                with patch('devtool.launcher_contract_v3.exec_cmd',return_value=json.dumps(bad)):
+                    with self.assertRaisesRegex(lc.Refused,'UNQUALIFIED'):
+                        lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit)
+
+    def test_native_adoption_failure_is_a_recovery_stop_not_reapply(self):
+        with patch('devtool.launcher_contract_v3.exec_cmd',return_value='invalid-receipt'):
+            with self.assertRaisesRegex(lc.Refused,'INVALID_RECEIPT'):
+                lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit)
+        self.assertEqual(self.archive.read_bytes(),b'verified-artifact-byte-stream')
+
+    def test_session_start_is_not_called_by_apply_after_native_commit(self):
+        source=Path(lc.__file__).read_text(encoding='utf-8')
+        section=source[source.index('def apply_package('):source.index('def runtime_command(')]
+        self.assertIn('native_adopt_committed(repo,devtool_root,archive,after[',section)
+        self.assertNotIn("'delivery','session','start'",section)

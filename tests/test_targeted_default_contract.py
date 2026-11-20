@@ -48,6 +48,65 @@ def test_explicit_test_selection_preserved_without_git_fallback(tmp_path):
     assert sel['ids']==['tests/test_auth.py::test_login']
 
 
+def test_explicit_validation_task_does_not_infer_git_scope(tmp_path):
+    # Command-level --task uses the native validation-task path. The test
+    # selector intentionally omits this compatibility task, so implicit
+    # affected selection must not reinterpret it as an unqualified Git diff.
+    c=cfg(tmp_path)
+    selection={}
+    a=args(command='validate',_devtool_cli_test_task_explicit=True,
+           test_task=[':app:testDebugUnitTest'])
+    with patch('devtool.affected.git_changed_paths',
+               side_effect=AssertionError('explicit task must win')):
+        _apply_implicit_targeted_validation(c,a,selection)
+    assert selection=={}
+    assert c.runner_options['validation']=={}
+
+
+def test_empty_explicit_task_marker_cannot_bypass_affected_selection(tmp_path):
+    c=cfg(tmp_path)
+    selection={}
+    a=args(command='validate',_devtool_cli_test_task_explicit=True,
+           test_task=[])
+    with patch('devtool.affected.git_changed_paths',return_value=('src/app.py',)):
+        _apply_implicit_targeted_validation(c,a,selection)
+    assert selection['paths']==['src/app.py']
+    assert c.runner_options['validation']['selection_origin']=='implicit-affected'
+
+
+def test_explicit_affected_with_task_still_requires_git_selection(tmp_path):
+    c=cfg(tmp_path)
+    selection={}
+    a=args(command='validate',_devtool_cli_test_task_explicit=True,
+           test_task=[':app:testDebugUnitTest'],affected=True)
+    with patch('devtool.affected.git_changed_paths',return_value=('src/app.py',)):
+        _apply_implicit_targeted_validation(c,a,selection)
+    assert selection['paths']==['src/app.py']
+    assert c.runner_options['validation']['selection_origin']=='implicit-affected'
+
+
+def test_explicit_git_range_with_task_still_requires_git_selection(tmp_path):
+    c=cfg(tmp_path)
+    selection={}
+    a=args(command='validate',_devtool_cli_test_task_explicit=True,
+           test_task=[':app:testDebugUnitTest'],affected_base='main')
+    with patch('devtool.affected.git_changed_paths',return_value=('src/app.py',)) as diff:
+        _apply_implicit_targeted_validation(c,a,selection)
+    diff.assert_called_once_with(tmp_path,base='main',head='')
+    assert selection['paths']==['src/app.py']
+    assert c.runner_options['validation']['selection_origin']=='implicit-affected'
+
+
+def test_unmarked_task_still_obeys_implicit_scope_contract(tmp_path):
+    c=cfg(tmp_path)
+    selection={}
+    a=args(command='validate',test_task=[':app:testDebugUnitTest'])
+    with patch('devtool.affected.git_changed_paths',return_value=('src/app.py',)):
+        _apply_implicit_targeted_validation(c,a,selection)
+    assert selection['paths']==['src/app.py']
+    assert c.runner_options['validation']['selection_origin']=='implicit-affected'
+
+
 def test_manifest_exclusive_tasks_not_overridden(tmp_path):
     sel={'tasks':['test']}
     with patch('devtool.affected.git_changed_paths', side_effect=AssertionError('unexpected fallback')):

@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from fnmatch import fnmatchcase
 from pathlib import Path
+from urllib.parse import quote
 import re
 import subprocess
 from typing import Any, Mapping
@@ -301,7 +302,7 @@ def audit_branch_rules(client: Any, session: Mapping[str, Any],
         rules_reader = lambda c, s, b: c.branch_rules(s, b)
     if rules_reader is None:
         from .delivery_github import _github_request
-        rules = _github_request(client, 'GET', f'/repos/{slug}/rules/branches/{base}')
+        rules = _github_request(client, 'GET', f'/repos/{slug}/rules/branches/{quote(base, safe="")}')
     else:
         rules = rules_reader(client, slug, base)
     if not isinstance(rules, list) or len(rules) > 100 or any(not isinstance(r, dict) for r in rules):

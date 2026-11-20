@@ -401,6 +401,17 @@ def confirm_intent(identity: str, operation: str, key: str,
             value = proof.get('pr_number')
             if type(value) is not int or value < 1:
                 raise DeliverySessionError('PR evidence requires an exact PR number')
+        if operation == 'push':
+            # This records ONLY an independently observed exact native push.
+            # Never equate an arbitrary confirmed intent with remote verification.
+            exact = f"{record['repository']}:refs/heads/{record['head']}:{record['head_sha']}"
+            if key != exact or set(proof) != {'head_sha'}:
+                raise DeliverySessionError('Push verification must bind exact origin/ref/HEAD')
+            live = _identity(Path(record['repo_root']), head=record['head'], base=record['base'])
+            if (live['head_sha'] != record['head_sha'] or
+                    live['git_dir'] != record['git_dir'] or
+                    live['repository'].casefold() != record['repository'].casefold()):
+                raise DeliverySessionError('Push verification source identity changed')
         key_hash = hashlib.sha256(key.encode('utf-8')).hexdigest()
         items = [x for x in record['intents'] if x['operation'] == operation and x['key_sha256'] == key_hash]
         if not items:
@@ -413,6 +424,14 @@ def confirm_intent(identity: str, operation: str, key: str,
         if found['state'] == 'confirmed':
             if found.get('evidence') != proof:
                 raise DeliverySessionError('Conflicting mutation reconciliation evidence')
+            if operation == 'push' and record.get('remote_verified') is not True:
+                # Idempotent migration for previously confirmed native push
+                # intents: caller has just read the same HEAD from origin.
+                record['remote_verified'] = True
+                record['updated_at'] = _utc()
+                record['events'].append({'kind':'remote_head_verified',
+                    'at':record['updated_at'],'commit':record['head_sha']})
+                _write(path, record)
             return {'state':'confirmed','confirmed':True,'reconciled':False}
         if found['state'] != 'unresolved':
             raise DeliverySessionError('Mutation intent state is invalid')
@@ -422,6 +441,10 @@ def confirm_intent(identity: str, operation: str, key: str,
         record['updated_at'] = _utc()
         record['events'].append({'kind':'mutation_confirmed','at':record['updated_at'],
                                  'operation':operation, 'intent_id':found['id']})
+        if operation == 'push':
+            record['remote_verified'] = True
+            record['events'].append({'kind':'remote_head_verified',
+                'at':record['updated_at'],'commit':record['head_sha']})
         _write(path,record)
         return {'state':'confirmed','confirmed':True,'reconciled':True}
 
@@ -506,6 +529,161 @@ def record_ci_observation(identity: str, observation: Mapping[str, Any], *,
 
 
 
+def _legacy_required_artifact_test_outcomes(receipt: Mapping[str, Any],
+                                            manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
+    # Re-attest old schema-v2 required-test receipt from native children.
+    # The original source-bound outcomes are read only, never written.
+    if manifest.get('schema_version') != 2:
+        return []
+    validation = manifest.get('validation')
+    if not isinstance(validation, dict) or validation.get('required') is not True:
+        return []
+    if any(validation.get(key) is not False for key in ('restore', 'build', 'test')):
+        return []
+    if any(validation.get(key) for key in ('script', 'refs', 'tasks', 'gradle_tasks')):
+        return []
+    tests = validation.get('tests')
+    if not isinstance(tests, list) or not 1 <= len(tests) <= 64:
+        return []
+    names = []
+    for entry in tests:
+        if not isinstance(entry, dict) or entry.get('required') is not True:
+            return []
+        if entry.get('runner') != 'python' or not isinstance(entry.get('command'), list):
+            return []
+        if not entry['command'] or not all(isinstance(p, str) and p for p in entry['command']):
+            return []
+        identity = entry.get('id')
+        if not isinstance(identity, str) or not identity or len(identity) > 128:
+            return []
+        names.append('artifact-test:' + identity)
+    if len(names) != len(set(names)):
+        return []
+    children = receipt.get('child_outcomes')
+    if not isinstance(children, list) or not 1 <= len(children) <= 64:
+        return []
+    if any(not isinstance(item, dict) or type(item.get('returncode')) is not int
+           or item['returncode'] != 0 or item.get('skipped') is not False
+           or item.get('failure_kind') not in (None, '') for item in children):
+        return []
+    actual = [item['name'] for item in children
+              if isinstance(item.get('name'), str) and item['name'].startswith('artifact-test:')]
+    if len(actual) != len(names) or set(actual) != set(names):
+        return []
+    if not any(item.get('name') == 'git-commit' for item in children):
+        return []
+    return [{'name': name, 'outcome': 'passed', 'returncode': 0, 'skipped': False}
+            for name in names]
+
+
+
+
+def _committed_safe_path(value: str) -> str:
+    """Reject noncanonical or unsafe tracked paths before native scope checks."""
+    from pathlib import PurePosixPath
+    if (not isinstance(value, str) or not value or value.startswith('/')
+            or "\\" in value or "\x00" in value
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)):
+        raise DeliverySessionError('Unsafe committed path or hook declaration')
+    rel = PurePosixPath(value)
+    parts = value.split('/')
+    if (rel.is_absolute() or rel.as_posix() != value or
+            any(part in ('', '.', '..') for part in parts) or
+            parts[0] == '.git' or ':' in parts[0]):
+        raise DeliverySessionError('Unsafe committed path or hook declaration')
+    return value
+
+
+def _committed_git_mode(root: Path, revision: str, rel: str) -> str:
+    """Read the Git tree mode; a symlink is never a verified output directory."""
+    # -z avoids Git's quote-path ambiguity; path input was validated above.
+    raw = _git(root, 'ls-tree', '-z', revision, '--', rel, optional=True)
+    modes = []
+    for line in raw.split('\x00'):
+        metadata, separator, path = line.partition('\t')
+        if separator and path == rel:
+            modes.append(metadata.split(' ', 1)[0])
+    if len(modes) > 1:
+        raise DeliverySessionError('Ambiguous committed Git path mode')
+    return modes[0] if modes else ''
+
+
+def _committed_guard_symlinks(root: Path, rel: str) -> None:
+    """Check every component in HEAD and its parent, including deleted paths."""
+    pieces = rel.split('/')
+    for index in range(1, len(pieces) + 1):
+        prefix = '/'.join(pieces[:index])
+        if (root / prefix).is_symlink():
+            raise DeliverySessionError('Committed hook output symlink escape refused')
+        for revision in ('HEAD', 'HEAD^'):
+            if _committed_git_mode(root, revision, prefix) == '120000':
+                raise DeliverySessionError('Committed hook output symlink escape refused')
+
+
+def _committed_hook_output_scopes(root: Path, manifest: Mapping[str, Any],
+                                  receipt: Mapping[str, Any]) -> tuple[set[str], set[str]]:
+    """Reuse native hook write_paths and boundary rules without widening payloads.
+
+    A declaration has no effect unless its hook actually passed in the original
+    native child outcomes. Only Git tree objects (in HEAD or the parent) grant
+    descendant scope; an explicitly declared file remains exact-path only.
+    """
+    from .artifacts import (
+        artifact_preflight_write_paths, artifact_validation_write_paths,
+        artifact_finalize_write_paths, artifact_finalize_phases,
+        artifact_preflight_script, artifact_validation_script,
+        artifact_finalize_script,
+    )
+    children = receipt.get('child_outcomes')
+    successful = {str(row.get('name')) for row in
+                  (children if isinstance(children, list) else [])
+                  if isinstance(row, dict) and type(row.get('returncode')) is int
+                  and row['returncode'] == 0 and row.get('skipped') is False
+                  and row.get('failure_kind') in ('', None)}
+    declared = (
+        ('artifact-preflight-script', artifact_preflight_write_paths,
+         artifact_preflight_script, True),
+        ('artifact-validation-script', artifact_validation_write_paths,
+         artifact_validation_script, True),
+        ('artifact-finalize-script', artifact_finalize_write_paths,
+         artifact_finalize_script,
+         any(p != 'after_commit' for p in artifact_finalize_phases(dict(manifest)))),
+    )
+    exact: set[str] = set()
+    directories: set[str] = set()
+    for event, get_paths, get_script, can_write in declared:
+        kind = event.removeprefix('artifact-').removesuffix('-script')
+        policy = manifest.get(kind)
+        if policy is not None and not isinstance(policy, dict):
+            raise DeliverySessionError('Invalid committed hook policy')
+        raw_values = (policy or {}).get('write_paths')
+        raw_values = ([raw_values] if isinstance(raw_values, str)
+                      else raw_values if isinstance(raw_values, list) else [])
+        # Native extraction normalizes a harmless trailing slash. Never let
+        # normalization of backslashes, dot segments or empty roots widen it.
+        for raw in raw_values:
+            if not isinstance(raw, str):
+                raise DeliverySessionError('Invalid committed hook declaration')
+            candidate = raw[:-1] if raw.endswith('/') else raw
+            _committed_safe_path(candidate)
+        paths = get_paths(dict(manifest))
+        if not paths or not can_write or not get_script(dict(manifest)):
+            continue
+        # Do not accept a declaration without its real successful native hook.
+        if event not in successful:
+            continue
+        for name in paths:
+            relative = _committed_safe_path(name)
+            _committed_guard_symlinks(root, relative)
+            current = _committed_git_mode(root, 'HEAD', relative)
+            previous = _committed_git_mode(root, 'HEAD^', relative)
+            if '040000' in (current, previous):
+                directories.add(relative)
+            else:
+                exact.add(relative)
+    return exact, directories
+
+
 def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
                   head: str | None = None, state_root: Path | None = None,
                   base_repository: str | None = None,
@@ -554,11 +732,17 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
         raise DeliverySessionError('Applied native history lacks completed transaction proof')
     validation = manifest.get('validation') if isinstance(manifest.get('validation'), dict) else {}
     outcomes = (receipt.get('validation_plan') or {}).get('validation_step_outcomes')
+    legacy_child_evidence = False
     if validation.get('required') is True:
+        if not isinstance(outcomes, list) or not outcomes:
+            # The original native child receipts are durable and source-bound;
+            # never change their bytes or claim synthetic validation-plan steps.
+            outcomes = _legacy_required_artifact_test_outcomes(receipt, manifest)
+            legacy_child_evidence = bool(outcomes)
         if (not isinstance(outcomes, list) or not outcomes or any(
-            not isinstance(item, dict) or item.get('skipped') is True
-            or item.get('outcome') != 'passed' or item.get('returncode') != 0
-            for item in outcomes)):
+            not isinstance(item, dict) or item.get('skipped') is not False
+            or item.get('outcome') != 'passed' or type(item.get('returncode')) is not int
+            or item['returncode'] != 0 for item in outcomes)):
             raise DeliverySessionError('Required native validation must have passing, unskipped step evidence')
     native_apply = {
         'state': 'COMMITTED', 'commit': inspected['head_sha'],
@@ -569,6 +753,11 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
         'source_tree': str(manifest.get('base_tree') or ''),
         'artifact_sha256': digest,
     }
+    if legacy_child_evidence:
+        # Explicit provenance: this is an interpretation of persisted native
+        # child outcomes, NOT an invented or rewritten validation_plan receipt.
+        native_apply['validation_evidence_source'] = 'original-native-child-outcomes'
+        native_apply['validation_steps'] = outcomes
     if supplied.exists():
         if not supplied.is_file():
             raise DeliverySessionError('Applied artifact is not a regular file')
@@ -589,15 +778,27 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
     entries = artifact_inventory_entries(manifest)
     if not isinstance(expected, dict) or not entries:
         raise DeliverySessionError('Applied overlay requires exact committed payload inventory')
-    allowed_mutations = {
-        str(item.get('path') or '') for item in entries if isinstance(item, dict)
-    }
-    allowed_mutations.update(artifact_preflight_write_paths(manifest))
-    allowed_mutations.update(artifact_validation_write_paths(manifest))
-    allowed_mutations.update(artifact_finalize_write_paths(manifest))
-    actual_mutations = set(_git(root, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD').splitlines())
-    if not actual_mutations or actual_mutations - allowed_mutations:
+    # Exact payload paths stay exact; only genuine, native-validated hook
+    # output *directories* may authorize committed descendant files. With
+    # --no-renames, both sides of a move are independently scope-checked.
+    exact_payload = {_committed_safe_path(str(item.get('path') or ''))
+                     for item in entries if isinstance(item, dict)}
+    if len(exact_payload) != len(entries):
+        raise DeliverySessionError('Applied overlay inventory paths are not unique')
+    hook_files, hook_dirs = _committed_hook_output_scopes(root, manifest, receipt)
+    raw_changes = _git(root, 'diff-tree', '--no-commit-id', '--name-only',
+                       '-r', '--no-renames', '-z', 'HEAD')
+    actual_mutations = {_committed_safe_path(p) for p in raw_changes.split('\x00') if p}
+    from .hooks.isolation import path_is_declared
+    unverified = {p for p in actual_mutations
+                  if p not in exact_payload and p not in hook_files
+                  and not path_is_declared(p, hook_dirs)}
+    if not actual_mutations or unverified:
         raise DeliverySessionError('Applied commit contains unverified or empty mutation inventory')
+    # A symlink introduced as hook output, or symlinked ancestor in either
+    # revision, must never gain directory scope through string-prefix matching.
+    for path in sorted(actual_mutations - exact_payload):
+        _committed_guard_symlinks(root, path)
     for row in entries:
         if not isinstance(row, dict):
             raise DeliverySessionError('Applied overlay inventory shape invalid')
@@ -676,7 +877,11 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
                 raise DeliverySessionError('Existing native transaction proof differs from applied history')
             if prior is not None and prior != inspected['overlay']:
                 raise DeliverySessionError('Existing native session binds another overlay for this commit')
-            if prior is None:
+            # An earlier launcher can start a PLANNED session with the exact
+            # artifact already bound, but without the postcommit native receipt.
+            # Reconcile that case through the SAME verified history and atomic
+            # journal writer, never by starting another session or reapplying.
+            if prior is None or existing.get('native_apply') is None:
                 if (existing.get('intents') or existing.get('pr') or existing.get('ci')
                         or existing.get('stage') != 'PLANNED'):
                     raise DeliverySessionError('Existing remote-mutated or progressed session cannot be rebound')

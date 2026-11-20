@@ -258,3 +258,178 @@ def test_archive_tampering_refused_even_with_matching_native_history(tmp_path, m
     with pytest.raises(DeliverySessionError, match='does not match committed native history'):
         reconcile_committed(repo, archive, state_root=state)
     assert not list(state.glob('*.json'))
+
+
+# Component-boundary-aware native history adoption, including the independent
+# Guardian-style v2 scenario. These fixtures never access Guardian itself.
+def _scoped_hook_fixture(tmp_path, monkeypatch, outputs):
+    repo, archive, state, receipt, history, results = fixture(tmp_path, monkeypatch)
+    manifest = receipt['manifest']
+    manifest['validation']['write_paths'] = ['dist/']
+    manifest['validation']['script'] = {
+        'path': '.devtool-artifact/validation/validate.py',
+        'sha256': 'a' * 64,
+    }
+    receipt['child_outcomes'] = [{
+        'name': 'artifact-validation-script', 'returncode': 0,
+        'skipped': False, 'failure_kind': '',
+    }, {'name':'git-commit','returncode':0,'skipped':False,'failure_kind':''}]
+    for rel, value in outputs.items():
+        target = repo / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(value, tuple) and value[0] == 'symlink':
+            target.symlink_to(value[1], target_is_directory=True)
+        else:
+            target.write_text(value)
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '--amend', '--no-edit', '-q')
+    receipt['commit_hash'] = git(repo, 'rev-parse', 'HEAD')
+    return repo, archive, state, receipt, history, results
+
+
+def test_guardian_style_v2_dist_directory_committed_adoption(tmp_path, monkeypatch):
+    repo, archive, state, receipt, history, _ = _scoped_hook_fixture(
+        tmp_path, monkeypatch, {'dist/output.bin': 'generated\n',
+                                'dist/sub/metadata.json': '{"ok":true}\n'})
+    receipt['manifest']['schema_version'] = 2
+    session = adopt_applied(repo, archive, state_root=state)
+    assert session['native_apply']['state'] == 'COMMITTED'
+    assert session['native_apply']['transaction_status'] == 'completed'
+    assert session['native_apply']['commit'] == receipt['commit_hash']
+    assert git(repo, 'rev-parse', 'HEAD') == receipt['commit_hash']
+    assert len(history) == 1
+
+
+def test_hook_descendants_and_exact_inventory_adopt_without_widening(tmp_path, monkeypatch):
+    repo, archive, state, receipt, _, results = _scoped_hook_fixture(
+        tmp_path, monkeypatch, {'dist/sub/output.txt':'generated\n'})
+    session = reconcile_committed(repo, archive, state_root=state)
+    assert session['native_apply']['changed_paths'] == ['dist/sub/output.txt', 'sample.txt']
+    assert session['native_apply']['committed_blobs']['dist/sub/output.txt'] == git(
+        repo, 'rev-parse', 'HEAD:dist/sub/output.txt')
+
+
+@pytest.mark.parametrize('extra', ['outside/evil.txt', 'dist-other/evil.txt'])
+def test_outside_and_prefix_lookalikes_never_gain_scope(tmp_path, monkeypatch, extra):
+    repo, archive, state, receipt, _, _ = _scoped_hook_fixture(
+        tmp_path, monkeypatch, {'dist/safe.txt':'safe\n', extra:'unrelated\n'})
+    with pytest.raises(DeliverySessionError, match='unverified'):
+        adopt_applied(repo, archive, state_root=state)
+    assert not list(state.glob('*.json'))
+
+
+@pytest.mark.parametrize('declaration', ['../dist', '/dist', '.', '.git/config',
+                                          'dist/../outside', 'dist\\escaped'])
+def test_unsafe_native_hook_declaration_refuses(tmp_path, monkeypatch, declaration):
+    repo, archive, state, receipt, _, _ = _scoped_hook_fixture(
+        tmp_path, monkeypatch, {'dist/safe.txt':'safe\n'})
+    receipt['manifest']['validation']['write_paths'] = [declaration]
+    with pytest.raises((ValueError, DeliverySessionError), match='Unsafe|not be|metadata'):
+        adopt_applied(repo, archive, state_root=state)
+    assert not list(state.glob('*.json'))
+
+
+def test_symlinked_output_and_descendant_escape_refused(tmp_path, monkeypatch):
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    repo, archive, state, receipt, _, _ = _scoped_hook_fixture(
+        tmp_path, monkeypatch, {'dist/safe.txt':'safe\n',
+                                'dist/link':('symlink', outside)})
+    with pytest.raises(DeliverySessionError, match='symlink'):
+        adopt_applied(repo, archive, state_root=state)
+    assert not list(state.glob('*.json'))
+
+
+def test_unexecuted_hook_does_not_authorize_dist_writes(tmp_path, monkeypatch):
+    repo, archive, state, receipt, _, _ = _scoped_hook_fixture(
+        tmp_path, monkeypatch, {'dist/file':'data\n'})
+    receipt['child_outcomes'] = []
+    with pytest.raises(DeliverySessionError, match='unverified'):
+        adopt_applied(repo, archive, state_root=state)
+
+
+def test_declared_hook_file_is_not_a_directory(tmp_path, monkeypatch):
+    repo, archive, state, receipt, _, _ = _scoped_hook_fixture(
+        tmp_path, monkeypatch, {'dist/safe.txt':'safe\n'})
+    receipt['manifest']['validation']['write_paths'] = ['dist/safe.txt']
+    session = adopt_applied(repo, archive, state_root=state)
+    assert session['native_apply']['state'] == 'COMMITTED'
+    # A second undeclared file must not inherit the file declaration.
+    assert git(repo, 'ls-tree', 'HEAD', '--', 'dist/safe.txt')
+
+
+def test_missing_validation_or_bad_payload_postimage_refuses(tmp_path, monkeypatch):
+    repo, archive, state, receipt, _, _ = _scoped_hook_fixture(
+        tmp_path, monkeypatch, {'dist/safe.txt':'safe\n'})
+    receipt['validation_plan']['validation_step_outcomes'] = []
+    with pytest.raises(DeliverySessionError, match='validation'):
+        adopt_applied(repo, archive, state_root=state)
+    receipt['validation_plan']['validation_step_outcomes'] = [
+        {'name':'native-test','outcome':'passed','returncode':0,'skipped':False}]
+    receipt['manifest']['expected_post_sha256']['sample.txt'] = '0'*64
+    with pytest.raises(DeliverySessionError, match='payload does not match'):
+        adopt_applied(repo, archive, state_root=state)
+    assert not list(state.glob('*.json'))
+
+
+def test_changed_head_and_missing_ambiguous_history_remain_refused(tmp_path, monkeypatch):
+    repo, archive, state, receipt, history, _ = _scoped_hook_fixture(
+        tmp_path, monkeypatch, {'dist/safe.txt':'safe\n'})
+    history.clear()
+    with pytest.raises(DeliverySessionError, match='history receipt'):
+        adopt_applied(repo, archive, state_root=state)
+    history.extend([receipt, dict(receipt)])
+    with pytest.raises(DeliverySessionError, match='history receipt'):
+        adopt_applied(repo, archive, state_root=state)
+    history[:] = [receipt]
+    git(repo, 'commit', '--allow-empty', '-qm', 'unrelated future commit')
+    with pytest.raises(DeliverySessionError, match='history receipt'):
+        adopt_applied(repo, archive, state_root=state)
+    assert not list(state.glob('*.json'))
+
+
+def _scoped_rename_fixture(tmp_path, monkeypatch, *, crossing=False):
+    repo, archive, state, receipt, history, results = fixture(tmp_path, monkeypatch)
+    (repo/'dist').mkdir()
+    (repo/'dist/old.txt').write_text('before\n')
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-qm', 'fixture old dist tree')
+    parent = git(repo, 'rev-parse', 'HEAD')
+    parent_tree = git(repo, 'rev-parse', 'HEAD^{tree}')
+    (repo/'sample.txt').write_text('latest\n')
+    destination = 'elsewhere/new.txt' if crossing else 'dist/new.txt'
+    (repo/destination).parent.mkdir(parents=True, exist_ok=True)
+    git(repo, 'mv', 'dist/old.txt', destination)
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-qm', 'native renamed output')
+    sha = hashlib.sha256(b'latest\n').hexdigest()
+    old_sha = hashlib.sha256(b'new\n').hexdigest()
+    m = receipt['manifest']
+    m['base_commit'], m['base_tree'] = parent, parent_tree
+    m['source_sha256']['sample.txt'] = old_sha
+    m['expected_post_sha256']['sample.txt'] = sha
+    m['inventory']['entries'][0]['source_sha256'] = old_sha
+    m['inventory']['entries'][0]['sha256'] = sha
+    m['inventory']['entries'][0]['size'] = len(b'latest\n')
+    m['validation']['write_paths'] = ['dist']
+    m['validation']['script'] = {'path':'.devtool-artifact/validation/validate.py',
+                                 'sha256':'a'*64}
+    receipt['child_outcomes'] = [{'name':'artifact-validation-script',
+                                  'returncode':0,'skipped':False,'failure_kind':''},
+                                 {'name':'git-commit','returncode':0,
+                                  'skipped':False,'failure_kind':''}]
+    receipt['commit_hash'] = git(repo, 'rev-parse', 'HEAD')
+    return repo, archive, state, receipt
+
+
+def test_rename_between_authorized_directory_paths_is_accepted(tmp_path, monkeypatch):
+    repo, archive, state, receipt = _scoped_rename_fixture(tmp_path, monkeypatch)
+    adopted = adopt_applied(repo, archive, state_root=state)
+    assert adopted['native_apply']['state'] == 'COMMITTED'
+    assert git(repo, 'rev-parse', 'HEAD') == receipt['commit_hash']
+
+
+def test_rename_from_directory_to_undeclared_location_refused(tmp_path, monkeypatch):
+    repo, archive, state, _ = _scoped_rename_fixture(tmp_path, monkeypatch, crossing=True)
+    with pytest.raises(DeliverySessionError, match='unverified'):
+        adopt_applied(repo, archive, state_root=state)
