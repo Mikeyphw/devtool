@@ -67182,6 +67182,31 @@
     },
     {
       "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "auto",
+          "app"
+        ],
+        "dest": "auth",
+        "help": "Select explicit GitHub App installation for one approved native HTTPS push (auto preserves existing Git credentials)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "push"
+        ],
+        "required": false
+      },
+      "scope": "delivery session push",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.push.auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
       "canonical": "--yes",
       "config_field_id": null,
       "metadata": {
@@ -67323,7 +67348,8 @@
           "auto",
           "env",
           "gh",
-          "none"
+          "none",
+          "app"
         ],
         "dest": "auth",
         "help": "GitHub authentication source",
@@ -67506,7 +67532,8 @@
           "auto",
           "env",
           "gh",
-          "none"
+          "none",
+          "app"
         ],
         "dest": "auth",
         "help": "GitHub authentication source",
@@ -95525,6 +95552,24 @@
                                 ],
                                 "required": false,
                                 "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "auto",
+                                  "app"
+                                ],
+                                "const": null,
+                                "default": "auto",
+                                "dest": "auth",
+                                "help": "Authentication for native push: auto (existing Git) or app (authorized installation)",
+                                "metavar": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--auth"
+                                ],
+                                "required": false,
+                                "type": null
                               }
                             ],
                             "add_help": true,
@@ -95603,7 +95648,8 @@
                                   "auto",
                                   "env",
                                   "gh",
-                                  "none"
+                                  "none",
+                                  "app"
                                 ],
                                 "const": null,
                                 "default": "auto",
@@ -95747,7 +95793,8 @@
                                   "auto",
                                   "env",
                                   "gh",
-                                  "none"
+                                  "none",
+                                  "app"
                                 ],
                                 "const": null,
                                 "default": "auto",

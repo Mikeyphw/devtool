@@ -2250,6 +2250,7 @@ Source-bound, journaled, non-force Git push
 | `--id DELIVERY_ID` | Exact 32-character session ID Required. |
 | `--yes` | Explicitly approve remote mutation |
 | `--json` | Machine-readable output |
+| `--auth AUTH` | Authentication for native push: auto (existing Git) or app (authorized installation) Choices: auto, app |
 
 ### `devtool delivery session pr`
 
@@ -2260,7 +2261,7 @@ Find or explicitly create one source-bound draft PR
 | `--id DELIVERY_ID` | Exact 32-character session ID Required. |
 | `--title TITLE` | New PR title |
 | `--body BODY` | New PR body |
-| `--auth AUTH` | GitHub authentication source Choices: auto, env, gh, none |
+| `--auth AUTH` | GitHub authentication source Choices: auto, env, gh, none, app |
 | `--yes` | Explicitly approve remote mutation |
 | `--json` | Machine-readable output |
 
@@ -2274,7 +2275,7 @@ Registration-aware, source-bound GitHub CI observation
 | `--require-workflow REQUIRE_WORKFLOW` | Required workflow name (repeatable) |
 | `--checks CHECKS` | Maximum finite polling observations |
 | `--interval INTERVAL` | Seconds between CI observations |
-| `--auth AUTH` | GitHub authentication source Choices: auto, env, gh, none |
+| `--auth AUTH` | GitHub authentication source Choices: auto, env, gh, none, app |
 | `--json` | Machine-readable output |
 
 ### `devtool repo-pack`

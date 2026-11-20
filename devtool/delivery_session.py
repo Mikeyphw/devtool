@@ -643,7 +643,7 @@ def _committed_hook_output_scopes(root: Path, manifest: Mapping[str, Any],
     declared = (
         ('artifact-preflight-script', artifact_preflight_write_paths,
          artifact_preflight_script, True),
-        ('artifact-validation-script', artifact_validation_write_paths,
+        ('artifact-validate-script', artifact_validation_write_paths,
          artifact_validation_script, True),
         ('artifact-finalize-script', artifact_finalize_write_paths,
          artifact_finalize_script,
@@ -652,7 +652,10 @@ def _committed_hook_output_scopes(root: Path, manifest: Mapping[str, Any],
     exact: set[str] = set()
     directories: set[str] = set()
     for event, get_paths, get_script, can_write in declared:
-        kind = event.removeprefix('artifact-').removesuffix('-script')
+        # The validator operation is called 'validate' in native history, but
+        # its canonical manifest policy remains named 'validation'.
+        kind = ('validation' if event == 'artifact-validate-script' else
+                event.removeprefix('artifact-').removesuffix('-script'))
         policy = manifest.get(kind)
         if policy is not None and not isinstance(policy, dict):
             raise DeliverySessionError('Invalid committed hook policy')

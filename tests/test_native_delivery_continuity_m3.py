@@ -271,7 +271,7 @@ def _scoped_hook_fixture(tmp_path, monkeypatch, outputs):
         'sha256': 'a' * 64,
     }
     receipt['child_outcomes'] = [{
-        'name': 'artifact-validation-script', 'returncode': 0,
+        'name': 'artifact-validate-script', 'returncode': 0,
         'skipped': False, 'failure_kind': '',
     }, {'name':'git-commit','returncode':0,'skipped':False,'failure_kind':''}]
     for rel, value in outputs.items():
@@ -286,6 +286,70 @@ def _scoped_hook_fixture(tmp_path, monkeypatch, outputs):
     receipt['commit_hash'] = git(repo, 'rev-parse', 'HEAD')
     return repo, archive, state, receipt, history, results
 
+
+
+
+def test_validator_execution_and_history_recovery_agree_on_real_child_name(tmp_path, monkeypatch):
+    """Capture the real native hook request name; synthetic fixture aliases cannot substitute."""
+    repo, archive, state, receipt, _, _ = _scoped_hook_fixture(
+        tmp_path, monkeypatch, {'dist/LSPosed-Guardian-v0.12.5.zip': 'verified\n',
+                                'dist/build-evidence.json': '{}\n'})
+    from devtool import artifact_validation
+
+    class CaptureNativeHook:
+        def execute(self, request):
+            return request.operation_name
+
+    monkeypatch.setattr(artifact_validation, '_ENGINE', CaptureNativeHook())
+    native_name = artifact_validation.run_artifact_validation_script(
+        repo, archive, manifest=receipt['manifest'])
+    assert native_name == 'artifact-validate-script'
+    assert receipt['child_outcomes'][0]['name'] == native_name
+    recovered = adopt_applied(repo, archive, state_root=state)
+    assert recovered['native_apply']['state'] == 'COMMITTED'
+    assert recovered['native_apply']['commit'] == receipt['commit_hash']
+    assert git(repo, 'rev-parse', 'HEAD') == receipt['commit_hash']
+
+
+@pytest.mark.parametrize('wrong_name', [
+    'artifact-validation-script', 'artifact-validate-script-legacy',
+    'artifact-preflight-script',
+])
+def test_noncanonical_native_validator_child_cannot_authorize_dist_scope(
+        tmp_path, monkeypatch, wrong_name):
+    repo, archive, state, receipt, _, _ = _scoped_hook_fixture(
+        tmp_path, monkeypatch, {'dist/build-evidence.json': 'safe\n'})
+    receipt['child_outcomes'][0]['name'] = wrong_name
+    with pytest.raises(DeliverySessionError, match='unverified or empty mutation inventory'):
+        adopt_applied(repo, archive, state_root=state)
+    assert not list(state.glob('*.json'))
+
+
+@pytest.mark.parametrize('returncode,skipped,failure_kind', [
+    (1, False, 'validation_failure'),
+    (0, True, ''),
+    (0, False, 'incomplete'),
+])
+def test_nonpassing_real_validator_cannot_authorize_dist_scope(
+        tmp_path, monkeypatch, returncode, skipped, failure_kind):
+    repo, archive, state, receipt, _, _ = _scoped_hook_fixture(
+        tmp_path, monkeypatch, {'dist/build-evidence.json': 'safe\n'})
+    receipt['child_outcomes'][0].update(
+        returncode=returncode, skipped=skipped, failure_kind=failure_kind)
+    with pytest.raises(DeliverySessionError, match='unverified or empty mutation inventory'):
+        adopt_applied(repo, archive, state_root=state)
+    assert not list(state.glob('*.json'))
+
+
+def test_validator_event_does_not_rename_validation_manifest_policy(tmp_path, monkeypatch):
+    # Keep manifest policy type checks active after correcting hook event name.
+    repo, archive, state, receipt, _, _ = _scoped_hook_fixture(
+        tmp_path, monkeypatch, {'dist/record.json': '{}\n'})
+    receipt['manifest']['validation'] = ['wrong-policy-type']
+    from devtool.delivery_session import _committed_hook_output_scopes
+    with pytest.raises(DeliverySessionError, match='Invalid committed hook policy'):
+        _committed_hook_output_scopes(repo, receipt['manifest'], receipt)
+    assert not list(state.glob('*.json'))
 
 def test_guardian_style_v2_dist_directory_committed_adoption(tmp_path, monkeypatch):
     repo, archive, state, receipt, history, _ = _scoped_hook_fixture(
@@ -414,7 +478,7 @@ def _scoped_rename_fixture(tmp_path, monkeypatch, *, crossing=False):
     m['validation']['write_paths'] = ['dist']
     m['validation']['script'] = {'path':'.devtool-artifact/validation/validate.py',
                                  'sha256':'a'*64}
-    receipt['child_outcomes'] = [{'name':'artifact-validation-script',
+    receipt['child_outcomes'] = [{'name':'artifact-validate-script',
                                   'returncode':0,'skipped':False,'failure_kind':''},
                                  {'name':'git-commit','returncode':0,
                                   'skipped':False,'failure_kind':''}]
