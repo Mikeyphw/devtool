@@ -40245,6 +40245,21 @@
           ]
         },
         {
+          "choices": [
+            "auto",
+            "app"
+          ],
+          "dest": "auth",
+          "help": "Select explicit GitHub App installation for one approved native HTTPS push (auto preserves existing Git credentials)",
+          "hidden": false,
+          "id": "cli.option.delivery.session.push.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
           "choices": [],
           "dest": "yes",
           "help": "Explicitly approve remote mutation",
@@ -40337,7 +40352,8 @@
             "auto",
             "env",
             "gh",
-            "none"
+            "none",
+            "app"
           ],
           "dest": "auth",
           "help": "GitHub authentication source",
@@ -40454,7 +40470,8 @@
             "auto",
             "env",
             "gh",
-            "none"
+            "none",
+            "app"
           ],
           "dest": "auth",
           "help": "GitHub authentication source",
@@ -40488,7 +40505,7 @@
       "summary": "Registration-aware, source-bound GitHub CI observation"
     }
   ],
-  "digest": "45b9a1af05534609e0c6b910b2cd49a372154043f2a75e1b5bbf7a9e05c46cbb",
+  "digest": "20a7ef0d04acacf8e24c11057492907bd00570526952ffc886c60f7cccfcd6a2",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -41035,7 +41052,7 @@
     "registry_command_count": 404
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "e4e92e11ea5cfa3f2563850b606699c31336743146bb442de960d1ee8259e49f",
+  "registry_digest": "43801d35dee76abaff3c71d13571654c6e680703fcd8e06a50f3df15e5094692",
   "registry_schema_version": 1,
   "schema_version": 1
 }
