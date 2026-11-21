@@ -488,31 +488,37 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
         except GitHubActionsError:
             return provider_unavailable('workflow-definitions', 0)
 
-    def live_provenance() -> str | None:
-        # Check the remote source on EVERY observation, even if no PR exists.
-        # Never infer a successful check from an old head or merge ref.
+    def live_provenance() -> tuple[str | None, tuple[str | None, str | None] | None]:
+        # Check remote source on EVERY observation before trusting PR times.
         actual_head = _remote_head(head_client, head_repo, item['head'])
         if actual_head != item['head_sha']:
             raise DeliverySessionError('Remote branch moved during CI; qualification blocked')
         if not pr_info:
-            return None
+            return None, None
         live = client._get(f"/repos/{item['repository']}/pulls/{pr_info['number']}")
         verified = _pr_match(live, base_repo, item['head'], item['base'], item['head_sha'],
                              head_repository=head_repo, base_sha=item.get('base_sha'))
         if not verified or verified['number'] != pr_info['number']:
             raise DeliverySessionError('Current PR identity changed or closed during CI')
-        return _pr_merge_sha(client, item['repository'], pr_info['number'])
+        created = live.get('created_at')
+        updated = live.get('updated_at')
+        if created is not None and not isinstance(created, str):
+            raise DeliverySessionError('Invalid provider PR creation timestamp')
+        if updated is not None and not isinstance(updated, str):
+            raise DeliverySessionError('Invalid provider PR update timestamp')
+        return _pr_merge_sha(client, item['repository'], pr_info['number']), (created, updated)
 
     snapshots = []
     for i in range(checks):
         if policy_guard is not None:
             policy_guard()
-        merge_sha = live_provenance()
+        merge_sha, verified_pr_times = live_provenance()
         registration: dict[str, Any] | None = None
         if strict_registration:
             window = registrar.registration_window(
                 item, registration_horizon_seconds,
-                now=clock() if clock is not None else None)
+                now=clock() if clock is not None else None,
+                verified_pr_times=(verified_pr_times if required_event == 'pull_request' else None))
             try:
                 raw = registrar.collect_runs(client, item['repository'],
                                              window=window, event=required_event)
@@ -529,9 +535,12 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
                     at = registrar._date(row.get('created_at'))
                 except DeliverySessionError:
                     return None
-                if (at < window['began'] - timedelta(seconds=120) or
-                        at > window['deadline'] + timedelta(seconds=120) or
-                        at > window['now'] + timedelta(seconds=120)):
+                in_any_window = any(
+                    span['began'] - timedelta(seconds=120) <= at
+                    <= span['deadline'] + timedelta(seconds=120)
+                    for span in (window.get('ranges') or (window,))
+                )
+                if not in_any_window or at > window['now'] + timedelta(seconds=120):
                     return None
                 if required_event != 'workflow_dispatch':
                     return _ci_candidate(row, source, pr, merge)
@@ -632,8 +641,11 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
             # Detect a policy/head/merge ref change while all remote calls were in flight.
             if policy_guard is not None:
                 policy_guard()
-            if live_provenance() != merge_sha:
+            current_merge, current_pr_times = live_provenance()
+            if current_merge != merge_sha:
                 raise DeliverySessionError('PR merge identity changed during CI poll; qualification blocked')
+            if current_pr_times != verified_pr_times:
+                raise DeliverySessionError('PR registration anchor changed during CI poll; qualification blocked')
         diag = []
         if state == 'CHECKS_FAILED':
             from .delivery_ci_evidence import failed_job_details

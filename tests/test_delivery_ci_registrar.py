@@ -619,3 +619,193 @@ def test_ruleset_only_required_workflows_not_inferred_passed(ctx):
     result = strict(ctx, cli)
     assert result['state'] == 'BRANCH_RULES_UNVERIFIED'
     assert not result['checks_qualified']
+
+# M6-CI42: PRs created well after their source-bound delivery sessions must not
+# be excluded before their exact pull_request CI runs can be checked.
+
+def _pr_times_client(item, rows, *, created, updated=None):
+    client = Client(item, rows)
+    original = client._get
+    def get(path):
+        data = original(path)
+        if path.endswith('/pulls/17'):
+            return {**data, 'created_at':created.isoformat(),
+                    'updated_at':(updated or created).isoformat()}
+        return data
+    client._get = get
+    return client
+
+
+def test_delayed_pr_created_after_native_session_qualifies_exact_run(ctx):
+    item, _, _ = ctx
+    session_created = reg._date(item['created_at'])
+    pr_created = session_created + timedelta(hours=3)
+    observed = pr_created + timedelta(seconds=15)
+    client = _pr_times_client(item, [row(item,created_at=observed.isoformat())],
+                              created=pr_created)
+    result = strict(ctx, client, clock=lambda:pr_created+timedelta(minutes=3))
+    assert result['state'] == 'REQUIRED_CHECKS_PASSED'
+    assert result['registration']['anchor_source']=='verified_pr_created_at'
+    assert result['registration']['started_at']==pr_created.isoformat()
+    assert result['exact_run_evidence']['verified'] is True
+
+
+def test_delayed_pr_without_provider_timestamp_stays_unqualified(ctx):
+    item, _, _ = ctx
+    session_created = reg._date(item['created_at'])
+    pr_created = session_created + timedelta(hours=3)
+    client = Client(item,[row(item,created_at=(pr_created+timedelta(seconds=15)).isoformat())])
+    result = strict(ctx,client,clock=lambda:pr_created+timedelta(minutes=3))
+    assert result['state']=='REGISTRATION_TIMED_OUT'
+    assert result['registration']['anchor_source']=='session_created_at'
+    assert result['checks_qualified'] is False
+
+
+def test_synced_pr_updated_timestamp_preserves_valid_creation_checks(ctx):
+    item, _, _ = ctx
+    session_time = reg._date(item['created_at'])
+    created = session_time + timedelta(minutes=5)
+    updated = created + timedelta(hours=3)
+    client = _pr_times_client(item, [row(item,created_at=(updated+timedelta(seconds=20)).isoformat())],
+                              created=created,updated=updated)
+    result = strict(ctx,client,clock=lambda:updated+timedelta(minutes=2))
+    assert result['state']=='REQUIRED_CHECKS_PASSED'
+    assert result['registration']['anchor_source']=='verified_pr_updated_at'
+    client.rows=[row(item,created_at=(created+timedelta(minutes=2)).isoformat())]
+    preserved=strict(ctx,client,clock=lambda:updated+timedelta(minutes=2))
+    assert preserved['state']=='REQUIRED_CHECKS_PASSED'
+    assert preserved['checks_qualified'] is True
+
+
+def test_verified_pr_timestamp_future_or_out_of_order_refused(ctx):
+    item, _, _ = ctx
+    now = reg._date(item['created_at'])+timedelta(minutes=4)
+    client = _pr_times_client(item, [row(item)], created=now+timedelta(minutes=7))
+    with pytest.raises(DeliverySessionError,match='future'):
+        strict(ctx,client,clock=lambda:now)
+    client = _pr_times_client(item,[row(item)],created=now-timedelta(minutes=3),
+                              updated=now-timedelta(minutes=4))
+    with pytest.raises(DeliverySessionError,match='update time'):
+        strict(ctx,client,clock=lambda:now)
+
+
+def test_pr_time_drift_during_observation_refused(ctx):
+    item, _, _ = ctx
+    created = reg._date(item['created_at'])
+    client = _pr_times_client(item,[row(item)],created=created)
+    original=client._get
+    counter={'pr':0}
+    def drift(path):
+        data=original(path)
+        if path.endswith('/pulls/17'):
+            counter['pr']+=1
+            if counter['pr']>=2:
+                data['updated_at']=(created+timedelta(seconds=5)).isoformat()
+        return data
+    client._get=drift
+    with pytest.raises(DeliverySessionError,match='registration anchor changed'):
+        strict(ctx,client)
+
+
+def test_pr_timestamp_cannot_rescue_wrong_source_identity(ctx):
+    item, _, _ = ctx
+    now=reg._date(item['created_at'])+timedelta(hours=3)
+    client=_pr_times_client(item,[row(item,created_at=now.isoformat())],created=now)
+    old=client._get
+    def wrong(path):
+        data=old(path)
+        if path.endswith('/pulls/17'):
+            data['head']['sha']='f'*40
+        return data
+    client._get=wrong
+    with pytest.raises(DeliverySessionError,match='PR head differs from source'):
+        strict(ctx,client,clock=lambda:now+timedelta(seconds=2))
+
+# M6 follow-up: a PR can be opened hours after the source-bound native session.
+def _client_with_verified_pr_times(item, rows, created, updated):
+    client = Client(item, rows)
+    read = client._get
+    def verified_read(path):
+        value = read(path)
+        if path.endswith('/pulls/17'):
+            return {**value, 'created_at': created.isoformat(), 'updated_at': updated.isoformat()}
+        return value
+    client._get = verified_read
+    return client
+
+
+def test_pr_opened_hours_after_native_session_registers_real_checks(ctx):
+    item, _, _ = ctx
+    start = reg._date(item['created_at'])
+    created = start + timedelta(hours=5)
+    recorded = created + timedelta(minutes=2)
+    client = _client_with_verified_pr_times(
+        item, [row(item, created_at=recorded.isoformat())], created, created)
+    result = strict(ctx, client, clock=lambda: created + timedelta(minutes=32))
+    assert result['state'] == 'REQUIRED_CHECKS_PASSED'
+    assert result['checks_qualified'] is True
+    assert result['registration']['run_count'] == 1
+    assert result['exact_run_evidence']['verified'] is True
+    assert result['release_qualified'] is False
+
+
+def test_later_pr_edit_does_not_hide_initial_verified_workflow(ctx):
+    item, _, _ = ctx
+    created = reg._date(item['created_at']) + timedelta(hours=3)
+    updated = created + timedelta(hours=4)
+    client = _client_with_verified_pr_times(
+        item, [row(item, created_at=(created + timedelta(minutes=1)).isoformat())],
+        created, updated)
+    result = strict(ctx, client, clock=lambda: updated + timedelta(minutes=3))
+    assert result['state'] == 'REQUIRED_CHECKS_PASSED'
+    assert result['checks_qualified'] is True
+
+
+def test_verified_pr_updated_at_allows_new_head_workflow_after_old_window(ctx):
+    item, _, _ = ctx
+    created = reg._date(item['created_at']) + timedelta(minutes=2)
+    updated = created + timedelta(hours=4)
+    client = _client_with_verified_pr_times(
+        item, [row(item, created_at=(updated + timedelta(minutes=2)).isoformat())],
+        created, updated)
+    result = strict(ctx, client, clock=lambda: updated + timedelta(minutes=7))
+    assert result['state'] == 'REQUIRED_CHECKS_PASSED'
+    assert result['checks_qualified'] is True
+
+
+def test_pr_anchors_do_not_admit_stale_run(ctx):
+    item, _, _ = ctx
+    start = reg._date(item['created_at'])
+    created = start + timedelta(hours=4)
+    updated = created + timedelta(hours=3)
+    client = _client_with_verified_pr_times(
+        item, [row(item, created_at=(start - timedelta(days=1)).isoformat())],
+        created, updated)
+    result = strict(ctx, client, clock=lambda: updated + timedelta(minutes=10))
+    assert result['state'] == 'WAITING_REGISTRATION'
+    assert result['checks_qualified'] is False
+
+
+def test_two_exact_matching_runs_in_different_verified_windows_block(ctx):
+    item, _, _ = ctx
+    created = reg._date(item['created_at']) + timedelta(hours=3)
+    updated = created + timedelta(hours=3)
+    client = _client_with_verified_pr_times(item, [
+        row(item, rid=1001, created_at=(created + timedelta(minutes=1)).isoformat()),
+        row(item, rid=1002, created_at=(updated + timedelta(minutes=1)).isoformat()),
+    ], created, updated)
+    result = strict(ctx, client, clock=lambda: updated + timedelta(minutes=10))
+    assert result['state'] == 'BLOCKED_AMBIGUOUS'
+    assert result['checks_qualified'] is False
+
+
+def test_invalid_verified_pr_timestamps_fail_closed(ctx):
+    item, _, _ = ctx
+    start = reg._date(item['created_at'])
+    created = start + timedelta(hours=4)
+    with pytest.raises(DeliverySessionError, match='update time is invalid'):
+        reg.registration_window(item, 1800, now=created + timedelta(hours=2),
+            verified_pr_times=(created.isoformat(), (created - timedelta(seconds=1)).isoformat()))
+    with pytest.raises(DeliverySessionError, match='lacks creation'):
+        reg.registration_window(item, 1800, now=created + timedelta(hours=2),
+            verified_pr_times=(None, created.isoformat()))
