@@ -163,6 +163,7 @@ class NativeRichMonitor:
         self.log_page=0
         self.log_error=''
         self._pending_log_fetch=False
+        self._ui_dirty=False
         self._log_identity=None
 
     def render(self) -> Group:
@@ -174,7 +175,11 @@ class NativeRichMonitor:
         presentation = dict(self.last) if self.ui_feedback else self.last
         if self.ui_feedback:
             presentation['m6_ui_feedback'] = self.ui_feedback
-        return actions_run_view(presentation,**kwargs) if self.kind=='run' else ci_snapshot_view(presentation,**kwargs)
+        primary = actions_run_view(presentation,**kwargs) if self.kind=='run' else ci_snapshot_view(presentation,**kwargs)
+        if self.enabled:
+            from .m6_live import BoundedLiveFrame
+            return BoundedLiveFrame(primary)
+        return primary
 
     def __enter__(self):
         if self.enabled:
@@ -266,6 +271,11 @@ class NativeRichMonitor:
             except (OSError,AttributeError,ValueError):
                 new_width = shutil.get_terminal_size((80,24)).columns
             self.console.width = max(40,min(180,new_width))
+            try:
+                # Android zoom/rotation can change the actual PTY height.
+                self.console.height=max(8,min(120,os.get_terminal_size(sys.stdin.fileno()).lines))
+            except (OSError,AttributeError,ValueError):
+                pass
             self._live.update(self.render(),refresh=True)
 
     def wait_interval(self,seconds:float)->None:
@@ -280,6 +290,10 @@ class NativeRichMonitor:
         deadline=time.monotonic()+max(0.0,float(seconds))
         while time.monotonic()<deadline:
             self._consume_log_fetch()
+            if self._ui_dirty:
+                # Only the native main observer renders to the PTY.
+                self._ui_dirty=False
+                self.refresh()
             if (self.ui_feedback and self._feedback_deadline and
                     time.monotonic() >= self._feedback_deadline):
                 self.ui_feedback=''
@@ -335,7 +349,13 @@ class NativeRichMonitor:
         elif key=='q':self.detached=True
         if self.log_requested and key in ('j','k','up','down'):
             self._pending_log_fetch=True
-        self.refresh()
+        # Keyboard worker updates state only; never prints/repositions Live.
+        # The next bounded native wait/observer cycle owns redrawing.
+        self._ui_dirty=True
+        if self._keyboard is None or (
+                __import__('threading').current_thread() is not self._keyboard.thread):
+            self._ui_dirty=False
+            self.refresh()
 
 
 class _Keyboard:

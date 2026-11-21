@@ -444,3 +444,68 @@ def test_m6_v6_explicit_output_focus_does_not_fetch_automatically():
     assert m.focus=='output' and fetches==[]
     m.key('l');m._consume_log_fetch()
     assert len(fetches)==1
+
+
+
+# M6.3.1: terminal frame stability is an additional presentation contract.
+@pytest.mark.parametrize('width,height',[(40,19),(52,21),(82,25),(106,30),(120,32)])
+def test_m6_v8_fixed_height_inline_viewport(width,height):
+    from devtool.m6_live import BoundedLiveFrame, build_live_view
+    import io
+    from rich.console import Console
+    snapshot={'remote':{'id':23,'head_sha':'abcd','conclusion':'failure'},
+              'jobs':[{'name':f'job {i}','status':'completed','conclusion':'success'}
+                      for i in range(25)]}
+    views=[]
+    for focus in ('overview','identity','stages','events','output','evidence'):
+        sink=io.StringIO()
+        console=Console(file=sink,width=width,height=height,
+                        color_system=None,force_terminal=False)
+        console.print(BoundedLiveFrame(build_live_view(
+            'run',snapshot,width=width,focus=focus,icons='ascii',verbose=True)))
+        text=sink.getvalue()
+        assert text.count('M6 · NATIVE LIVE')==1
+        assert len(text.splitlines())==height-3
+        assert max(map(len,text.splitlines()))<=width
+        views.append(text)
+    assert len({len(v.splitlines()) for v in views})==1
+
+
+def test_m6_v8_keyboard_worker_only_queues_presentation():
+    import threading,types,io
+    from rich.console import Console
+    from devtool.delivery_rich import NativeRichMonitor
+    m=NativeRichMonitor(enabled=True,console=Console(file=io.StringIO(),width=82,height=25))
+    m.observe({'remote':{'id':23,'conclusion':'failure'},'jobs':[]})
+    m.kind='run'
+    calls=[]
+    m.refresh=lambda: calls.append(threading.current_thread().name)
+    m._keyboard=types.SimpleNamespace(thread=threading.current_thread())
+    m.key('v')
+    assert m.verbose is True and m._ui_dirty is True
+    assert calls==[], 'Keyboard worker must not write a Rich frame'
+    m.wait_interval(0.03)
+    assert calls and m._ui_dirty is False
+
+
+def test_m6_v8_refresh_and_detach_do_not_need_keyboard_render():
+    import threading,types,io
+    from rich.console import Console
+    from devtool.delivery_rich import NativeRichMonitor, MonitorDetached
+    m=NativeRichMonitor(enabled=True,console=Console(file=io.StringIO(),width=82,height=25))
+    m.observe({'remote':{'id':23,'conclusion':'failure'},'jobs':[]})
+    m.kind='run'
+    calls=[]
+    m.refresh=lambda: calls.append('render')
+    m._keyboard=types.SimpleNamespace(thread=threading.current_thread())
+    m.key('r')
+    assert m.refresh_requested and m.ui_feedback=='REFRESH_REQUESTED'
+    assert calls==[]
+    m.wait_interval(0.07)
+    assert m.ui_feedback=='REFRESH_CONSUMED'
+    m.key('q')
+    try:
+        m.wait_interval(0.07)
+    except MonitorDetached: pass
+    else: assert False,'detach must interrupt native wait'
+    assert m.detached

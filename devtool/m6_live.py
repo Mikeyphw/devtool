@@ -13,7 +13,8 @@ import re
 import sys
 from typing import Any
 
-from rich.console import Console, Group
+from rich.console import Console, Group, ConsoleOptions, RenderResult
+from rich.segment import Segment
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
@@ -117,6 +118,37 @@ def _header(title: str, icon: str, mode: str) -> Text:
 
 def _segment(title: str, icon: str, mode: str, children: Sequence[object]) -> Group:
     return Group(_header(title, icon, mode), *children)
+
+
+
+class BoundedLiveFrame:
+    """Stable, inline PTY viewport for native Rich Live.
+
+    Render at most terminal height minus a safety margin, and always emit the
+    same number of rows on successive updates. A shorter/longer focused view
+    therefore cannot leave an earlier frame above the next one. Source data
+    and the native stdout/stderr remain unchanged.
+    """
+    def __init__(self, renderable: object, *, reserve_rows: int = 3):
+        self.renderable = renderable
+        self.reserve_rows = reserve_rows
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        limit = max(5, options.size.height - self.reserve_rows)
+        rendered = console.render_lines(self.renderable, options, pad=False)
+        if len(rendered) > limit:
+            # Focus pages expose the retained rows without a separate provider
+            # request. Do not claim that hidden lines are absent.
+            hint = Text('… view clipped · 1–5 inspect sections', style='yellow',
+                        no_wrap=True, overflow='ellipsis')
+            footer = console.render_lines(hint, options, pad=False)
+            rendered = rendered[:limit - 1] + footer[:1]
+        while len(rendered) < limit:
+            rendered.append([Segment(' ')])
+        for i, line in enumerate(rendered):
+            yield from line
+            if i + 1 < len(rendered):
+                yield Segment.line()
 
 
 def shared_panel(title: str, blocks: Sequence[object], *, color: str = 'cyan',
@@ -479,10 +511,10 @@ class OverlayLiveProjection:
         self._live: Live | None = None
         self._broken = False
 
-    def _render(self) -> Group:
+    def _render(self) -> BoundedLiveFrame:
         self.data['stages'] = list(self.stages)
         self.data['events'] = list(self.events)
-        return build_live_view('overlay',self.data,width=self.console.width)
+        return BoundedLiveFrame(build_live_view('overlay',self.data,width=self.console.width))
 
     def start(self) -> None:
         if not self.enabled or self._broken:return
@@ -527,6 +559,14 @@ class OverlayLiveProjection:
     def _refresh(self) -> None:
         if self._live is None or self._broken:return
         try:
+            # A native overlay may continue through a Termux zoom/resize.
+            # Read the PTY directly, not potentially stale COLUMNS/LINES.
+            try:
+                geometry=os.get_terminal_size(sys.stdout.fileno())
+                self.console.width=max(40,min(180,geometry.columns))
+                self.console.height=max(8,min(120,geometry.lines))
+            except (OSError,AttributeError,ValueError):
+                pass
             self._live.update(self._render(),refresh=True)
         except Exception as exc:
             self._warn(exc)
@@ -548,4 +588,4 @@ class OverlayLiveProjection:
                       '; native execution/result unaffected',file=sys.stderr,flush=True)
 
 
-__all__ = ['safe','icon_mode','log_page_size','shared_panel','build_live_view','OverlayLiveProjection']
+__all__ = ['safe','icon_mode','log_page_size','shared_panel','build_live_view','BoundedLiveFrame','OverlayLiveProjection']
