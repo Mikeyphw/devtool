@@ -36,10 +36,15 @@ def test_pres_g3_campaign_position_and_exec_prerequisite_are_current() -> None:
 
 
 def test_pres_g3_only_allows_explicit_inline_rich_live() -> None:
+    # PRES-G3 remains a closed allowlist. M6's explicitly enabled, read-only
+    # native receipt inspector was accepted on a real Termux/tmux PTY before
+    # adding it here. Never permit arbitrary Rich Live owners.
     allowed = {
         "devtool/delivery_rich.py",
         "devtool/operator_rich.py",
         "devtool/operator_workspace.py",
+        "devtool/m6_live.py",
+        "devtool/m6_operation_view.py",
     }
     found = set()
     for path in (ROOT / "devtool").rglob("*.py"):
@@ -55,6 +60,30 @@ def test_pres_g3_only_allows_explicit_inline_rich_live() -> None:
     hud = (ROOT / "devtool" / "hud.py").read_text(encoding="utf-8")
     assert "build_textual_terminal_hud_app" in hud
     assert "Static rendering is deliberately non-live" in hud
+
+
+def test_m6_saved_inspector_keeps_explicit_inline_terminal_boundary() -> None:
+    # Adding one owner is not a global exemption from the PRES-G3 seal.
+    source = (ROOT / "devtool" / "m6_operation_view.py").read_text(encoding="utf-8")
+    assert "def browse_inspection(" in source
+    assert "if not inspect_enabled(args) or os.name != 'posix':" in source
+    assert "with Live(frame," in source
+    for requirement in (
+        "screen=False", "transient=False", "auto_refresh=False",
+        "redirect_stdout=False", "redirect_stderr=False",
+    ):
+        assert requirement in source, f"M6 inline terminal contract lost: {requirement}"
+
+
+def test_m6_overlay_progress_owns_only_bounded_inline_live() -> None:
+    source = (ROOT / "devtool" / "m6_live.py").read_text(encoding="utf-8")
+    assert "class OverlayLiveProjection:" in source
+    assert "if not self.enabled or self._broken:return" in source
+    for invariant in (
+        "screen=False", "transient=False", "auto_refresh=False",
+        "redirect_stdout=False,redirect_stderr=False",
+    ):
+        assert invariant in source, f"M6 overlay terminal contract lost: {invariant}"
 
 
 def test_pres_g3_terminal_and_studio_aliases_remain_compatible() -> None:
