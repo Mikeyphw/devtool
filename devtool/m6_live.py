@@ -321,7 +321,7 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
         else:
             output.append(_row('Logs not fetched; press l on a selected verified run'))
     else:
-        output.append(_row('l logs (explicit GET only) · [ / ] pages' if kind!='overlay' else
+        output.append(_row('l logs (explicit GET only) · [ prev  ] next' if kind!='overlay' else
                            'Native output is not buffered or replaced by M6'))
 
     proof: list[Text] = []
@@ -347,11 +347,17 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
                     'remote_verified','required_ci_qualified'):
             if credential.get(key) is not None:
                 proof.append(_row('M4 '+key,credential[key],key=key))
+    if not credential:
+        proof.append(_row('Credential health', 'UNVERIFIED; no M4 provider diagnostic supplied'))
+    else:
+        for name in ('authenticated', 'authorized_for_operation', 'remote_verified', 'required_ci_qualified'):
+            if name not in credential:
+                proof.append(_row('M4 ' + name, 'UNVERIFIED; no evidence'))
     if kind == 'ci' and state == 'REQUIRED_CHECKS_PASSED':
         proof.extend((_row('Native required checks passed'),_row('release NOT qualified')))
     else:
         proof.append(_row(status_msg))
-    hints = ('j/k navigate · Enter detail · v verbose · l logs · [/] pages · r refresh · q detach'
+    hints = ('j/k navigate · Enter detail · v verbose · l logs · [ prev  ] next · r refresh · q detach'
              if kind!='overlay' else 'Native lifecycle events only · original logs preserved')
 
     output_block = _segment('OUTPUT','logs',mode,output)
@@ -476,7 +482,7 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
         if verbose and kind in ('ci','run') and focus in ('stages','evidence'):
             content.append(_segment('VERBOSE DETAILS · VERBOSE ON','evidence',mode,extra))
         navigation=('0 overview · 1 identity · 2 stages · 3 events · 4 output · 5 evidence')
-        shortcuts=('j/k select · Enter details · [/] page · l verified logs · r refresh · q detach'
+        shortcuts=('j/k select · Enter details · [ prev  ] next · l verified logs · r refresh · q detach'
                    if kind!='overlay' else 'Native apply runs unmodified · prompts remain native')
         blocks=[title,_row('PAGE',page_labels[focus],style='bold cyan'),page_info,
                 _segment(page_labels[focus],

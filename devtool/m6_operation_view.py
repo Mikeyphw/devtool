@@ -272,6 +272,13 @@ def session_pages(payload: Mapping[str, Any], *, tx_state: str = 'not inspected'
         pages[5] += credential_rows(credential)
     else:
         pages[5].append(('Credential health', 'Not recorded in this session; no provider probe performed'))
+    current = payload.get('credential_health')
+    if not isinstance(current, Mapping):
+        current = op.get('credential_health')
+    if isinstance(current, Mapping):
+        pages[5].extend(credential_health_rows(current))
+    else:
+        pages[5].append(('Current credential authorization', 'UNVERIFIED; no live M4 diagnostic supplied'))
     if tx:
         for page, rows in transaction_pages(tx).items():
             pages[page].extend(rows)
@@ -286,6 +293,21 @@ def credential_rows(receipt: Mapping[str, Any]) -> list[tuple[str, str]]:
         if permissions.get(key) in ('read','write','none'):
             rows.append(('Recorded permission · '+key, permissions[key]))
     rows.append(('Credential authority', 'Historical receipt only; current expiry, permission drift and authorization unverified'))
+    return rows
+
+
+
+def credential_health_rows(health: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """Project native M4 diagnostics only, never infer approval from token presence."""
+    fields = ('auth_mode', 'app_name', 'installation_id', 'repository_coverage',
+              'required_capability', 'granted_capability', 'expiry_state',
+              'permission_drift', 'fork_access', 'base_access', 'authenticated',
+              'authorized_for_operation', 'remote_verified', 'required_ci_qualified')
+    rows = _fields(health, fields, 'M4 observed · ')
+    for key in ('authenticated', 'authorized_for_operation', 'remote_verified', 'required_ci_qualified'):
+        if key not in health:
+            rows.append(('M4 ' + key, 'UNVERIFIED; no evidence'))
+    rows.append(('Credential authority', 'Display only; use native provider for current approval and access'))
     return rows
 
 
@@ -312,7 +334,7 @@ def inspect_enabled(args: Any = None) -> bool:
     return os.environ.get('DEVTOOL_UI_INSPECT') == '1' and boundary_enabled(args=args)
 
 
-def render_inspection(pages: Mapping[int, list[tuple[str, str]]], section: int, page: int, *, width: int, height: int) -> tuple[BoundedLiveFrame, int]:
+def render_inspection(pages: Mapping[int, list[tuple[str, str]]], section: int, page: int, *, width: int, height: int, title: str = 'M6 · SAVED NATIVE EVIDENCE') -> tuple[BoundedLiveFrame, int]:
     rows = pages.get(section) or [('Native evidence', 'not recorded in this snapshot')]
     # Fold using Rich cell widths: hashes, long paths and combining glyphs
     # remain reachable in a narrow portrait viewport, not silently truncated.
@@ -322,16 +344,18 @@ def render_inspection(pages: Mapping[int, list[tuple[str, str]]], section: int, 
         text = Text(_public(key) + ': ', style='dim')
         text.append(_public(value), style='default')
         lines.extend(text.wrap(console, max(12, width-4), overflow='fold'))
-    count = max(1, height - 9)
+    count = max(1, height - 10)
     total = max(1, (len(lines) + count - 1) // count)
     index = min(max(0, page), total - 1)
     blocks = [Text(f'{_PAGE_NAMES[section]} · {index + 1}/{total}', style='bold cyan', no_wrap=True, overflow='ellipsis')]
     blocks.extend(lines[index*count:(index+1)*count])
-    blocks += [Text('0 overview 1 identity 2 stages 3 events', style='dim', no_wrap=True, overflow='crop'), Text('4 output 5 evidence [/] page q exit', style='dim', no_wrap=True, overflow='crop')]
-    return BoundedLiveFrame(shared_panel('M6 · SAVED NATIVE EVIDENCE', blocks, width=width)), index
+    blocks += [Text('0 overview 1 identity 2 stages 3 events', style='dim', no_wrap=True, overflow='crop'),
+               Text('4 output · 5 evidence · q exit', style='dim', no_wrap=True, overflow='crop'),
+               Text('[ previous · ] next · l bound logs', style='dim', no_wrap=True, overflow='crop')]
+    return BoundedLiveFrame(shared_panel(title, blocks, width=width)), index
 
 
-def browse_inspection(pages: Mapping[int, list[tuple[str, str]]], *, args: Any = None) -> bool:
+def browse_inspection(pages: Mapping[int, list[tuple[str, str]]], *, args: Any = None, title: str = 'M6 · SAVED NATIVE EVIDENCE', repo: Path | None = None, log_refs: Sequence[str] = ()) -> bool:
     """Single-thread PTY input/render loop, no child, remote call or mutation.
 
     This operates only after a native read-only command completes. The static
@@ -350,12 +374,15 @@ def browse_inspection(pages: Mapping[int, list[tuple[str, str]]], *, args: Any =
         saved = termios.tcgetattr(fd)
         out = Console()
         section = page = 0
+        log_index = 0
+        log_page = 0
+        log_open = False
         def geometry():
             size = os.get_terminal_size(fd)
             return max(20, size.columns), max(8, size.lines)
         width, height = geometry()
         out.width, out.height = width, height
-        frame, page = render_inspection(pages, section, page, width=width, height=height)
+        frame, page = render_inspection(pages, section, page, width=width, height=height, title=title)
         if threading.current_thread() is threading.main_thread():
             def terminate(signum, frame):
                 raise SystemExit(128 + signum)
@@ -373,17 +400,46 @@ def browse_inspection(pages: Mapping[int, list[tuple[str, str]]], *, args: Any =
                         break
                     if key in tuple(str(i).encode() for i in range(6)):
                         section, page = int(key), 0
+                        log_open = False
+                        changed = True
+                    elif key == b'l' and log_refs and repo is not None:
+                        log_open = not log_open
+                        log_page = 0
+                        changed = True
+                    elif key == b'n' and log_open and log_refs:
+                        log_index = (log_index + 1) % len(log_refs)
+                        log_page = 0
                         changed = True
                     elif key in (b']', b'j', b'\r', b'\n'):
-                        page += 1
+                        if log_open:
+                            log_page += 1
+                        else:
+                            page += 1
                         changed = True
                     elif key in (b'[', b'k'):
-                        page -= 1
+                        if log_open:
+                            log_page = max(0, log_page-1)
+                        else:
+                            page -= 1
                         changed = True
                 if changed:
                     width, height = size
                     out.width, out.height = width, height
-                    frame, page = render_inspection(pages, section, page, width=width, height=height)
+                    if log_open and log_refs and repo is not None:
+                        try:
+                            from .m6_receipt_logs import read_native_log_page
+                            preview = read_native_log_page(repo, log_refs[log_index], log_page)
+                            log_page = preview['page']
+                            rows = [Text('Archived log ' + str(log_index+1) + '/' + str(len(log_refs)) + ' · ' + preview['name'], style='bold cyan'),
+                                    Text('Read-only · redacted · ' + str(preview['page']+1) + '/' + str(preview['pages']) + ' pages')]
+                            rows.extend(Text(line, overflow='fold') for line in preview['lines'][:max(1,height-8)])
+                        except (OSError, ValueError, ImportError) as exc:
+                            rows = [Text('Native log unavailable · ' + type(exc).__name__, style='yellow'),
+                                    Text('No raw contents exposed; use canonical Devtool log commands.')]
+                        rows.append(Text('[ prev  ] next · n next log · l return · q exit', style='dim'))
+                        frame = BoundedLiveFrame(shared_panel('M6 · ARCHIVED NATIVE LOG', rows, width=width))
+                    else:
+                        frame, page = render_inspection(pages, section, page, width=width, height=height, title=title)
                     live.update(frame, refresh=True)
         return True
     except KeyboardInterrupt:
@@ -412,7 +468,10 @@ def _browse_session(payload: Mapping[str, Any], repo: Path, *, args: Any = None)
     pages[5].append(('Runtime history', history_state))
     for section, rows in history_pages(history).items():
         pages[section].extend(rows)
-    return browse_inspection(pages, args=args)
+    from .m6_receipt_logs import receipt_log_refs
+    log_refs = receipt_log_refs(_mapping(payload.get('native_apply')), record, history)
+    pages[4].append(('Archived log references', str(len(log_refs)) + (' · press l to inspect' if log_refs else ' · no bound raw logs; nothing fetched')))
+    return browse_inspection(pages, args=args, title='M6 · SAVED SESSION', repo=repo, log_refs=log_refs)
 
 
 def _browse_overlay(payload: Mapping[str, Any], repo: Path, *, args: Any = None) -> bool:
@@ -420,12 +479,16 @@ def _browse_overlay(payload: Mapping[str, Any], repo: Path, *, args: Any = None)
         return False
     pages = overlay_pages(payload)
     identity = getattr(args, 'transaction', None)
+    record: Mapping[str, Any] = {}
     if identity and isinstance(identity, str):
         state, record = read_bound_transaction(repo, identity)
         pages[5].append(('Transaction record', state))
         for section, rows in transaction_pages(record).items():
             pages[section].extend(rows)
-    return browse_inspection(pages, args=args)
+    from .m6_receipt_logs import receipt_log_refs
+    log_refs = receipt_log_refs(_mapping(payload), record)
+    pages[4].append(('Archived log references', str(len(log_refs)) + (' · press l to inspect' if log_refs else ' · no bound raw logs; nothing fetched')))
+    return browse_inspection(pages, args=args, title='M6 · OVERLAY INSPECTION', repo=repo, log_refs=log_refs)
 
 
 def _browse_transaction(payload: Mapping[str, Any], repo: Path, identity: str, *, args: Any = None) -> bool:
@@ -435,7 +498,10 @@ def _browse_transaction(payload: Mapping[str, Any], repo: Path, identity: str, *
     pages = transaction_pages(record)
     pages[0] = [('Saved record', state)] + _fields(payload, ('classification','eligible','retired','reason','read_only'))
     pages[5].extend(('Native blocker', _public(x)) for x in (payload.get('blockers') or []) if isinstance(x, str))
-    return browse_inspection(pages, args=args)
+    from .m6_receipt_logs import receipt_log_refs
+    log_refs = receipt_log_refs(record)
+    pages[4].append(('Archived log references', str(len(log_refs)) + (' · press l to inspect' if log_refs else ' · no bound raw logs; nothing fetched')))
+    return browse_inspection(pages, args=args, title='M6 · NATIVE TRANSACTION', repo=repo, log_refs=log_refs)
 
 
 def _safe_browse(invoke: Callable[[], bool]) -> bool:

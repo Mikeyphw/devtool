@@ -672,3 +672,21 @@ def test_m6_native_history_real_identity_read_only(tmp_path,monkeypatch):
     assert path.read_text()==raw
     assert read_bound_history(tmp_path,{**native,'commit':'d'*40})[0]=='runtime history identity mismatch'
     assert read_bound_history(tmp_path,{**native,'history_id':'../foreign'})[0]=='history identity not recorded'
+
+
+def test_m6_closure_saved_ui_fallback_40_columns_keeps_quit_visible():
+    from devtool.m6_operation_view import render_inspection
+    frame, _ = render_inspection({0: [('state','NO_PROVIDER_PROBE')]}, 0, 0,
+                                  width=40, height=16, title='M6 · SAVED SESSION')
+    output=io.StringIO()
+    Console(file=output,force_terminal=False,color_system=None,width=40).print(frame)
+    assert 'q exit' in output.getvalue()
+    assert '[/]' not in output.getvalue()
+
+
+def test_m6_closure_missing_credential_proof_stays_explicitly_unverified():
+    snapshot={'state':'CHECKS_RUNNING', 'runs':[], 'head_sha':'b'*40}
+    output=render('ci',snapshot,100,focus='evidence')
+    assert 'UNVERIFIED' in output
+    assert 'Credential health' in output
+    assert 'REQUIRED_CHECKS_PASSED' not in output
