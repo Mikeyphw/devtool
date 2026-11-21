@@ -9,7 +9,7 @@ from unittest import mock
 import pytest
 from devtool.native_delivery_m5 import (
     NativeM5Refused, _artifact, _inspection, _preverify, _session_id,
-    _summary, _child_env, _require_zip_v3_commit_session, main,
+    _summary, _child_env, _require_zip_v3_commit_session, _committed_zip_session, main,
 )
 from devtool.cli import build_parser
 from devtool.core_parser import parser_identity_projection
@@ -191,4 +191,98 @@ def test_zip_missing_and_duplicate_manifest_both_refused(tmp_path):
             z.writestr('.devtool-artifact.json', '{}')
     with pytest.raises(NativeM5Refused, match='M5_ZIP_UNIQUE_MANIFEST_REQUIRED'):
         _require_zip_v3_commit_session(b)
+
+
+def _durable_fixture(tmp_path, monkeypatch):
+    import hashlib
+    import subprocess
+    from devtool import artifacts, delivery_session
+
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    def git(*args):
+        return subprocess.run(['git', '-C', str(repo), *args],
+                              capture_output=True, text=True, check=True).stdout.strip()
+    git('init', '-q')
+    git('config', 'user.email', 'test@example.invalid')
+    git('config', 'user.name', 'M5 test')
+    git('checkout', '-qb', 'feature/test-durable')
+    (repo/'file.txt').write_text('before\n')
+    git('add','file.txt')
+    git('commit','-qm','base')
+    before = git('rev-parse','HEAD')
+    (repo/'file.txt').write_text('after\n')
+    git('add','file.txt')
+    git('commit','-qm','native committed')
+    after = git('rev-parse','HEAD')
+
+    artifact = tmp_path/'payload.zip'
+    artifact.write_bytes(b'fictional fixture; actual native archive already verified')
+    fingerprint = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    history = [{
+        'commit_hash': after, 'artifact': str(artifact),
+        'sha256': fingerprint, 'status':'ok','validation_status':'ok',
+        'transaction': {'status':'completed', 'id':'txn-1'},
+        'history_id':'history-1','manifest': {'schema_version': 3},
+    }]
+    monkeypatch.setattr(artifacts,'load_history',lambda root:history)
+
+    state=tmp_path/'state'
+    folder=state/'devtool/delivery/sessions'
+    folder.mkdir(parents=True,mode=0o700)
+    monkeypatch.setenv('XDG_STATE_HOME',str(state))
+    sid='a'*32
+    envelope={'id':sid,'repo_root':str(repo),'head_sha':after}
+    (folder/(sid+'.json')).write_text(json.dumps(envelope))
+    overlay={'path':str(artifact),'sha256':fingerprint}
+    native={'state':'COMMITTED','commit':after,'transaction_status':'completed',
+            'transaction_id':'txn-1','history_id':'history-1','artifact_sha256':fingerprint}
+    bound={'id':sid,'repo_root':str(repo),'head_sha':after,
+           'source_binding':'matching','resumable':True,'stage':'PLANNED',
+           'native_apply':native,'overlay':overlay,'intents':[]}
+    monkeypatch.setattr(delivery_session,'status',lambda identity:bound)
+    return repo,artifact,before,after,history,bound,folder,sid
+
+
+def test_durable_zip_session_found_without_terminal_marker(tmp_path,monkeypatch):
+    repo,artifact,before,after,history,bound,folder,sid = _durable_fixture(tmp_path,monkeypatch)
+    assert _committed_zip_session(repo,artifact,before) == sid
+
+
+def test_durable_zip_session_refuses_ambiguous_journals(tmp_path,monkeypatch):
+    repo,artifact,before,after,history,bound,folder,sid = _durable_fixture(tmp_path,monkeypatch)
+    from devtool import delivery_session
+    other='b'*32
+    (folder/(other+'.json')).write_text(json.dumps({'id':other,'repo_root':str(repo),'head_sha':after}))
+    monkeypatch.setattr(delivery_session,'status',lambda identity:{**bound,'id':identity})
+    with pytest.raises(NativeM5Refused,match='SESSION_NOT_UNIQUE'):
+        _committed_zip_session(repo,artifact,before)
+
+
+def test_durable_zip_session_refuses_native_history_drift(tmp_path,monkeypatch):
+    repo,artifact,before,after,history,bound,folder,sid = _durable_fixture(tmp_path,monkeypatch)
+    history[0]['transaction']['status']='incomplete'
+    with pytest.raises(NativeM5Refused,match='HISTORY_NOT_QUALIFIED'):
+        _committed_zip_session(repo,artifact,before)
+
+
+def test_durable_zip_session_refuses_binding_drift(tmp_path,monkeypatch):
+    repo,artifact,before,after,history,bound,folder,sid = _durable_fixture(tmp_path,monkeypatch)
+    bound['native_apply']['history_id']='unexpected-history'
+    with pytest.raises(NativeM5Refused,match='EVIDENCE_DRIFT'):
+        _committed_zip_session(repo,artifact,before)
+
+
+def test_durable_zip_session_refuses_replay_without_new_commit(tmp_path,monkeypatch):
+    repo,artifact,before,after,history,bound,folder,sid = _durable_fixture(tmp_path,monkeypatch)
+    with pytest.raises(NativeM5Refused,match='SOURCE_UNVERIFIED'):
+        _committed_zip_session(repo,artifact,after)
+
+
+def test_durable_zip_session_refuses_symlink_entry(tmp_path,monkeypatch):
+    repo,artifact,before,after,history,bound,folder,sid = _durable_fixture(tmp_path,monkeypatch)
+    other=folder/('b'*32+'.json')
+    other.symlink_to(folder/(sid+'.json'))
+    with pytest.raises(NativeM5Refused,match='ENTRY_UNSAFE'):
+        _committed_zip_session(repo,artifact,before)
 
