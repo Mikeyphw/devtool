@@ -13466,6 +13466,12 @@ def _main_impl(argv: list[str] | None = None) -> int:
         from .native_delivery_m5 import main as native_delivery_m5
         args._devtool_json = bool(universal_json)
         return native_delivery_m5(args)
+    # Native repository recovery owns its own remote lifecycle journal.
+    # The canonical schema already parsed and checked all command options.
+    if args.command == "recovery":
+        from .recovery.native_cli import run_native
+        return run_native(args)
+
     # S7 P02 adoption is intentionally read-only with respect to the consumer.
     # Dispatch before normal CLI workspace initialization: that initializer can
     # create .devtool state even for otherwise observational operations.
