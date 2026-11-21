@@ -40503,9 +40503,489 @@
       ],
       "stability": "experimental",
       "summary": "Registration-aware, source-bound GitHub CI observation"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "native",
+      "id": "cli.command.native",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.native.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "native"
+      ],
+      "stability": "experimental",
+      "summary": "Native overlay delivery"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "native",
+      "id": "cli.command.native.inspect",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.native.inspect.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "repo",
+          "help": "Source-bound Git worktree",
+          "hidden": false,
+          "id": "cli.option.native.inspect.repo",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--repo"
+          ]
+        }
+      ],
+      "path": [
+        "native",
+        "inspect"
+      ],
+      "stability": "experimental",
+      "summary": "Native inspect operator"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "native",
+      "id": "cli.command.native.check",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.native.check.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "repo",
+          "help": "Source-bound Git worktree",
+          "hidden": false,
+          "id": "cli.option.native.check.repo",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "devtool_repo",
+          "help": "Verified v3 PYZ Devtool runtime",
+          "hidden": false,
+          "id": "cli.option.native.check.devtool_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--devtool-repo"
+          ]
+        }
+      ],
+      "path": [
+        "native",
+        "check"
+      ],
+      "stability": "experimental",
+      "summary": "Native check operator"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "native",
+      "id": "cli.command.native.apply",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.native.apply.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "repo",
+          "help": "Source-bound Git worktree",
+          "hidden": false,
+          "id": "cli.option.native.apply.repo",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--repo"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "devtool_repo",
+          "help": "Verified v3 PYZ Devtool runtime",
+          "hidden": false,
+          "id": "cli.option.native.apply.devtool_repo",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--devtool-repo"
+          ]
+        }
+      ],
+      "path": [
+        "native",
+        "apply"
+      ],
+      "stability": "experimental",
+      "summary": "Native apply operator"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "native",
+      "id": "cli.command.native.status",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.native.status.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "native_session_id",
+          "help": "Previously adopted native delivery session",
+          "hidden": false,
+          "id": "cli.option.native.status.native_session_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "repo",
+          "help": "Source-bound Git worktree",
+          "hidden": false,
+          "id": "cli.option.native.status.repo",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--repo"
+          ]
+        }
+      ],
+      "path": [
+        "native",
+        "status"
+      ],
+      "stability": "experimental",
+      "summary": "Native status operator"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "native",
+      "id": "cli.command.native.resume",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.native.resume.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "native_session_id",
+          "help": "Previously adopted native delivery session",
+          "hidden": false,
+          "id": "cli.option.native.resume.native_session_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "repo",
+          "help": "Source-bound Git worktree",
+          "hidden": false,
+          "id": "cli.option.native.resume.repo",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--repo"
+          ]
+        }
+      ],
+      "path": [
+        "native",
+        "resume"
+      ],
+      "stability": "experimental",
+      "summary": "Native resume operator"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "native",
+      "id": "cli.command.native.deliver",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.native.deliver.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "native_session_id",
+          "help": "Previously adopted native delivery session",
+          "hidden": false,
+          "id": "cli.option.native.deliver.native_session_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "repo",
+          "help": "Source-bound Git worktree",
+          "hidden": false,
+          "id": "cli.option.native.deliver.repo",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--repo"
+          ]
+        },
+        {
+          "choices": [
+            "auto",
+            "app",
+            "env",
+            "gh"
+          ],
+          "dest": "auth",
+          "help": "Existing native delivery credential selector",
+          "hidden": false,
+          "id": "cli.option.native.deliver.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        }
+      ],
+      "path": [
+        "native",
+        "deliver"
+      ],
+      "stability": "experimental",
+      "summary": "Native deliver operator"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "native",
+      "id": "cli.command.native.ci",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.native.ci.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "native_session_id",
+          "help": "Previously adopted native delivery session",
+          "hidden": false,
+          "id": "cli.option.native.ci.native_session_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "repo",
+          "help": "Source-bound Git worktree",
+          "hidden": false,
+          "id": "cli.option.native.ci.repo",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--repo"
+          ]
+        },
+        {
+          "choices": [
+            "auto",
+            "app",
+            "env",
+            "gh"
+          ],
+          "dest": "auth",
+          "help": "Existing native delivery credential selector",
+          "hidden": false,
+          "id": "cli.option.native.ci.auth",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--auth"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "checks",
+          "help": "Bounded required CI observations",
+          "hidden": false,
+          "id": "cli.option.native.ci.checks",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--checks"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "interval",
+          "help": "Seconds between CI observations",
+          "hidden": false,
+          "id": "cli.option.native.ci.interval",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--interval"
+          ]
+        }
+      ],
+      "path": [
+        "native",
+        "ci"
+      ],
+      "stability": "experimental",
+      "summary": "Native ci operator"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "native",
+      "id": "cli.command.native.report",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.native.report.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "native_session_id",
+          "help": "Previously adopted native delivery session",
+          "hidden": false,
+          "id": "cli.option.native.report.native_session_id",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "repo",
+          "help": "Source-bound Git worktree",
+          "hidden": false,
+          "id": "cli.option.native.report.repo",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--repo"
+          ]
+        }
+      ],
+      "path": [
+        "native",
+        "report"
+      ],
+      "stability": "experimental",
+      "summary": "Native report operator"
     }
   ],
-  "digest": "20a7ef0d04acacf8e24c11057492907bd00570526952ffc886c60f7cccfcd6a2",
+  "digest": "cb9e593f2adac30b0f6116626f46215bf4b671aec947c4210626f9f6afec145c",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -40864,6 +41344,15 @@
       "menu validate",
       "menu validation",
       "migration",
+      "native",
+      "native apply",
+      "native check",
+      "native ci",
+      "native deliver",
+      "native inspect",
+      "native report",
+      "native resume",
+      "native status",
       "oci",
       "oci bootstrap",
       "oci build",
@@ -41048,11 +41537,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 530,
-    "registry_command_count": 404
+    "parser_command_count": 539,
+    "registry_command_count": 413
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "43801d35dee76abaff3c71d13571654c6e680703fcd8e06a50f3df15e5094692",
+  "registry_digest": "83fb588d9fe0ecfafa9dcb772b1ef554404e7738de202dd34e8f9ec0162952dd",
   "registry_schema_version": 1,
   "schema_version": 1
 }

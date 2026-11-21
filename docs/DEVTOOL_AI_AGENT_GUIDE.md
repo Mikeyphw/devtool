@@ -6477,3 +6477,87 @@ RM20 review-first whole-repository in-place onboarding and ownership inventory
 
 Agent note: machine-friendly controls on this command include `--json`.
 
+### `devtool native`
+
+M5 native ZIP/PYZ check, apply and durable delivery lifecycle
+
+**Subcommands:** `inspect`, `check`, `apply`, `status`, `resume`, `deliver`, `ci`, `report`
+
+### `devtool native inspect`
+
+Native source-bound inspect without duplicating delivery engines
+
+| Argument / option | Meaning |
+| --- | --- |
+| `ARTIFACT` | Ordinary ZIP or verified v3 PYZ |
+| `--repo REPO` | Source-bound Git worktree Required. |
+
+### `devtool native check`
+
+Native source-bound check without duplicating delivery engines
+
+| Argument / option | Meaning |
+| --- | --- |
+| `ARTIFACT` | Ordinary ZIP or verified v3 PYZ |
+| `--repo REPO` | Source-bound Git worktree Required. |
+| `--devtool-repo DEVTOOL_REPO` | Verified v3 PYZ Devtool runtime |
+
+### `devtool native apply`
+
+Native source-bound apply without duplicating delivery engines
+
+| Argument / option | Meaning |
+| --- | --- |
+| `ARTIFACT` | Ordinary ZIP or verified v3 PYZ |
+| `--repo REPO` | Source-bound Git worktree Required. |
+| `--devtool-repo DEVTOOL_REPO` | Verified v3 PYZ Devtool runtime |
+
+### `devtool native status`
+
+Native source-bound status without duplicating delivery engines
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session-id NATIVE_SESSION_ID` | Previously adopted native delivery session Required. |
+| `--repo REPO` | Source-bound Git worktree Required. |
+
+### `devtool native resume`
+
+Native source-bound resume without duplicating delivery engines
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session-id NATIVE_SESSION_ID` | Previously adopted native delivery session Required. |
+| `--repo REPO` | Source-bound Git worktree Required. |
+
+### `devtool native deliver`
+
+Native source-bound deliver without duplicating delivery engines
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session-id NATIVE_SESSION_ID` | Previously adopted native delivery session Required. |
+| `--repo REPO` | Source-bound Git worktree Required. |
+| `--auth AUTH` | Existing native delivery credential selector Choices: auto, app, env, gh |
+
+### `devtool native ci`
+
+Native source-bound ci without duplicating delivery engines
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session-id NATIVE_SESSION_ID` | Previously adopted native delivery session Required. |
+| `--repo REPO` | Source-bound Git worktree Required. |
+| `--auth AUTH` | Existing native delivery credential selector Choices: auto, app, env, gh |
+| `--checks CHECKS` | Bounded required CI observations |
+| `--interval INTERVAL` | Seconds between CI observations |
+
+### `devtool native report`
+
+Native source-bound report without duplicating delivery engines
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session-id NATIVE_SESSION_ID` | Previously adopted native delivery session Required. |
+| `--repo REPO` | Source-bound Git worktree Required. |
+

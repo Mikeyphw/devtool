@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `43801d35dee76abaff3c71d13571654c6e680703fcd8e06a50f3df15e5094692`
+Registry digest: `83fb588d9fe0ecfafa9dcb772b1ef554404e7738de202dd34e8f9ec0162952dd`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -410,6 +410,15 @@ This file is generated from the CORE command/config registry and the canonical C
 - `delivery session push` — Source-bound, journaled, non-force Git push
 - `delivery session pr` — Find or explicitly create one source-bound draft PR
 - `delivery session ci` — Registration-aware, source-bound GitHub CI observation
+- `native` — Native overlay delivery
+- `native inspect` — Native inspect operator
+- `native check` — Native check operator
+- `native apply` — Native apply operator
+- `native status` — Native status operator
+- `native resume` — Native resume operator
+- `native deliver` — Native deliver operator
+- `native ci` — Native ci operator
+- `native report` — Native report operator
 
 ## Configuration documents
 
