@@ -136,6 +136,11 @@ def _as_rows(value: Any) -> list[Mapping[str, Any]]:
     return [v for v in value if isinstance(v, Mapping)]
 
 
+def log_page_size(width: int) -> int:
+    """Keep each paged log line reachable on portrait terminals."""
+    return 4 if width < 60 else 8
+
+
 def _progress_evidence(item: Mapping[str,Any], width: int) -> Text | None:
     """Render *only* measured native counters. Never infer a percent."""
     done = item.get('completed')
@@ -184,6 +189,8 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
     status_label,status_color = _status(state)
     title = Text(f'DEVTOOL · {name}', style='bold')
     title.append('  ' + status_label, style=status_color)
+    if verbose and kind in ('run', 'ci'):
+        title.append('  [VERBOSE ON]', style='bold magenta')
 
     identity = [
         _row('Repository', _facts(source,'repository','repo_root') or _facts(remote,'repository') or 'not recorded'),
@@ -267,9 +274,14 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
         if log_error:
             output.append(_row('Log GET refused',log_error,style='yellow'))
         elif log_lines:
-            offset=min(max(0,log_page)*18,max(0,len(log_lines)-1))
-            output.append(_row(f'Lines {offset+1}–{min(len(log_lines),offset+18)} / {len(log_lines)}'))
-            for line in log_lines[offset:offset+(3 if width<60 else 8)]:
+            size = log_page_size(width)
+            page_count = (len(log_lines) + size - 1) // size
+            current = min(max(0, log_page), page_count - 1)
+            offset = current * size
+            end = min(len(log_lines), offset + size)
+            output.append(_row(f'Log page {current+1}/{page_count}',
+                               f'Lines {offset+1}-{end}/{len(log_lines)}'))
+            for line in log_lines[offset:end]:
                 output.append(_row('│',line))
         else:
             output.append(_row('Logs not fetched; press l on a selected verified run'))
@@ -307,15 +319,55 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
     hints = ('j/k navigate · Enter detail · v verbose · l logs · [/] pages · r refresh · q detach'
              if kind!='overlay' else 'Native lifecycle events only · original logs preserved')
 
+    output_block = _segment('OUTPUT','logs',mode,output)
     blocks = [title,
               _segment('IDENTITY','repo',mode,
                        identity[:(5 if kind=='run' else 4 if kind=='overlay' else 3)]
                        if width<60 else identity),
               _segment('STAGES','stage',mode,stages),
               _segment('EVENTS','events',mode,events),
-              _segment('OUTPUT','logs',mode,output),
+              output_block,
               _segment('EVIDENCE','evidence',mode,proof[:5 if width<60 else len(proof)]),
               _segment(hints,'keys',mode,[]) if verbose or width>=60 else _row('j/k · Enter · l · v · r · q')]
+    feedback_messages = {
+        'REFRESH_REQUESTED': 'Refresh requested · native bounded interval only',
+        'REFRESH_CONSUMED': 'Refresh shortcut consumed · awaiting native observation',
+        'NATIVE_OBSERVATION_RENDERED': 'Native observation rendered · provider verdict unchanged',
+    }
+    feedback_code = source.get('m6_ui_feedback')
+    feedback = feedback_messages.get(feedback_code) if isinstance(feedback_code, str) else None
+    if feedback:
+        blocks.insert(1, _row('UI', feedback, style='cyan'))
+    if verbose and kind in ('run', 'ci'):
+        blocks.insert(1, _row('VIEW', 'VERBOSE ON', style='magenta'))
+
+    if verbose and kind in ('run', 'ci'):
+        extra = []
+        if kind == 'run':
+            extra.append(_row('Run status', _facts(remote, 'status')))
+        else:
+            extra.append(_row('CI state', _facts(source, 'state')))
+        if rows:
+            current = rows[min(max(0, selected), len(rows)-1)]
+            extra.extend([
+                _row('Selected', f'{min(max(0, selected),len(rows)-1)+1}/{len(rows)}'),
+                _row('Item status', _facts(current, 'status')),
+                _row('Item conclusion', _facts(current, 'conclusion')),
+            ])
+            if kind == 'run':
+                extra.append(_row('Recorded steps',len(_as_rows(current.get('steps')))))
+        blocks.insert(2 if feedback else 1,
+                      _segment('VERBOSE DETAILS','evidence',mode,extra))
+
+    if logs and kind in ('run', 'ci'):
+        # A requested log inspection must be visible on short portrait PTYs.
+        # Preserve every panel, but move OUTPUT directly after IDENTITY;
+        # otherwise Live(vertical_overflow='ellipsis') hides the log pages.
+        output_index = next(i for i, block in enumerate(blocks)
+                            if block is output_block)
+        blocks.insert(2 + bool(feedback) + 2 * bool(verbose),
+                      blocks.pop(output_index))
+
     color='red' if str(state or '').casefold() in _FAILURE else 'cyan'
     return Group(shared_panel('M6 · NATIVE LIVE',blocks,color=color,width=width))
 
@@ -407,4 +459,4 @@ class OverlayLiveProjection:
                       '; native execution/result unaffected',file=sys.stderr,flush=True)
 
 
-__all__ = ['safe','icon_mode','shared_panel','build_live_view','OverlayLiveProjection']
+__all__ = ['safe','icon_mode','log_page_size','shared_panel','build_live_view','OverlayLiveProjection']

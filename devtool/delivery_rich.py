@@ -146,6 +146,7 @@ class NativeRichMonitor:
         self.detail=False
         self.detached=False
         self.refresh_requested=False
+        self.ui_feedback=''
         self.log_requested=False
         self._live: Live | None=None
         self._keyboard=None
@@ -161,7 +162,10 @@ class NativeRichMonitor:
                 'verbose':self.verbose,'detail':self.detail,'logs':self.log_requested,
                 'log_lines':self.log_lines,'log_page':self.log_page,
                 'log_error':self.log_error}
-        return actions_run_view(self.last,**kwargs) if self.kind=='run' else ci_snapshot_view(self.last,**kwargs)
+        presentation = dict(self.last) if self.ui_feedback else self.last
+        if self.ui_feedback:
+            presentation['m6_ui_feedback'] = self.ui_feedback
+        return actions_run_view(presentation,**kwargs) if self.kind=='run' else ci_snapshot_view(presentation,**kwargs)
 
     def __enter__(self):
         if self.enabled:
@@ -183,6 +187,10 @@ class NativeRichMonitor:
         return False
 
     def observe(self,source:Mapping[str,Any]) -> None:
+        if self.ui_feedback in ('REFRESH_REQUESTED','REFRESH_CONSUMED'):
+            self.ui_feedback='NATIVE_OBSERVATION_RENDERED'
+        elif self.ui_feedback == 'NATIVE_OBSERVATION_RENDERED':
+            self.ui_feedback=''
         self.last=dict(source)
         if self.detached:
             raise MonitorDetached('Foreground UI detached; native session retained; CI NOT qualified')
@@ -263,6 +271,8 @@ class NativeRichMonitor:
                 raise MonitorDetached('Foreground UI detached; native session retained; CI NOT qualified')
             if self.refresh_requested:
                 self.refresh_requested=False
+                self.ui_feedback='REFRESH_CONSUMED'
+                self.refresh()
                 return
             time.sleep(min(0.15,max(0.0,deadline-time.monotonic())))
         if self.detached:
@@ -279,8 +289,10 @@ class NativeRichMonitor:
             self.log_requested=not self.log_requested
             if self.log_requested:self._pending_log_fetch=True
         elif key=='[':self.log_page=max(0,self.log_page-1)
-        elif key==']':self.log_page=min(max(0,(len(self.log_lines)-1)//18),self.log_page+1)
-        elif key=='r':self.refresh_requested=True
+        elif key==']':
+            from .m6_live import log_page_size
+            self.log_page=min(max(0,(len(self.log_lines)-1)//log_page_size(_width(self.console))),self.log_page+1)
+        elif key=='r':self.refresh_requested=True;self.ui_feedback='REFRESH_REQUESTED'
         elif key=='q':self.detached=True
         if self.log_requested and key in ('j','k','up','down'):
             self._pending_log_fetch=True

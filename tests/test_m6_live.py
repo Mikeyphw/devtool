@@ -194,3 +194,98 @@ def test_m5_run_receipt_exact_text_compatibility(width):
     assert 'Gradle tests' in value
     assert 'FAILURE' in value
     assert all(len(line)<=width for line in value.splitlines())
+
+
+# M6.1 real interaction regression, appended to M6 exact source suite.
+@pytest.mark.parametrize('width',[40,52,60,80,120])
+def test_m6_ux_verbose_toggles_visible_details(width):
+    snap={'remote':{'id':23,'status':'completed','conclusion':'failure',
+                    'run_attempt':2,'head_sha':'abcd'},
+          'jobs':[{'name':'Android tests','status':'completed','conclusion':'failure',
+                   'steps':[{'name':'Gradle tests','status':'completed','conclusion':'failure'}]}]}
+    compact=render('run',snap,width,verbose=False)
+    detailed=render('run',snap,width,verbose=True)
+    assert 'VERBOSE ON' not in compact
+    assert 'VERBOSE ON' in detailed
+    assert 'VERBOSE DETAILS' in detailed
+    assert 'Recorded steps 1' in detailed
+    assert all(len(line)<=width for line in detailed.splitlines())
+
+
+@pytest.mark.parametrize('width,page_size',[ (40,4),(52,4),(60,8),(80,8),(120,8)])
+def test_m6_ux_every_log_line_reachable(width,page_size):
+    from devtool.m6_live import log_page_size
+    lines=tuple('DEMO_LOG_LINE_%02d'%n for n in range(1,26))
+    assert log_page_size(width)==page_size
+    all_seen=''
+    for page in range((len(lines)+page_size-1)//page_size):
+        output=render('run',{'remote':{'id':23,'status':'completed',
+                      'conclusion':'failure'}},width,logs=True,
+                      log_lines=lines,log_page=page)
+        all_seen+=output
+        assert 'Log page ' in output
+        assert 'Log GET refused' not in output
+    for line in lines:
+        assert line in all_seen, (width,line)
+
+
+def test_m6_ux_native_refresh_is_visible_and_source_immutable():
+    fixture={'state':'CHECKS_RUNNING','runs':[{'name':'A','status':'in_progress'}]}
+    snapshot=repr(fixture)
+    monitor=NativeRichMonitor(enabled=True,
+         console=Console(file=io.StringIO(),width=80,color_system=None))
+    monitor.observe(fixture)
+    monitor.key('r')
+    out=io.StringIO()
+    Console(file=out,width=80,color_system=None).print(monitor.render())
+    assert 'Refresh requested' in out.getvalue()
+    monitor.wait_interval(0.1)
+    assert not monitor.refresh_requested
+    out=io.StringIO()
+    Console(file=out,width=80,color_system=None).print(monitor.render())
+    assert 'Refresh shortcut consumed' in out.getvalue()
+    monitor.observe(fixture)
+    out=io.StringIO()
+    Console(file=out,width=80,color_system=None).print(monitor.render())
+    assert 'Native observation rendered' in out.getvalue()
+    assert repr(fixture)==snapshot
+    assert monitor.last==fixture
+
+
+def test_m6_ux_real_log_fetch_and_navigation_are_offline():
+    calls=[]
+    def local_logs(row):
+        calls.append(row['id'])
+        return tuple(f'DEMO_LOG_LINE_{n:02d}' for n in range(25))
+    monitor=NativeRichMonitor(kind='run',enabled=True,
+         console=Console(file=io.StringIO(),width=80,color_system=None),
+         log_fetcher=local_logs)
+    fixture={'remote':{'id':23,'run_attempt':2,'status':'completed',
+                       'conclusion':'failure'}, 'jobs':[
+                  {'name':'Android tests','status':'completed','conclusion':'failure'}]}
+    monitor.observe(fixture)
+    monitor.key('l')
+    monitor.observe(fixture)  # consume explicit existing-provider callback
+    assert calls==[23]
+    assert len(monitor.log_lines)==25
+    assert monitor.log_page==0
+    monitor.key(']')
+    assert monitor.log_page==1
+    out=io.StringIO()
+    Console(file=out,width=80,color_system=None).print(monitor.render())
+    assert 'Log page 2/4' in out.getvalue()
+    assert 'DEMO_LOG_LINE_08' in out.getvalue()
+    assert 'DEMO_LOG_LINE_07' not in out.getvalue()
+    monitor.key('[')
+    assert monitor.log_page==0
+    assert calls==[23]
+
+
+@pytest.mark.parametrize('width',[40,52,60,80,120])
+def test_m6_ux_legacy_log_lines_contract(width):
+    source={'state':'CHECKS_FAILED','runs':[{'name':'Run X'}]}
+    output=render('ci',source,width,logs=True,log_lines=('token=verysecret','real failure'),log_page=0)
+    assert 'Lines' in output
+    assert 'real failure' in output
+    assert 'verysecret' not in output
+    assert all(len(line)<=width for line in output.splitlines())
