@@ -40983,9 +40983,1436 @@
       ],
       "stability": "experimental",
       "summary": "Native report operator"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "recovery",
+      "id": "cli.command.recovery",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "recovery"
+      ],
+      "stability": "experimental",
+      "summary": "Native repository recovery"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "recovery",
+      "id": "cli.command.recovery.inspect",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.inspect.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "inspect"
+      ],
+      "stability": "experimental",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "recovery",
+      "id": "cli.command.recovery.wizard",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.wizard.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "root",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.wizard.root.root",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--root"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "independent_copy_dir",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.wizard.independent_copy_dir.independent_copy_dir",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--independent-copy-dir"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "accept_local_only_risk",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.wizard.accept_local_only_risk.accept_local_only_risk",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--accept-local-only-risk"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "secrets_vault",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.wizard.secrets_vault.secrets_vault",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--secrets-vault"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "age_identity",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.wizard.age_identity.age_identity",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--age-identity"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "accept_missing_secrets",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.wizard.accept_missing_secrets.accept_missing_secrets",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--accept-missing-secrets"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "accept_manual_recovery",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.wizard.accept_manual_recovery.accept_manual_recovery",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--accept-manual-recovery"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "credentials_policy",
+          "help": "Source-bound external credential dependency policy",
+          "hidden": false,
+          "id": "cli.option.recovery.wizard.credentials_policy.credentials_policy",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--credentials-policy"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "accept_credential_manual_risk",
+          "help": "Danger: acknowledge PAT manual reauthorization; post gate remains unverified",
+          "hidden": false,
+          "id": "cli.option.recovery.wizard.accept_credential_manual_risk.accept_credential_manual_risk",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--accept-credential-manual-risk"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "wizard"
+      ],
+      "stability": "experimental",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "recovery",
+      "id": "cli.command.recovery.sessions",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.sessions.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "root",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.sessions.root.root",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--root"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "sessions"
+      ],
+      "stability": "experimental",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "recovery",
+      "id": "cli.command.recovery.prepare",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.prepare.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "root",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.prepare.root.root",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--root"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "accept_archive_gaps",
+          "help": "Explicitly accept expired/unavailable Actions logs/artifacts",
+          "hidden": false,
+          "id": "cli.option.recovery.prepare.accept_archive_gaps.accept_archive_gaps",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--accept-archive-gaps"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "skip_logs",
+          "help": "Archive run metadata/artifacts but deliberately skip logs",
+          "hidden": false,
+          "id": "cli.option.recovery.prepare.skip_logs.skip_logs",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--skip-logs"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "skip_action_artifacts",
+          "help": "Keep Actions artifact metadata; skip historical ZIP downloads",
+          "hidden": false,
+          "id": "cli.option.recovery.prepare.skip_action_artifacts.skip_action_artifacts",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--skip-action-artifacts"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "max_artifact_mb",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.prepare.max_artifact_mb.max_artifact_mb",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--max-artifact-mb"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "session",
+          "help": "Resume partial backup session",
+          "hidden": false,
+          "id": "cli.option.recovery.prepare.session.session",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--session"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "independent_copy_dir",
+          "help": "Write a verified snapshot to a different filesystem",
+          "hidden": false,
+          "id": "cli.option.recovery.prepare.independent_copy_dir.independent_copy_dir",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--independent-copy-dir"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "accept_local_only_risk",
+          "help": "Danger: approve same-device local backups with no independent copy",
+          "hidden": false,
+          "id": "cli.option.recovery.prepare.accept_local_only_risk.accept_local_only_risk",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--accept-local-only-risk"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "secrets_vault",
+          "help": "Age-encrypted JSON recovery vault; never stored in snapshot",
+          "hidden": false,
+          "id": "cli.option.recovery.prepare.secrets_vault.secrets_vault",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--secrets-vault"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "age_identity",
+          "help": "Age private identity file, mode 0600",
+          "hidden": false,
+          "id": "cli.option.recovery.prepare.age_identity.age_identity",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--age-identity"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "accept_missing_secrets",
+          "help": "Danger: explicitly accept secrets that cannot be recovered",
+          "hidden": false,
+          "id": "cli.option.recovery.prepare.accept_missing_secrets.accept_missing_secrets",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--accept-missing-secrets"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "accept_manual_recovery",
+          "help": "Danger: accept integrations/scan gaps that cannot be automatically recovered",
+          "hidden": false,
+          "id": "cli.option.recovery.prepare.accept_manual_recovery.accept_manual_recovery",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--accept-manual-recovery"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "credentials_policy",
+          "help": "JSON declaration of cross-repository PAT and GitHub App credentials",
+          "hidden": false,
+          "id": "cli.option.recovery.prepare.credentials_policy.credentials_policy",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--credentials-policy"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "accept_credential_manual_risk",
+          "help": "Danger: PAT manual reauthorization acknowledged; never claims access verified",
+          "hidden": false,
+          "id": "cli.option.recovery.prepare.accept_credential_manual_risk.accept_credential_manual_risk",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--accept-credential-manual-risk"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "prepare"
+      ],
+      "stability": "experimental",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [
+        [
+          "recovery",
+          "run"
+        ]
+      ],
+      "domain": "recovery",
+      "id": "cli.command.recovery.execute",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.execute.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "session",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.execute.session.session",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ack_delete",
+          "help": "Exact OWNER/REPO confirmation; required on first run",
+          "hidden": false,
+          "id": "cli.option.recovery.execute.ack_delete.ack_delete",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--ack-delete"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "secrets_vault",
+          "help": "Same encrypted vault used in prepare",
+          "hidden": false,
+          "id": "cli.option.recovery.execute.secrets_vault.secrets_vault",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--secrets-vault"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "age_identity",
+          "help": "Age identity for vault (0600)",
+          "hidden": false,
+          "id": "cli.option.recovery.execute.age_identity.age_identity",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--age-identity"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "adopt_created_repo_id",
+          "help": "Explicitly adopt previously created replacement ID after investigating crash",
+          "hidden": false,
+          "id": "cli.option.recovery.execute.adopt_created_repo_id.adopt_created_repo_id",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--adopt-created-repo-id"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "accept_base_drift",
+          "help": "Accept changed upstream default base SHA for restored PRs",
+          "hidden": false,
+          "id": "cli.option.recovery.execute.accept_base_drift.accept_base_drift",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--accept-base-drift"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "post_recovery",
+          "help": "After restore, perform explicitly approved post-recreation stages",
+          "hidden": false,
+          "id": "cli.option.recovery.execute.post_recovery.post_recovery",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--post-recovery"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ack_reconcile_default",
+          "help": "Exact repo consent to reconcile fork default ref",
+          "hidden": false,
+          "id": "cli.option.recovery.execute.ack_reconcile_default.ack_reconcile_default",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--ack-reconcile-default"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ack_enable_actions",
+          "help": "Exact repo consent to restore Actions policy",
+          "hidden": false,
+          "id": "cli.option.recovery.execute.ack_enable_actions.ack_enable_actions",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--ack-enable-actions"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "pr",
+          "help": "Optional restored PR for hosted CI qualification",
+          "hidden": false,
+          "id": "cli.option.recovery.execute.pr.pr",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--pr"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "required_workflow",
+          "help": "Reviewed required workflow names/paths if no base policy exists",
+          "hidden": false,
+          "id": "cli.option.recovery.execute.required_workflow.required_workflow",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--required-workflow"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ack_retrigger",
+          "help": "Exact OWNER/REPO#PR consent to close/reopen PR",
+          "hidden": false,
+          "id": "cli.option.recovery.execute.ack_retrigger.ack_retrigger",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--ack-retrigger"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "watch",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.execute.watch.watch",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--watch"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "timeout_seconds",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.execute.timeout_seconds.timeout_seconds",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--timeout-seconds"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "execute"
+      ],
+      "stability": "experimental",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "recovery",
+      "id": "cli.command.recovery.reconcile_default",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.reconcile_default.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "session",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.reconcile_default.session.session",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ack_reconcile_default",
+          "help": "Exact OWNER/REPO required for branch rename and ref restoration",
+          "hidden": false,
+          "id": "cli.option.recovery.reconcile_default.ack_reconcile_default.ack_reconcile_default",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--ack-reconcile-default"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "reconcile-default"
+      ],
+      "stability": "experimental",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "recovery",
+      "id": "cli.command.recovery.activate_actions",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.activate_actions.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "session",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.activate_actions.session.session",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ack_enable_actions",
+          "help": "Exact OWNER/REPO required to enable Actions",
+          "hidden": false,
+          "id": "cli.option.recovery.activate_actions.ack_enable_actions.ack_enable_actions",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--ack-enable-actions"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "activate-actions"
+      ],
+      "stability": "experimental",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [
+        [
+          "recovery",
+          "workflows"
+        ]
+      ],
+      "domain": "recovery",
+      "id": "cli.command.recovery.workflow_audit",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.workflow_audit.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "session",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.workflow_audit.session.session",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "record",
+          "help": "Persist the read-only audit evidence in the session",
+          "hidden": false,
+          "id": "cli.option.recovery.workflow_audit.record.record",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--record"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "workflow-audit"
+      ],
+      "stability": "experimental",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [
+        [
+          "recovery",
+          "qualify"
+        ]
+      ],
+      "domain": "recovery",
+      "id": "cli.command.recovery.qualify_pr",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.qualify_pr.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "session",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.qualify_pr.session.session",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "pr",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.qualify_pr.pr.pr",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--pr"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "required_workflow",
+          "help": "Reviewed workflow path or name; required if no Devtool policy at PR base",
+          "hidden": false,
+          "id": "cli.option.recovery.qualify_pr.required_workflow.required_workflow",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--required-workflow"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ack_retrigger",
+          "help": "Exact OWNER/REPO#NUMBER permission to close/reopen PR once",
+          "hidden": false,
+          "id": "cli.option.recovery.qualify_pr.ack_retrigger.ack_retrigger",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--ack-retrigger"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "watch",
+          "help": "Poll current live run status until complete or timeout",
+          "hidden": false,
+          "id": "cli.option.recovery.qualify_pr.watch.watch",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--watch"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "timeout_seconds",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.qualify_pr.timeout_seconds.timeout_seconds",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--timeout-seconds"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "qualify-pr"
+      ],
+      "stability": "experimental",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "recovery",
+      "id": "cli.command.recovery.recover_operational",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.recover_operational.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "session",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.recover_operational.session.session",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ack_reconcile_default",
+          "help": "Exact OWNER/REPO for default-branch repair",
+          "hidden": false,
+          "id": "cli.option.recovery.recover_operational.ack_reconcile_default.ack_reconcile_default",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--ack-reconcile-default"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ack_enable_actions",
+          "help": "Exact OWNER/REPO for Actions activation",
+          "hidden": false,
+          "id": "cli.option.recovery.recover_operational.ack_enable_actions.ack_enable_actions",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--ack-enable-actions"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "pr",
+          "help": "Optional restored PR to qualify",
+          "hidden": false,
+          "id": "cli.option.recovery.recover_operational.pr.pr",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--pr"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "required_workflow",
+          "help": "Explicit CI path/name if policy absent",
+          "hidden": false,
+          "id": "cli.option.recovery.recover_operational.required_workflow.required_workflow",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--required-workflow"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ack_retrigger",
+          "help": "Exact OWNER/REPO#NUMBER to close/reopen PR",
+          "hidden": false,
+          "id": "cli.option.recovery.recover_operational.ack_retrigger.ack_retrigger",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--ack-retrigger"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "watch",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.recover_operational.watch.watch",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--watch"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "timeout_seconds",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.recover_operational.timeout_seconds.timeout_seconds",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--timeout-seconds"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "recover-operational"
+      ],
+      "stability": "experimental",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "recovery",
+      "id": "cli.command.recovery.credentials",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.credentials.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "session",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.credentials.session.session",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "policy",
+          "help": "Attach policy after recreation; immutable once bound",
+          "hidden": false,
+          "id": "cli.option.recovery.credentials.policy.policy",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--policy"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "apply_app",
+          "help": "Add recreated repo to approved selected-repository App installation",
+          "hidden": false,
+          "id": "cli.option.recovery.credentials.apply_app.apply_app",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--apply-app"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "apply_pat",
+          "help": "Reprovision a validated supplied PAT to declared Actions secret hosts",
+          "hidden": false,
+          "id": "cli.option.recovery.credentials.apply_pat.apply_pat",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--apply-pat"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ack_pat_provision",
+          "help": "Exact OWNER/REPO approval for Actions secret replacement",
+          "hidden": false,
+          "id": "cli.option.recovery.credentials.ack_pat_provision.ack_pat_provision",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--ack-pat-provision"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ack_app_repair",
+          "help": "Exact OWNER/REPO approval to update App installation",
+          "hidden": false,
+          "id": "cli.option.recovery.credentials.ack_app_repair.ack_app_repair",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--ack-app-repair"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "record",
+          "help": "Persist audit evidence without exposing secret values",
+          "hidden": false,
+          "id": "cli.option.recovery.credentials.record.record",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--record"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "credentials"
+      ],
+      "stability": "experimental",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "recovery",
+      "id": "cli.command.recovery.status",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.status.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "session",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.status.session.session",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "status"
+      ],
+      "stability": "experimental",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "recovery",
+      "id": "cli.command.recovery.attest_manual",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.attest_manual.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "session",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.attest_manual.session.session",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ack_external_recovery",
+          "help": "Exact OWNER/REPO plus manual confirmation of external repairs",
+          "hidden": false,
+          "id": "cli.option.recovery.attest_manual.ack_external_recovery.ack_external_recovery",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--ack-external-recovery"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "attest-manual"
+      ],
+      "stability": "experimental",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "recovery",
+      "id": "cli.command.recovery.ci_check",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.ci_check.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "session",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.ci_check.session.session",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "workflow",
+          "help": "Registered .github/workflows/*.yml",
+          "hidden": false,
+          "id": "cli.option.recovery.ci_check.workflow.workflow",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--workflow"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ref",
+          "help": "Named branch",
+          "hidden": false,
+          "id": "cli.option.recovery.ci_check.ref.ref",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--ref"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "ack_dispatch",
+          "help": "Exact OWNER/REPO confirmation",
+          "hidden": false,
+          "id": "cli.option.recovery.ci_check.ack_dispatch.ack_dispatch",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--ack-dispatch"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "timeout_seconds",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.ci_check.timeout_seconds.timeout_seconds",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--timeout-seconds"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "ci-check"
+      ],
+      "stability": "experimental",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "recovery",
+      "id": "cli.command.recovery.verify",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.verify.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "session",
+          "help": "",
+          "hidden": false,
+          "id": "cli.option.recovery.verify.session.session",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "verify"
+      ],
+      "stability": "experimental",
+      "summary": ""
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "recovery",
+      "id": "cli.command.recovery.doctor",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.doctor.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "doctor"
+      ],
+      "stability": "experimental",
+      "summary": "Read-only local recovery prerequisites"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "recovery",
+      "id": "cli.command.recovery.plan",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.plan.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "plan"
+      ],
+      "stability": "experimental",
+      "summary": "Read-only remote repository feasibility inventory"
+    },
+    {
+      "adoption_source": "core-registry",
+      "aliases": [],
+      "domain": "recovery",
+      "id": "cli.command.recovery.report",
+      "options": [
+        {
+          "choices": [],
+          "dest": "help",
+          "help": "show this help message and exit",
+          "hidden": false,
+          "id": "cli.option.recovery.report.help",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "-h",
+            "--help"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "session",
+          "help": "Existing recovery session",
+          "hidden": false,
+          "id": "cli.option.recovery.report.session.session",
+          "nargs": null,
+          "required": true,
+          "spellings": [
+            "--session"
+          ]
+        }
+      ],
+      "path": [
+        "recovery",
+        "report"
+      ],
+      "stability": "experimental",
+      "summary": "Read-only durable repository recovery report"
     }
   ],
-  "digest": "cb9e593f2adac30b0f6116626f46215bf4b671aec947c4210626f9f6afec145c",
+  "digest": "89771edd3e1f67e912a9b3a1c23e62f93ee8735a1305da53df97a9f2b9773681",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -41400,6 +42827,28 @@
       "pytest inventory",
       "pytest profile",
       "pytest select",
+      "recovery",
+      "recovery activate-actions",
+      "recovery attest-manual",
+      "recovery ci-check",
+      "recovery credentials",
+      "recovery doctor",
+      "recovery execute",
+      "recovery inspect",
+      "recovery plan",
+      "recovery prepare",
+      "recovery qualify",
+      "recovery qualify-pr",
+      "recovery reconcile-default",
+      "recovery recover-operational",
+      "recovery report",
+      "recovery run",
+      "recovery sessions",
+      "recovery status",
+      "recovery verify",
+      "recovery wizard",
+      "recovery workflow-audit",
+      "recovery workflows",
       "registry",
       "rel",
       "release",
@@ -41537,11 +42986,11 @@
     "missing_options": [],
     "option_extra_count": 0,
     "option_missing_count": 0,
-    "parser_command_count": 539,
-    "registry_command_count": 413
+    "parser_command_count": 561,
+    "registry_command_count": 432
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "83fb588d9fe0ecfafa9dcb772b1ef554404e7738de202dd34e8f9ec0162952dd",
+  "registry_digest": "094b6bb3c23a7907cd34f503e0d0c687d09ab770927dfe7d435e7c5c31f39ea8",
   "registry_schema_version": 1,
   "schema_version": 1
 }
