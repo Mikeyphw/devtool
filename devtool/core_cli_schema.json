@@ -7590,6 +7590,137 @@
         "cli.option.recovery.report.session.session"
       ],
       "stable_id": "cli.command.recovery.report"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "credentials"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "credentials",
+        "stability": "experimental",
+        "summary": "M7 credential health and guided recovery",
+        "wrapper_native": false
+      },
+      "options": [
+        "cli.option.credentials.help"
+      ],
+      "stable_id": "cli.command.credentials"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "credentials",
+        "doctor"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "credentials",
+        "stability": "experimental",
+        "summary": "M7 credential health and guided recovery",
+        "wrapper_native": false
+      },
+      "options": [
+        "cli.option.credentials.doctor.help",
+        "cli.option.credentials.doctor.repo.credential_repository",
+        "cli.option.credentials.doctor.head_repo.credential_head_repository",
+        "cli.option.credentials.doctor.auth.credential_auth",
+        "cli.option.credentials.doctor.probe_read.credential_probe_read",
+        "cli.option.credentials.doctor.save_baseline.credential_save_baseline"
+      ],
+      "stable_id": "cli.command.credentials.doctor"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "credentials",
+        "repair"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "credentials",
+        "stability": "experimental",
+        "summary": "M7 credential health and guided recovery",
+        "wrapper_native": false
+      },
+      "options": [
+        "cli.option.credentials.repair.help",
+        "cli.option.credentials.repair.repo.credential_repository",
+        "cli.option.credentials.repair.head_repo.credential_head_repository",
+        "cli.option.credentials.repair.auth.credential_auth",
+        "cli.option.credentials.repair.probe_read.credential_probe_read"
+      ],
+      "stable_id": "cli.command.credentials.repair"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "credentials",
+        "drift"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "credentials",
+        "stability": "experimental",
+        "summary": "M7 credential health and guided recovery",
+        "wrapper_native": false
+      },
+      "options": [
+        "cli.option.credentials.drift.help",
+        "cli.option.credentials.drift.repo.credential_repository",
+        "cli.option.credentials.drift.head_repo.credential_head_repository",
+        "cli.option.credentials.drift.auth.credential_auth",
+        "cli.option.credentials.drift.probe_read.credential_probe_read",
+        "cli.option.credentials.drift.baseline.credential_baseline"
+      ],
+      "stable_id": "cli.command.credentials.drift"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "credentials",
+        "predelete"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "credentials",
+        "stability": "experimental",
+        "summary": "M7 credential health and guided recovery",
+        "wrapper_native": false
+      },
+      "options": [
+        "cli.option.credentials.predelete.help",
+        "cli.option.credentials.predelete.repo.credential_repository",
+        "cli.option.credentials.predelete.head_repo.credential_head_repository",
+        "cli.option.credentials.predelete.auth.credential_auth",
+        "cli.option.credentials.predelete.probe_read.credential_probe_read",
+        "cli.option.credentials.predelete.backup_sha256.credential_backup_sha256"
+      ],
+      "stable_id": "cli.command.credentials.predelete"
+    },
+    {
+      "aliases": [],
+      "canonical_path": [
+        "credentials",
+        "postrecreate"
+      ],
+      "metadata": {
+        "authority": "canonical-schema",
+        "domain": "credentials",
+        "stability": "experimental",
+        "summary": "M7 credential health and guided recovery",
+        "wrapper_native": false
+      },
+      "options": [
+        "cli.option.credentials.postrecreate.help",
+        "cli.option.credentials.postrecreate.repo.credential_repository",
+        "cli.option.credentials.postrecreate.head_repo.credential_head_repository",
+        "cli.option.credentials.postrecreate.auth.credential_auth",
+        "cli.option.credentials.postrecreate.probe_read.credential_probe_read",
+        "cli.option.credentials.postrecreate.previous_repository_id.credential_previous_repo_id"
+      ],
+      "stable_id": "cli.command.credentials.postrecreate"
     }
   ],
   "kind": "devtool.canonical-cli-schema",
@@ -70926,6 +71057,677 @@
       "sensitive": false,
       "stable_id": "cli.option.recovery.report.session.session",
       "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "credentials"
+        ],
+        "required": false
+      },
+      "scope": "credentials",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "credentials",
+          "doctor"
+        ],
+        "required": false
+      },
+      "scope": "credentials doctor",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.doctor.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_repository",
+        "help": "Exact owner/repository GitHub slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "doctor"
+        ],
+        "required": true
+      },
+      "scope": "credentials doctor",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.doctor.repo.credential_repository",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--head-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_head_repository",
+        "help": "Optional distinct fork/head owner/repository (requires its own installation)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "doctor"
+        ],
+        "required": false
+      },
+      "scope": "credentials doctor",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.doctor.head_repo.credential_head_repository",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "app",
+          "auto",
+          "env",
+          "gh",
+          "ssh"
+        ],
+        "dest": "credential_auth",
+        "help": "Explicit credential provider (App is opt-in)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "doctor"
+        ],
+        "required": false
+      },
+      "scope": "credentials doctor",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.doctor.auth.credential_auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--probe-read",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_probe_read",
+        "help": "Explicit read-only API or SSH probe; App mints one scoped read token",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "credentials",
+          "doctor"
+        ],
+        "required": false
+      },
+      "scope": "credentials doctor",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.doctor.probe_read.credential_probe_read",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--save-baseline",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_save_baseline",
+        "help": "Write one private non-overwriting local drift baseline after effective read verification",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "doctor"
+        ],
+        "required": false
+      },
+      "scope": "credentials doctor",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.doctor.save_baseline.credential_save_baseline",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "credentials",
+          "repair"
+        ],
+        "required": false
+      },
+      "scope": "credentials repair",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.repair.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_repository",
+        "help": "Exact owner/repository GitHub slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "repair"
+        ],
+        "required": true
+      },
+      "scope": "credentials repair",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.repair.repo.credential_repository",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--head-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_head_repository",
+        "help": "Optional distinct fork/head owner/repository (requires its own installation)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "repair"
+        ],
+        "required": false
+      },
+      "scope": "credentials repair",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.repair.head_repo.credential_head_repository",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "app",
+          "auto",
+          "env",
+          "gh",
+          "ssh"
+        ],
+        "dest": "credential_auth",
+        "help": "Explicit credential provider (App is opt-in)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "repair"
+        ],
+        "required": false
+      },
+      "scope": "credentials repair",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.repair.auth.credential_auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--probe-read",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_probe_read",
+        "help": "Explicit read-only API or SSH probe; App mints one scoped read token",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "credentials",
+          "repair"
+        ],
+        "required": false
+      },
+      "scope": "credentials repair",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.repair.probe_read.credential_probe_read",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "credentials",
+          "drift"
+        ],
+        "required": false
+      },
+      "scope": "credentials drift",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.drift.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_repository",
+        "help": "Exact owner/repository GitHub slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "drift"
+        ],
+        "required": true
+      },
+      "scope": "credentials drift",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.drift.repo.credential_repository",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--head-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_head_repository",
+        "help": "Optional distinct fork/head owner/repository (requires its own installation)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "drift"
+        ],
+        "required": false
+      },
+      "scope": "credentials drift",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.drift.head_repo.credential_head_repository",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "app",
+          "auto",
+          "env",
+          "gh",
+          "ssh"
+        ],
+        "dest": "credential_auth",
+        "help": "Explicit credential provider (App is opt-in)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "drift"
+        ],
+        "required": false
+      },
+      "scope": "credentials drift",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.drift.auth.credential_auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--probe-read",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_probe_read",
+        "help": "Explicit read-only API or SSH probe; App mints one scoped read token",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "credentials",
+          "drift"
+        ],
+        "required": false
+      },
+      "scope": "credentials drift",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.drift.probe_read.credential_probe_read",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--baseline",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_baseline",
+        "help": "Read private credential baseline; no network write",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "drift"
+        ],
+        "required": true
+      },
+      "scope": "credentials drift",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.drift.baseline.credential_baseline",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "credentials",
+          "predelete"
+        ],
+        "required": false
+      },
+      "scope": "credentials predelete",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.predelete.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_repository",
+        "help": "Exact owner/repository GitHub slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "predelete"
+        ],
+        "required": true
+      },
+      "scope": "credentials predelete",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.predelete.repo.credential_repository",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--head-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_head_repository",
+        "help": "Optional distinct fork/head owner/repository (requires its own installation)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "predelete"
+        ],
+        "required": false
+      },
+      "scope": "credentials predelete",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.predelete.head_repo.credential_head_repository",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "app",
+          "auto",
+          "env",
+          "gh",
+          "ssh"
+        ],
+        "dest": "credential_auth",
+        "help": "Explicit credential provider (App is opt-in)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "predelete"
+        ],
+        "required": false
+      },
+      "scope": "credentials predelete",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.predelete.auth.credential_auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--probe-read",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_probe_read",
+        "help": "Explicit read-only API or SSH probe; App mints one scoped read token",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "credentials",
+          "predelete"
+        ],
+        "required": false
+      },
+      "scope": "credentials predelete",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.predelete.probe_read.credential_probe_read",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--backup-sha256",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_backup_sha256",
+        "help": "Recorded backup checksum (not destructive permission)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "predelete"
+        ],
+        "required": false
+      },
+      "scope": "credentials predelete",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.predelete.backup_sha256.credential_backup_sha256",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [
+        "--help"
+      ],
+      "canonical": "-h",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "help",
+        "help": "show this help message and exit",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "credentials",
+          "postrecreate"
+        ],
+        "required": false
+      },
+      "scope": "credentials postrecreate",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.postrecreate.help",
+      "value_kind": "_HelpAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_repository",
+        "help": "Exact owner/repository GitHub slug",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "postrecreate"
+        ],
+        "required": true
+      },
+      "scope": "credentials postrecreate",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.postrecreate.repo.credential_repository",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--head-repo",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_head_repository",
+        "help": "Optional distinct fork/head owner/repository (requires its own installation)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "postrecreate"
+        ],
+        "required": false
+      },
+      "scope": "credentials postrecreate",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.postrecreate.head_repo.credential_head_repository",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--auth",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "app",
+          "auto",
+          "env",
+          "gh",
+          "ssh"
+        ],
+        "dest": "credential_auth",
+        "help": "Explicit credential provider (App is opt-in)",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "postrecreate"
+        ],
+        "required": false
+      },
+      "scope": "credentials postrecreate",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.postrecreate.auth.credential_auth",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--probe-read",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_probe_read",
+        "help": "Explicit read-only API or SSH probe; App mints one scoped read token",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "credentials",
+          "postrecreate"
+        ],
+        "required": false
+      },
+      "scope": "credentials postrecreate",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.postrecreate.probe_read.credential_probe_read",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--previous-repository-id",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "credential_previous_repo_id",
+        "help": "Previous immutable numeric GitHub repository ID",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "credentials",
+          "postrecreate"
+        ],
+        "required": true
+      },
+      "scope": "credentials postrecreate",
+      "sensitive": false,
+      "stable_id": "cli.option.credentials.postrecreate.previous_repository_id.credential_previous_repo_id",
+      "value_kind": "_StoreAction"
     }
   ],
   "parser": {
@@ -133093,6 +133895,386 @@
               "required": true
             },
             "usage": null
+          }
+        },
+        {
+          "aliases": [],
+          "help": "M7 credential health, drift and guided recovery",
+          "help_present": true,
+          "name": "credentials",
+          "parser": {
+            "actions": [],
+            "add_help": true,
+            "allow_abbrev": false,
+            "description": "Read-only-first credential doctor",
+            "formatter": "HelpFormatter",
+            "subparsers": {
+              "children": [
+                {
+                  "aliases": [],
+                  "help": "M7 read-only credential doctor",
+                  "help_present": true,
+                  "name": "doctor",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "default": "",
+                        "dest": "credential_repository",
+                        "help": "Exact owner/repository GitHub slug",
+                        "option_strings": [
+                          "--repo"
+                        ],
+                        "required": true
+                      },
+                      {
+                        "action": "store",
+                        "default": "",
+                        "dest": "credential_head_repository",
+                        "help": "Optional distinct fork/head owner/repository (requires its own installation)",
+                        "option_strings": [
+                          "--head-repo"
+                        ],
+                        "required": false
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "app",
+                          "auto",
+                          "env",
+                          "gh",
+                          "ssh"
+                        ],
+                        "default": "app",
+                        "dest": "credential_auth",
+                        "help": "Explicit credential provider (App is opt-in)",
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false
+                      },
+                      {
+                        "action": "store_true",
+                        "default": false,
+                        "dest": "credential_probe_read",
+                        "help": "Explicit read-only API or SSH probe; App mints one scoped read token",
+                        "option_strings": [
+                          "--probe-read"
+                        ],
+                        "required": false
+                      },
+                      {
+                        "action": "store",
+                        "default": "",
+                        "dest": "credential_save_baseline",
+                        "help": "Write one private non-overwriting local drift baseline after effective read verification",
+                        "option_strings": [
+                          "--save-baseline"
+                        ],
+                        "required": false
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": false,
+                    "defaults": {
+                      "credential_action": "doctor"
+                    },
+                    "description": "Devtool M7 doctor (non-mutating)",
+                    "formatter": "HelpFormatter"
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "M7 read-only credential repair",
+                  "help_present": true,
+                  "name": "repair",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "default": "",
+                        "dest": "credential_repository",
+                        "help": "Exact owner/repository GitHub slug",
+                        "option_strings": [
+                          "--repo"
+                        ],
+                        "required": true
+                      },
+                      {
+                        "action": "store",
+                        "default": "",
+                        "dest": "credential_head_repository",
+                        "help": "Optional distinct fork/head owner/repository (requires its own installation)",
+                        "option_strings": [
+                          "--head-repo"
+                        ],
+                        "required": false
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "app",
+                          "auto",
+                          "env",
+                          "gh",
+                          "ssh"
+                        ],
+                        "default": "app",
+                        "dest": "credential_auth",
+                        "help": "Explicit credential provider (App is opt-in)",
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false
+                      },
+                      {
+                        "action": "store_true",
+                        "default": false,
+                        "dest": "credential_probe_read",
+                        "help": "Explicit read-only API or SSH probe; App mints one scoped read token",
+                        "option_strings": [
+                          "--probe-read"
+                        ],
+                        "required": false
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": false,
+                    "defaults": {
+                      "credential_action": "repair"
+                    },
+                    "description": "Devtool M7 repair (non-mutating)",
+                    "formatter": "HelpFormatter"
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "M7 read-only credential drift",
+                  "help_present": true,
+                  "name": "drift",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "default": "",
+                        "dest": "credential_repository",
+                        "help": "Exact owner/repository GitHub slug",
+                        "option_strings": [
+                          "--repo"
+                        ],
+                        "required": true
+                      },
+                      {
+                        "action": "store",
+                        "default": "",
+                        "dest": "credential_head_repository",
+                        "help": "Optional distinct fork/head owner/repository (requires its own installation)",
+                        "option_strings": [
+                          "--head-repo"
+                        ],
+                        "required": false
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "app",
+                          "auto",
+                          "env",
+                          "gh",
+                          "ssh"
+                        ],
+                        "default": "app",
+                        "dest": "credential_auth",
+                        "help": "Explicit credential provider (App is opt-in)",
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false
+                      },
+                      {
+                        "action": "store_true",
+                        "default": false,
+                        "dest": "credential_probe_read",
+                        "help": "Explicit read-only API or SSH probe; App mints one scoped read token",
+                        "option_strings": [
+                          "--probe-read"
+                        ],
+                        "required": false
+                      },
+                      {
+                        "action": "store",
+                        "default": "",
+                        "dest": "credential_baseline",
+                        "help": "Read private credential baseline; no network write",
+                        "option_strings": [
+                          "--baseline"
+                        ],
+                        "required": true
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": false,
+                    "defaults": {
+                      "credential_action": "drift"
+                    },
+                    "description": "Devtool M7 drift (non-mutating)",
+                    "formatter": "HelpFormatter"
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "M7 read-only credential predelete",
+                  "help_present": true,
+                  "name": "predelete",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "default": "",
+                        "dest": "credential_repository",
+                        "help": "Exact owner/repository GitHub slug",
+                        "option_strings": [
+                          "--repo"
+                        ],
+                        "required": true
+                      },
+                      {
+                        "action": "store",
+                        "default": "",
+                        "dest": "credential_head_repository",
+                        "help": "Optional distinct fork/head owner/repository (requires its own installation)",
+                        "option_strings": [
+                          "--head-repo"
+                        ],
+                        "required": false
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "app",
+                          "auto",
+                          "env",
+                          "gh",
+                          "ssh"
+                        ],
+                        "default": "app",
+                        "dest": "credential_auth",
+                        "help": "Explicit credential provider (App is opt-in)",
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false
+                      },
+                      {
+                        "action": "store_true",
+                        "default": false,
+                        "dest": "credential_probe_read",
+                        "help": "Explicit read-only API or SSH probe; App mints one scoped read token",
+                        "option_strings": [
+                          "--probe-read"
+                        ],
+                        "required": false
+                      },
+                      {
+                        "action": "store",
+                        "default": "",
+                        "dest": "credential_backup_sha256",
+                        "help": "Recorded backup checksum (not destructive permission)",
+                        "option_strings": [
+                          "--backup-sha256"
+                        ],
+                        "required": false
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": false,
+                    "defaults": {
+                      "credential_action": "predelete"
+                    },
+                    "description": "Devtool M7 predelete (non-mutating)",
+                    "formatter": "HelpFormatter"
+                  }
+                },
+                {
+                  "aliases": [],
+                  "help": "M7 read-only credential postrecreate",
+                  "help_present": true,
+                  "name": "postrecreate",
+                  "parser": {
+                    "actions": [
+                      {
+                        "action": "store",
+                        "default": "",
+                        "dest": "credential_repository",
+                        "help": "Exact owner/repository GitHub slug",
+                        "option_strings": [
+                          "--repo"
+                        ],
+                        "required": true
+                      },
+                      {
+                        "action": "store",
+                        "default": "",
+                        "dest": "credential_head_repository",
+                        "help": "Optional distinct fork/head owner/repository (requires its own installation)",
+                        "option_strings": [
+                          "--head-repo"
+                        ],
+                        "required": false
+                      },
+                      {
+                        "action": "store",
+                        "choices": [
+                          "app",
+                          "auto",
+                          "env",
+                          "gh",
+                          "ssh"
+                        ],
+                        "default": "app",
+                        "dest": "credential_auth",
+                        "help": "Explicit credential provider (App is opt-in)",
+                        "option_strings": [
+                          "--auth"
+                        ],
+                        "required": false
+                      },
+                      {
+                        "action": "store_true",
+                        "default": false,
+                        "dest": "credential_probe_read",
+                        "help": "Explicit read-only API or SSH probe; App mints one scoped read token",
+                        "option_strings": [
+                          "--probe-read"
+                        ],
+                        "required": false
+                      },
+                      {
+                        "action": "store",
+                        "default": null,
+                        "dest": "credential_previous_repo_id",
+                        "help": "Previous immutable numeric GitHub repository ID",
+                        "option_strings": [
+                          "--previous-repository-id"
+                        ],
+                        "required": true,
+                        "type": "int"
+                      }
+                    ],
+                    "add_help": true,
+                    "allow_abbrev": false,
+                    "defaults": {
+                      "credential_action": "postrecreate"
+                    },
+                    "description": "Devtool M7 postrecreate (non-mutating)",
+                    "formatter": "HelpFormatter"
+                  }
+                }
+              ],
+              "dest": "credential_action",
+              "required": true
+            }
           }
         }
       ],
