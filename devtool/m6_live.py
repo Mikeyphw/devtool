@@ -1,0 +1,410 @@
+"""M6 native portrait-first *projection* for overlays, CI, runs and operator data.
+
+No GitHub client, source mutation, orchestration, clipboard, network, qualification
+or guessed progress lives here. Rich Live is always inline and terminal-safe.
+"""
+from __future__ import annotations
+
+from collections import deque
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+import os
+import re
+import sys
+from typing import Any
+
+from rich.console import Console, Group
+from rich.live import Live
+from rich.panel import Panel
+from rich.text import Text
+
+# Provider output, filenames, paths and journal fields are ALL untrusted text.
+_ANSI = re.compile(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-_])')
+_SECRETS = (
+    re.compile(r'(?i)\b(?:Bearer|Basic)\s+[^\s,;]+'),
+    re.compile(r'(?i)\b(?:github_pat_[A-Za-z0-9_]{10,}|gh[pousr]_[A-Za-z0-9_]{8,})\b'),
+    re.compile(r'(?i)\b(?:token|authorization|password|secret|api[_-]?key|private[_-]?key)\s*[:=]\s*[^\s,;]+'),
+    re.compile(r'-----BEGIN\s+[^-]*(?:PRIVATE|SECRET)\s+KEY-----', re.I),
+)
+_SENSITIVE_KEYS = frozenset(('token', 'secret', 'password', 'authorization', 'credential',
+                              'private_key', 'api_key', 'client_secret', 'jwt'))
+_FAILURE = frozenset(('failure', 'failed', 'timed_out', 'cancelled', 'canceled', 'error',
+                     'checks_failed', 'blocked_trigger', 'blocked_ambiguous', 'refused'))
+_SUCCESS = frozenset(('success', 'passed', 'pass', 'ok', 'completed_successfully',
+                     'required_checks_passed'))
+_RUNNING = frozenset(('in_progress', 'running', 'checks_running', 'queued', 'waiting',
+                     'pending', 'requested', 'waiting_registration', 'checks_evidence_pending'))
+
+
+def safe(value: object, *, key: str = '', limit: int = 300) -> str:
+    """Remove terminal injection and credentials; Rich Text prevents markup execution."""
+    if any(word in key.casefold() for word in _SENSITIVE_KEYS):
+        return '[redacted]'
+    if value is None:
+        return 'not recorded'
+    if isinstance(value, (dict, list, tuple, set)):
+        return '[structured value omitted]'
+    text = _ANSI.sub('', str(value))
+    text = ''.join(' ' if ord(ch) < 32 or 127 <= ord(ch) < 160 else ch for ch in text)
+    for expression in _SECRETS:
+        text = expression.sub('[redacted]', text)
+    return text[:limit] + ('…' if len(text) > limit else '')
+
+
+def _facts(source: Mapping[str, Any], *keys: str) -> object:
+    for key in keys:
+        value = source.get(key)
+        if value is not None and value != '':
+            return value
+    return None
+
+
+def _status(value: object) -> tuple[str, str]:
+    state = str(value or 'not recorded').lower().replace(' ', '_')
+    if state in _FAILURE or state.startswith('blocked'):
+        return 'FAIL / ' + safe(value, limit=35).upper(), 'bold red'
+    if state in _SUCCESS:
+        return 'PASS / ' + safe(value, limit=35).upper(), 'green'
+    if state in _RUNNING:
+        return 'ACTIVE / ' + safe(value, limit=35).upper(), 'cyan'
+    if state in ('skipped', 'neutral'):
+        return safe(value, limit=35).upper(), 'yellow'
+    return safe(value, limit=35).upper(), 'yellow'
+
+
+def _icon(key: str, mode: str) -> str:
+    symbols = {
+        'ascii': {'repo':'#','stage':'*','events':'@','logs':'>','evidence':'=','keys':'?'},
+        'unicode': {'repo':'◆','stage':'●','events':'◷','logs':'▸','evidence':'◇','keys':'?'},
+        'nerd': {'repo':'\ue702','stage':'\uf0ae','events':'\uf017','logs':'\uf15c',
+                 'evidence':'\uf02b','keys':'\uf11c'},
+    }
+    return symbols[mode].get(key, '*')
+
+
+def icon_mode(env: Mapping[str,str] | None = None) -> str:
+    """Use the existing Devtool user icon preference and no new CLI flags."""
+    values = os.environ if env is None else env
+    forced = str(values.get('DEVTOOL_UI_ICONS') or '').strip().lower()
+    if forced in ('nerd','ascii','unicode'):
+        return forced
+    if str(values.get('DEVTOOL_ASCII') or '').lower() in ('1','yes','true'):
+        return 'ascii'
+    try:
+        from .tui_icons import nerd_font_enabled
+        if (nerd_font_enabled() if env is None else nerd_font_enabled(env=values)):
+            return 'nerd'
+    except (ImportError, RuntimeError, ValueError):
+        pass
+    return 'unicode'
+
+
+def _row(label: object, value: object = None, *, key: str = '', style: str = 'default') -> Text:
+    line = Text()
+    line.append(safe(label, limit=100), style='dim')
+    if value is not None:
+        line.append(' ')
+        line.append(safe(value, key=key, limit=140), style=style)
+    line.no_wrap = True
+    line.overflow = 'ellipsis'
+    return line
+
+
+def _header(title: str, icon: str, mode: str) -> Text:
+    return Text(f'{_icon(icon,mode)}  {title}', style='bold cyan')
+
+
+def _segment(title: str, icon: str, mode: str, children: Sequence[object]) -> Group:
+    return Group(_header(title, icon, mode), *children)
+
+
+def shared_panel(title: str, blocks: Sequence[object], *, color: str = 'cyan',
+                 width: int = 80) -> Panel:
+    """Shared inline single-column chrome for CI, overlay, and operator views."""
+    return Panel(Group(*blocks), title=title, border_style=color, padding=(0,1),
+                 expand=False, width=None)
+
+
+def _limited(rows: Sequence[Any], *, width: int) -> list[Any]:
+    # Portrait display is intentionally bounded; native journals are not.
+    return list(rows[:(4 if width < 60 else 7 if width < 85 else 12)])
+
+
+def _as_rows(value: Any) -> list[Mapping[str, Any]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [v for v in value if isinstance(v, Mapping)]
+
+
+def _progress_evidence(item: Mapping[str,Any], width: int) -> Text | None:
+    """Render *only* measured native counters. Never infer a percent."""
+    done = item.get('completed')
+    total = item.get('total')
+    if type(done) is int and type(total) is int and 0 <= done <= total and total > 0:
+        cells = max(4,min(14,width//5))
+        filled = (done*cells)//total
+        return _row('    ['+'#'*filled+'-'*(cells-filled)+']',f'{done}/{total}')
+    if _facts(item,'conclusion','state','status') in ('running','in_progress'):
+        return _row('    activity ongoing · count unrecorded')
+    return None
+
+
+def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
+                    selected: int = 0, detail: bool = False, verbose: bool = False,
+                    logs: bool = False, log_lines: tuple[str,...] = (),
+                    log_page: int = 0, log_error: str = '',
+                    icons: str | None = None) -> Group:
+    """One projection; no I/O, source inference or mutation side effects."""
+    if not isinstance(source, Mapping):
+        raise TypeError('M6 native view requires existing structured evidence')
+    width = max(40, min(180, int(width)))
+    mode = icons or icon_mode()
+    if mode not in ('ascii','unicode','nerd'):
+        raise ValueError('Unsupported existing icon preference')
+    if kind not in ('ci','run','overlay'):
+        raise ValueError('Unsupported M6 live evidence type')
+
+    remote = source.get('remote') if isinstance(source.get('remote'), Mapping) else {}
+    evidence = source.get('evidence') if isinstance(source.get('evidence'), Mapping) else {}
+    native = source.get('native_apply') if isinstance(source.get('native_apply'), Mapping) else {}
+    ci = source.get('ci') if isinstance(source.get('ci'), Mapping) else {}
+    credential = source.get('credential_health') if isinstance(source.get('credential_health'), Mapping) else {}
+    state = (_facts(remote, 'conclusion','status') if kind == 'run' else
+             _facts(source, 'state','completion_status','status'))
+    if kind == 'ci' and state == 'REQUIRED_CHECKS_PASSED':
+        # This is the *native* qualified state, not a guess from green jobs.
+        status_msg = 'Native required checks passed; release NOT qualified'
+    elif kind == 'ci':
+        status_msg = 'Native CI NOT QUALIFIED · release NOT qualified'
+    elif kind == 'run':
+        status_msg = 'Provider run observed · native qualification independent'
+    else:
+        status_msg = 'Native commit/session evidence required · no release claim'
+    name = {'ci':'PR CHECKS','run':'GITHUB RUN','overlay':'OVERLAY APPLY'}[kind]
+    status_label,status_color = _status(state)
+    title = Text(f'DEVTOOL · {name}', style='bold')
+    title.append('  ' + status_label, style=status_color)
+
+    identity = [
+        _row('Repository', _facts(source,'repository','repo_root') or _facts(remote,'repository') or 'not recorded'),
+        _row('Branch',_facts(source,'branch','head_branch') or _facts(remote,'head_branch') or 'not recorded'),
+        _row('Source',_facts(source,'source_sha','head_sha') or _facts(remote,'head_sha') or 'not recorded'),
+    ]
+    if kind == 'overlay':
+        identity.append(_row('Artifact',_facts(source,'artifact_sha256','artifact','artifact_path')))
+        if _facts(source,'runtime_sha') is not None:
+            identity.append(_row('Runtime',_facts(source,'runtime_sha')))
+    if kind == 'run':
+        identity.append(_row('Run',_facts(remote,'id','run_id')))
+        identity.append(_row('Attempt',_facts(remote,'run_attempt')))
+
+    rows = (_as_rows(source.get('runs')) if kind == 'ci' else
+            _as_rows(source.get('jobs')) if kind == 'run' else
+            _as_rows(source.get('stages')))
+    stages: list[Text] = []
+    if kind == 'ci':
+        required = source.get('required') if isinstance(source.get('required'),list) else None
+        missing = source.get('missing') if isinstance(source.get('missing'),list) else None
+        info = []
+        if source.get('poll') is not None:info.append('poll '+safe(source['poll']))
+        if required is not None:info.append('required '+str(len(required)))
+        info.append('observed '+str(len(rows)))
+        if missing is not None:info.append('missing '+str(len(missing)))
+        stages.append(_row(' · '.join(info)))
+    elif kind == 'run':
+        done = sum(x.get('status') == 'completed' for x in rows)
+        stages.append(_row(f'Jobs {done}/{len(rows)}' if rows else 'No observed jobs'))
+    for i,item in enumerate(_limited(rows,width=width)):
+        label = _facts(item,'name','label','phase','kind')
+        state_item = _facts(item,'conclusion','state','status','result')
+        indicator,style=_status(state_item)
+        prefix='› ' if i==selected else '  '
+        caption=prefix+safe(label,limit=180)
+        if width<60:
+            # Do not sacrifice workflow names to fit long status labels.
+            stages.append(_row(caption))
+            stages.append(_row('    '+indicator,style=style))
+        else:
+            stages.append(_row(caption,indicator,style=style))
+        measured = _progress_evidence(item,width)
+        if measured is not None:
+            stages.append(measured)
+        if detail and i==selected:
+            identifier = _facts(item,'id','run_id','phase_id','attempt')
+            if identifier is not None:stages.append(_row('    ID',identifier))
+            if kind=='run':
+                for step in _limited(_as_rows(item.get('steps')),width=width)[:3]:
+                    flag,stepstyle = _status(_facts(step,'conclusion','status'))
+                    stages.append(_row('    '+safe(step.get('name')),flag,style=stepstyle))
+            if kind=='ci':
+                attempt = _facts(item,'attempt','run_attempt')
+                if attempt is not None:stages.append(_row('    Attempt',attempt))
+    if kind=='ci' and isinstance(source.get('missing'), list):
+        for missing in _limited(source['missing'],width=width)[:3]:
+            stages.append(_row('MISSING',missing,style='yellow'))
+    if not stages:stages=[_row('No native stages observed')]
+    if len(rows)>(4 if width<60 else 7 if width<85 else 12):
+        stages.append(_row('Additional stages retained in native JSON'))
+
+    events: list[Text]=[]
+    provided = _as_rows(source.get('events'))
+    for row in provided[-(2 if width<60 else 4):]:
+        stamp = _facts(row,'timestamp','observed_at','at')
+        line = _facts(row,'message','name','phase','type','kind')
+        events.append(_row(safe(stamp) if stamp else 'time unrecorded',safe(line)))
+    if kind=='ci' and state=='CHECKS_FAILED':
+        diagnosis = source.get('diagnosis') if isinstance(source.get('diagnosis'),Mapping) else {}
+        failures = _as_rows(diagnosis.get('failures'))
+        for failure in failures[:2]:
+            for job in _as_rows(failure.get('jobs'))[:2]:
+                events.append(_row('FAIL',_facts(job,'name') or 'native job failed',style='red'))
+                for snippet in list(job.get('excerpt') or [])[:(3 if logs else 1)]:
+                    events.append(_row('  ',snippet))
+    if not events:events.append(_row('No timestamped native events provided'))
+
+    output = [_row('Original stdout/stderr and exit status remain with native command/log')]
+    if logs:
+        if log_error:
+            output.append(_row('Log GET refused',log_error,style='yellow'))
+        elif log_lines:
+            offset=min(max(0,log_page)*18,max(0,len(log_lines)-1))
+            output.append(_row(f'Lines {offset+1}–{min(len(log_lines),offset+18)} / {len(log_lines)}'))
+            for line in log_lines[offset:offset+(3 if width<60 else 8)]:
+                output.append(_row('│',line))
+        else:
+            output.append(_row('Logs not fetched; press l on a selected verified run'))
+    else:
+        output.append(_row('l logs (explicit GET only) · [ / ] pages' if kind!='overlay' else
+                           'Native output is not buffered or replaced by M6'))
+
+    proof: list[Text] = []
+    if kind=='ci':
+        proof.append(_row('Native CI',_facts(source,'state')))
+        for key in ('policy_sha256','source_binding','session_id'):
+            if source.get(key) is not None:proof.append(_row(key,source[key]))
+    elif kind=='run':
+        proof.append(_row('Provider conclusion',_facts(remote,'conclusion','status')))
+        proof.append(_row('Source binding',_facts(source,'source_binding')))
+    else:
+        proof.append(_row('Transaction',_facts(native,'transaction_id') or _facts(source,'transaction_id') or 'not recorded'))
+        proof.append(_row('Commit',_facts(native,'commit') or _facts(source,'commit') or 'not recorded'))
+        proof.append(_row('Session',_facts(source,'session_id','native_delivery_session_id') or 'not recorded'))
+    for key in ('pr_url','pr_head','ci_state'):
+        if evidence.get(key) is not None:
+            proof.append(_row(key,evidence[key]))
+    if credential:
+        # Only explicitly supplied *public* fields from existing M4 diagnostics.
+        for key in ('auth_mode','app_name','installation_id','repository_coverage',
+                    'required_capability','granted_capability','expiry_state','permission_drift',
+                    'fork_access','base_access','authenticated','authorized_for_operation',
+                    'remote_verified','required_ci_qualified'):
+            if credential.get(key) is not None:
+                proof.append(_row('M4 '+key,credential[key],key=key))
+    if kind == 'ci' and state == 'REQUIRED_CHECKS_PASSED':
+        proof.extend((_row('Native required checks passed'),_row('release NOT qualified')))
+    else:
+        proof.append(_row(status_msg))
+    hints = ('j/k navigate · Enter detail · v verbose · l logs · [/] pages · r refresh · q detach'
+             if kind!='overlay' else 'Native lifecycle events only · original logs preserved')
+
+    blocks = [title,
+              _segment('IDENTITY','repo',mode,
+                       identity[:(5 if kind=='run' else 4 if kind=='overlay' else 3)]
+                       if width<60 else identity),
+              _segment('STAGES','stage',mode,stages),
+              _segment('EVENTS','events',mode,events),
+              _segment('OUTPUT','logs',mode,output),
+              _segment('EVIDENCE','evidence',mode,proof[:5 if width<60 else len(proof)]),
+              _segment(hints,'keys',mode,[]) if verbose or width>=60 else _row('j/k · Enter · l · v · r · q')]
+    color='red' if str(state or '').casefold() in _FAILURE else 'cyan'
+    return Group(shared_panel('M6 · NATIVE LIVE',blocks,color=color,width=width))
+
+
+class OverlayLiveProjection:
+    """Read-only live projection of canonical artifact lifecycle callbacks.
+
+    The native overlay runner owns all execution, output, rollback, transactions,
+    source validation, outcomes and logs. UI failures NEVER change its verdict.
+    """
+    def __init__(self, *, source: Mapping[str, Any], enabled: bool | None = None,
+                 console: Console | None = None, env: Mapping[str,str] | None = None):
+        from .delivery_rich import terminal_rich_enabled
+        self.enabled = terminal_rich_enabled(env=env) if enabled is None else bool(enabled)
+        self.console = console or Console()
+        self.data = dict(source)
+        self.data.setdefault('completion_status', 'in_progress')
+        self.stages: deque[dict[str,Any]] = deque(maxlen=60)
+        self.events: deque[dict[str,Any]] = deque(maxlen=30)
+        self._live: Live | None = None
+        self._broken = False
+
+    def _render(self) -> Group:
+        self.data['stages'] = list(self.stages)
+        self.data['events'] = list(self.events)
+        return build_live_view('overlay',self.data,width=self.console.width)
+
+    def start(self) -> None:
+        if not self.enabled or self._broken:return
+        try:
+            self._live = Live(self._render(),console=self.console,screen=False,
+                              transient=False,auto_refresh=False,
+                              redirect_stdout=False,redirect_stderr=False,
+                              vertical_overflow='ellipsis')
+            self._live.start()
+        except Exception as exc:
+            self._warn(exc)
+
+    def stage(self, kind: str, phase: str, result: Any = None) -> None:
+        if not self.enabled or self._broken:return
+        state = ('in_progress' if result is None else
+                 'skipped' if bool(getattr(result,'skipped',False)) else
+                 'success' if getattr(result,'returncode',1)==0 else 'failure')
+        item={'name':f'{safe(kind)} · {safe(phase)}','status':state}
+        self.stages.append(item)
+        meta=getattr(result,'metadata',None)
+        moment=(meta.get('timestamp') or meta.get('at')) if isinstance(meta,Mapping) else None
+        self.events.append({'name':item['name'], 'status':state,
+                            **({'at':moment} if moment is not None else {})})
+        self._refresh()
+
+    def finish(self, result: Any) -> None:
+        if not self.enabled or self._broken:return
+        code = getattr(result,'returncode',None)
+        self.data['completion_status'] = ('success' if code==0 and not getattr(result,'skipped',False)
+                                          else 'skipped' if getattr(result,'skipped',False)
+                                          else 'failure')
+        self.events.append({'name':safe(getattr(result,'name','native operation')),
+                            'status':self.data['completion_status']})
+        metadata = getattr(result,'metadata',None)
+        if isinstance(metadata,Mapping):
+            if metadata.get('transaction_id') is not None:
+                self.data['transaction_id'] = metadata['transaction_id']
+            if metadata.get('native_delivery_session_id') is not None:
+                self.data['session_id'] = metadata['native_delivery_session_id']
+        self._refresh()
+
+    def _refresh(self) -> None:
+        if self._live is None or self._broken:return
+        try:
+            self._live.update(self._render(),refresh=True)
+        except Exception as exc:
+            self._warn(exc)
+
+    def _warn(self, exc: BaseException) -> None:
+        self._broken = True
+        try:
+            self.close()
+        finally:
+            print('M6_PRESENTATION_WARNING '+type(exc).__name__+
+                  '; native execution/result unaffected',file=sys.stderr,flush=True)
+
+    def close(self) -> None:
+        live,self._live=self._live,None
+        if live is not None:
+            try:live.stop()
+            except Exception as exc:
+                print('M6_PRESENTATION_WARNING '+type(exc).__name__+
+                      '; native execution/result unaffected',file=sys.stderr,flush=True)
+
+
+__all__ = ['safe','icon_mode','shared_panel','build_live_view','OverlayLiveProjection']

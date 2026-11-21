@@ -289,7 +289,9 @@ def build_operator_view(kind: str, payload: Mapping[str,Any], *, width: int = 80
         blocks.append(Text('Source / CI / release qualification is authoritative only in native receipts.',style='dim'))
     if verbose and payload.get('schema_version') is not None:
         blocks.append(Text('schema '+_secure('schema_version',payload['schema_version']),style='dim'))
-    return Panel(Group(*blocks),title='Devtool · Operator Workspace',border_style='red' if _style(state)=='bold red' else 'cyan',expand=False,padding=(0,1))
+    from .m6_live import shared_panel
+    return shared_panel('Devtool · Operator Workspace', blocks,
+                        color='red' if _style(state)=='bold red' else 'cyan',width=width)
 
 
 def render_operator(kind: str, payload: Mapping[str,Any], *, args: Any = None,

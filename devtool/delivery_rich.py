@@ -90,79 +90,11 @@ def ci_snapshot_view(snapshot: Mapping[str, Any], *, width: int = 80,
                      detail: bool = False, logs: bool = False,
                      log_lines: tuple[str,...] = (), log_page: int = 0,
                      log_error: str = "") -> Group:
-    """Pure Rich projection: faithful states, no success inference."""
-    narrow = width < 68
-    rows = list(snapshot.get('runs') or [])
-    state = str(snapshot.get('state') or 'WAITING_REGISTRATION')
-    summary, color = _STATES.get(state, (_truncate(state,24), 'yellow'))
-    required = list(snapshot.get('required') or [])
-    missing = list(snapshot.get('missing') or [])
-    phase = Text()
-    phase.append('DEVTOOL  ·  PR CHECKS', style='bold')
-    phase.append('   ' + summary, style=color)
-    info = Text()
-    info.append(f"poll {snapshot.get('poll','?')}", style='dim')
-    info.append(f"   required {len(required)}   observed {len(rows)}   missing {len(missing)}", style='dim')
-    table = Table(show_header=not narrow, header_style='dim', box=None,
-                  expand=True, show_edge=False, padding=(0,1))
-    if narrow:
-        table.add_column('Checks', ratio=1, overflow='fold')
-    else:
-        table.add_column('Workflow', ratio=3, overflow='ellipsis')
-        table.add_column('Result', ratio=1, no_wrap=True)
-        table.add_column('Run', ratio=1, no_wrap=True, style='dim')
-    for idx, row in enumerate(rows):
-        name = _truncate(row.get('name') or 'Unnamed', 58 if narrow else 75)
-        mark = _mark(row.get('status'), row.get('conclusion'))
-        focus = '› ' if idx == selected else '  '
-        if narrow:
-            cell=Text(focus+name+'  ', style='bold' if idx == selected else '')
-            cell.append_text(mark)
-            table.add_row(cell)
-        else:
-            table.add_row(Text(focus+name,style='bold' if idx==selected else ''),
-                          mark, str(row.get('id') or '—'))
-    for name in missing:
-        if narrow:
-            table.add_row(Text('  ' + _truncate(name,35) + '  ◷ MISSING', style='yellow'))
-        else:
-            table.add_row(Text('  ' + _truncate(name,60),style='yellow'),
-                          Text('◷ MISSING',style='yellow'), '—')
-    if not rows and not missing:
-        table.add_row('Waiting for source-bound GitHub run observations…', *(['',''] if not narrow else []))
-    body: list[Any] = [phase, info, table]
-    if detail and rows:
-        chosen = rows[min(selected,len(rows)-1)]
-        more = Text()
-        more.append('Selected  ',style='bold')
-        more.append(_truncate(chosen.get('name'),width-24))
-        more.append(f"\nRun {chosen.get('id')}  attempt {chosen.get('attempt','?')}",style='dim')
-        url=chosen.get('url')
-        if url:more.append('\n'+_truncate(url,width-5),style='cyan underline')
-        body.append(more)
-    if state != 'REQUIRED_CHECKS_PASSED':
-        body.append(Text('Native CI: NOT QUALIFIED · no release claim', style='yellow'))
-    else:
-        body.append(Text('Native required checks passed · release not qualified', style='green'))
-    if state == 'CHECKS_FAILED':
-        problems = (snapshot.get('diagnosis') or {}).get('failures') or []
-        if problems:
-            for problem in problems[:2]:
-                for job in (problem.get('jobs') or [])[:2]:
-                    label = _truncate(job.get('name') or 'Failed job', width-10)
-                    body.append(Text('✕ '+label,style='bold red'))
-                    for excerpt in (job.get('excerpt') or [])[:(8 if logs else 2)]:
-                        body.append(Text('  '+_truncate(excerpt,width-8),style='dim'))
-        elif snapshot.get('failures'):
-            body.append(Text('✕ Required check failed · inspect native diagnostics',style='red'))
-    if verbose:
-        registration = snapshot.get('registration') or {}
-        body.append(Text('Registrar '+_truncate(registration.get('event','?'),20)+
-                         ' · scanned '+str(registration.get('run_count','?'))+
-                         ' · policy '+str(snapshot.get('policy_sha256') or '')[:12],style='dim'))
-    body.append(Text('j/k select  Enter details  l logs  v verbose  r refresh  q detach',style='dim'))
-    return Group(Panel(Group(*body),border_style='red' if state=='CHECKS_FAILED' else 'cyan',
-                       padding=(0,1),expand=False))
+    """Shared M6 vertical Rich projection of existing CI evidence."""
+    from .m6_live import build_live_view
+    return build_live_view("ci", snapshot, width=width, selected=selected,
+        detail=detail, verbose=verbose, logs=logs, log_lines=log_lines,
+        log_page=log_page, log_error=log_error)
 
 
 def actions_run_view(observation: Mapping[str, Any], *, width: int = 80,
@@ -170,35 +102,11 @@ def actions_run_view(observation: Mapping[str, Any], *, width: int = 80,
                      detail: bool = False, logs: bool = False,
                      log_lines: tuple[str,...] = (), log_page: int = 0,
                      log_error: str = "") -> Group:
-    """Read-only Actions run/job/step projection from exact provider snapshots."""
-    remote=observation.get('remote') or {}
-    jobs=list(observation.get('jobs') or [])
-    header=Text('DEVTOOL · RUN ', style='bold')
-    header.append(str(remote.get('id') or '?'),style='cyan')
-    header.append('   ' + str(remote.get('conclusion') or remote.get('status') or 'pending').upper(),
-                  style='green' if remote.get('conclusion')=='success' else
-                        'red' if remote.get('conclusion') in ('failure','cancelled','timed_out') else 'yellow')
-    body: list[Any]=[header,Text(f"Jobs {sum(j.get('status')=='completed' for j in jobs)}/{len(jobs)}  ·  Attempt {remote.get('run_attempt','?')}",style='dim')]
-    for i,job in enumerate(jobs[:30]):
-        t=Text('› ' if i==selected else '  ')
-        t.append(_truncate(job.get('name') or 'job',width-30), style='bold' if i==selected else '')
-        t.append('  ')
-        t.append_text(_mark(job.get('status'),job.get('conclusion')))
-        body.append(t)
-        if detail and i==selected:
-            for step in (job.get('steps') or [])[:25]:
-                st=Text('    '+_truncate(step.get('name') or 'step',width-30)+'  ')
-                st.append_text(_mark(step.get('status'),step.get('conclusion')))
-                body.append(st)
-    if not jobs:body.append(Text('Waiting for job details…',style='dim'))
-    if logs:
-        body.append(Text('Log inspection: native run URL · no silent remote archive fetch',style='dim'))
-        if remote.get('html_url'):
-            body.append(Text(_truncate(remote['html_url'],width-5),style='cyan underline'))
-    if verbose:
-        body.append(Text('Source '+str(remote.get('head_sha') or '')[:12]+' · source binding '+str(observation.get('source_binding') or 'unverified'),style='dim'))
-    body.append(Text('j/k select  Enter steps  l logs  v verbose  r refresh  q detach',style='dim'))
-    return Group(Panel(Group(*body),border_style='red' if remote.get('conclusion')=='failure' else 'cyan',padding=(0,1),expand=False))
+    """Shared M6 vertical Rich projection of an exact provider run."""
+    from .m6_live import build_live_view
+    return build_live_view("run", observation, width=width, selected=selected,
+        detail=detail, verbose=verbose, logs=logs, log_lines=log_lines,
+        log_page=log_page, log_error=log_error)
 
 
 def _log_panel(lines: tuple[str,...], page: int, *, width: int, error: str = "") -> Panel:
@@ -250,17 +158,17 @@ class NativeRichMonitor:
 
     def render(self) -> Group:
         kwargs={'width':_width(self.console),'selected':self.selected,
-                'verbose':self.verbose,'detail':self.detail,'logs':self.log_requested}
-        primary = actions_run_view(self.last,**kwargs) if self.kind=='run' else ci_snapshot_view(self.last,**kwargs)
-        if self.log_requested:
-            return Group(primary,_log_panel(self.log_lines,self.log_page,
-                        width=kwargs['width'],error=self.log_error))
-        return primary
+                'verbose':self.verbose,'detail':self.detail,'logs':self.log_requested,
+                'log_lines':self.log_lines,'log_page':self.log_page,
+                'log_error':self.log_error}
+        return actions_run_view(self.last,**kwargs) if self.kind=='run' else ci_snapshot_view(self.last,**kwargs)
 
     def __enter__(self):
         if self.enabled:
             self._live=Live(self.render(),console=self.console,refresh_per_second=4,
-                            auto_refresh=False,transient=False,screen=False)
+                            auto_refresh=False,transient=False,screen=False,
+                            redirect_stdout=False,redirect_stderr=False,
+                            vertical_overflow="ellipsis")
             self._live.start()
             # Optional keyboard path; no keyboard hooks when attached to a pipe.
             self._keyboard=_Keyboard(self)

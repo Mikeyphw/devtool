@@ -182,4 +182,29 @@ class RichMonitorTests(unittest.TestCase):
         with m:m.observe({'state':'CHECKS_RUNNING','runs':[],'missing':[]})
         self.assertEqual(dict(os.environ),original)
 
+
+    def test_m6_ci_is_shared_vertical_portrait_not_fullscreen(self):
+        from devtool.m6_live import build_live_view
+        from rich.console import Console
+        for width in (40,52,60,80,120):
+            out=io.StringIO()
+            console=Console(file=out,width=width,color_system=None,force_terminal=False)
+            snapshot={'state':'CHECKS_FAILED','runs':[{'id':123,'name':'Required tests',
+                      'conclusion':'failure','status':'completed'}]}
+            console.print(build_live_view('ci',snapshot,width=width,icons='ascii'))
+            text=out.getvalue()
+            for label in ('IDENTITY','STAGES','EVENTS','OUTPUT','EVIDENCE','Required tests'):
+                self.assertIn(label,text)
+            self.assertTrue(all(len(line)<=width for line in text.splitlines()))
+
+    def test_m6_native_run_failure_does_not_qualify_ci(self):
+        m=NativeRichMonitor(enabled=False,kind='run')
+        m.observe({'remote':{'id':101,'run_attempt':3,'conclusion':'failure'},
+                   'jobs':[{'name':'test','conclusion':'failure','status':'completed'}]})
+        out=io.StringIO()
+        console=Console(file=out,width=52,color_system=None)
+        console.print(m.render())
+        self.assertIn('failure'.upper(),out.getvalue())
+        self.assertNotIn('Native required checks passed',out.getvalue())
+
 if __name__=='__main__':unittest.main()

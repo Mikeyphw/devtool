@@ -9174,6 +9174,14 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
                 return _return_apply(result, "$ " + " ".join(result.argv) + "\n" + result.output)
 
     _artifact_lifecycle_steps: list[dict[str, object]] = []
+    from .m6_live import OverlayLiveProjection
+    m6_overlay = OverlayLiveProjection(
+        source={'repository':str(config.repo_root),
+                'artifact':str(artifact_path),
+                'artifact_sha256':str(getattr(args,'_devtool_artifact_sha','') or '')},
+        enabled=False if any(bool(getattr(args,k,False)) for k in
+                             ('_devtool_json','json','quiet','trace')) else None,
+    )
     render_hook_progress, stream_hook_output = _artifact_hook_presentation(args)
 
     def _artifact_lifecycle_progress(kind: str, phase: str, result: OperationResult | None) -> None:
@@ -9185,6 +9193,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
                     argv=[f"artifact-{kind}", phase, artifact],
                     metadata={"validation_phase_name": display, "hook_kind": kind, "hook_phase": phase},
                 )
+            m6_overlay.stage(kind, phase, None)
             return
         result.metadata.setdefault("validation_phase_name", display)
         result.metadata.setdefault("hook_kind", kind)
@@ -9200,6 +9209,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
         })
         if tasker_progress is not None:
             tasker_progress.phase_finished(result)
+        m6_overlay.stage(kind, phase, result)
 
     _previous_transaction_commit_mode = os.environ.get("DEVTOOL_TRANSACTION_COMMIT_MODE")
     _previous_transaction_isolation = os.environ.get("DEVTOOL_TRANSACTION_ISOLATION")
@@ -9207,6 +9217,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
     os.environ["DEVTOOL_TRANSACTION_COMMIT_MODE"] = str(getattr(args, "commit_mode", "none") or "none")
     os.environ["DEVTOOL_TRANSACTION_ISOLATION"] = str(getattr(args, "isolation", "worktree") or "worktree")
     os.environ["DEVTOOL_PRESERVE_DIRTY_REQUESTED"] = "1" if bool(getattr(args, "preserve_dirty", False)) else "0"
+    m6_overlay.start()
     try:
         if name in {"apply-overlays", "aos"}:
             result = apply_overlay_bundle(
@@ -9253,6 +9264,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
                 ignore_checksum=bool(getattr(args, "ignore_checksum", False)),
                 resolved_plan=getattr(args, "_devtool_resolved_artifact_plan_object", None),
             )
+        m6_overlay.finish(result)
     finally:
         if _previous_transaction_commit_mode is None:
             os.environ.pop("DEVTOOL_TRANSACTION_COMMIT_MODE", None)
@@ -9266,6 +9278,7 @@ def _run_apply(config: ProjectConfig, args: argparse.Namespace, name: str, artif
             os.environ.pop("DEVTOOL_PRESERVE_DIRTY_REQUESTED", None)
         else:
             os.environ["DEVTOOL_PRESERVE_DIRTY_REQUESTED"] = _previous_preserve_dirty
+        m6_overlay.close()
     if result.metadata:
         transaction_path = str(result.metadata.get("transaction_path") or "").strip()
         transaction_repo_root = str(result.metadata.get("transaction_repo_root") or "").strip()
