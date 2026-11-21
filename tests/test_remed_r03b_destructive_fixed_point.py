@@ -82,6 +82,16 @@ CLASSIFIED_FILES: dict[str, str] = {
 # removed destructive call requires fresh review, without freezing unrelated
 # lines or resurrecting historical source SHA assertions.
 NEW_REVIEWED_DESTRUCTIVE_CALLS: dict[str, tuple[str, ...]] = {
+    'devtool/recovery/engine.py': (
+        'if os.path.exists(name):os.unlink(name)',
+        'if os.path.exists(tmp):os.unlink(tmp)',
+        'if tempbundle.exists():tempbundle.unlink()',
+        'if dst.is_file() and not dst.is_symlink():dst.unlink()',
+        'if dst.is_file() and not dst.is_symlink():dst.unlink()',
+        'tmp.unlink()',
+        'if dst.is_file() and not dst.is_symlink():dst.unlink()',
+        'dst.unlink()',
+    ),
     # Current verified production callsites. Preserve expression-level counting:
     # a new deletion within any of these modules must trigger fresh review.
     'devtool/delivery_adoption.py': (
@@ -134,6 +144,7 @@ NEW_REVIEWED_DESTRUCTIVE_CALLS: dict[str, tuple[str, ...]] = {
                                'if os.path.exists(name): os.unlink(name)')}
 
 NEW_REVIEWED_RATIONALES: dict[str, str] = {
+    'devtool/recovery/engine.py': 'The native recovery engine operates only on an explicitly scoped, independently backed-up recovery session. These eight local unlink callsites clean exclusive atomic-write/download/bundle staging or invalid downloaded backup objects; they are not blanket repository garbage collection or remote deletion authority. Remote recreation and destructive operations retain separate engine authorization, identity, independent-backup, and durable-journal gates. Path-based cleanup still requires separate race-safety review; this record classifies exact expressions only.',
     'devtool/delivery_adoption.py': 'S7 scaffolding owns an exclusive destination inode and unlinks on failed publication only when inode identity matches; a separate mkstemp is cleaned after attempted ZIP publication. No repository GC rights.',
     'devtool/delivery_cross_consumer.py': 'Cross-consumer review writes into exclusively created mkstemp staging; the observed os.unlink only removes unpromoted temp bytes after atomic placement, without broad deletion authority.',
     'devtool/delivery_integration_review.py': 'Integration-review output uses mkstemp then atomic os.replace, and the sole unlink removes only unpromoted temporary output on termination; not a general cleanup operation.',

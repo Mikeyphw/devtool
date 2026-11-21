@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `83fb588d9fe0ecfafa9dcb772b1ef554404e7738de202dd34e8f9ec0162952dd`
+Registry digest: `094b6bb3c23a7907cd34f503e0d0c687d09ab770927dfe7d435e7c5c31f39ea8`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -419,6 +419,25 @@ This file is generated from the CORE command/config registry and the canonical C
 - `native deliver` — Native deliver operator
 - `native ci` — Native ci operator
 - `native report` — Native report operator
+- `recovery` — Native repository recovery
+- `recovery inspect`
+- `recovery wizard`
+- `recovery sessions`
+- `recovery prepare`
+- `recovery execute`
+- `recovery reconcile-default`
+- `recovery activate-actions`
+- `recovery workflow-audit`
+- `recovery qualify-pr`
+- `recovery recover-operational`
+- `recovery credentials`
+- `recovery status`
+- `recovery attest-manual`
+- `recovery ci-check`
+- `recovery verify`
+- `recovery doctor` — Read-only local recovery prerequisites
+- `recovery plan` — Read-only remote repository feasibility inventory
+- `recovery report` — Read-only durable repository recovery report
 
 ## Configuration documents
 
