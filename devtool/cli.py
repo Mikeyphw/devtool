@@ -6359,6 +6359,14 @@ def _validation_expected_revision(args: argparse.Namespace) -> int | None:
 def _operator_view(kind: str, payload: dict, args: argparse.Namespace) -> bool:
     # Shared UX-RICH02 presentation only; native status/CI/transaction verdict
     # remains owned by the existing CLI. JSON/pipe/no-color remain unchanged.
+    if kind in ('overlay', 'transaction'):
+        from .m6_operation_view import browse_overlay, browse_transaction
+        root = Path(getattr(args, 'repo', None) or Path.cwd()).resolve()
+        if kind == 'overlay' and browse_overlay(payload, root, args=args):
+            return True
+        if (kind == 'transaction' and getattr(args, 'transaction_command', '') == 'inspect'
+                and browse_transaction(payload, root, str(payload.get('transaction_id') or ''), args=args)):
+            return True
     from .operator_rich import render_operator
     return render_operator(kind, payload, args=args)
 

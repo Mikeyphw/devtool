@@ -509,3 +509,166 @@ def test_m6_v8_refresh_and_detach_do_not_need_keyboard_render():
     except MonitorDetached: pass
     else: assert False,'detach must interrupt native wait'
     assert m.detached
+
+
+# M6.4/M6.5: canonical launcher boundaries and retained native receipt views.
+def test_m6_launcher_boundary_real_delegation_and_failure(monkeypatch,tmp_path):
+    from devtool import launcher_contract_v3 as launcher
+    from devtool import m6_operation_view as view
+    calls=[]; emitted=[]
+    monkeypatch.setattr(view,'boundary_enabled',lambda **kw:True)
+    monkeypatch.setattr(view,'emit_boundary',lambda label,state,**kw:emitted.append((label,state,kw)))
+    def native_exec(argv,**kwargs):
+        calls.append((argv,kwargs))
+        if kwargs['stage']=='native-atomic-apply-and-commit':
+            raise launcher.Refused('native refused')
+        return 'native bytes'
+    monkeypatch.setattr(launcher,'exec_cmd',native_exec)
+    assert launcher.native(tmp_path,tmp_path,'validate-overlay','artifact.zip',stage='native-validate-overlay',live=True)=='native bytes'
+    assert len(calls)==1 and calls[0][1]['live'] is True
+    assert calls[0][0][-3:]==['--no-clipboard','validate-overlay','artifact.zip']
+    assert [e[1] for e in emitted]==['started','returned; native evidence determines verdict']
+    with pytest.raises(launcher.Refused,match='native refused'):
+        launcher.native(tmp_path,tmp_path,'apply-overlay','artifact.zip',stage='native-atomic-apply-and-commit',live=True)
+    assert len(calls)==2 and 'refused' in emitted[-1][1]
+    before=len(emitted)
+    assert launcher.native(tmp_path,tmp_path,'status','--json',stage='session-status')=='native bytes'
+    assert len(emitted)==before and len(calls)==3
+
+
+def test_m6_wrapper_boundary_once_native_code_and_exception(monkeypatch):
+    from devtool import m6_operation_view as view
+    monkeypatch.setattr(view,'boundary_enabled',lambda **kwargs:True)
+    trace=[]
+    monkeypatch.setattr(view,'emit_boundary',lambda label,state,**kw:trace.append((state,kw)))
+    def invoke():
+        trace.append('invoked')
+        return 73
+    assert view.wrapper_boundary('build',['--repo','/private/path'],invoke)==73
+    assert trace.count('invoked')==1 and trace[-1][1]['rc']==73
+    def refused():
+        raise RuntimeError('original native error')
+    with pytest.raises(RuntimeError,match='original native error'):
+        view.wrapper_boundary('build',[],refused)
+    assert trace[-1][0]=='interrupted or refused'
+
+
+@pytest.mark.parametrize('args,argv',[(SimpleNamespace(json=True),()),(SimpleNamespace(machine='x'),()),(SimpleNamespace(format='json'),()),(None,('--json',)),(None,('--format=json',)),(None,('--quiet',)),(None,('--stdout-payload=raw',))])
+def test_m6_inspector_excludes_machine_output(monkeypatch,args,argv):
+    from devtool import m6_operation_view as view
+    monkeypatch.setattr(view,'terminal_rich_enabled',lambda **kw:True)
+    monkeypatch.delenv('DEVTOOL_RICH_LIVE',raising=False)
+    assert not view.boundary_enabled(args=args,argv=argv)
+
+
+def test_m6_inspector_opt_in_no_implicit_read(monkeypatch,tmp_path):
+    from devtool import m6_operation_view as view
+    monkeypatch.setattr(view,'terminal_rich_enabled',lambda **kw:True)
+    monkeypatch.delenv('DEVTOOL_RICH_LIVE',raising=False)
+    monkeypatch.delenv('DEVTOOL_UI_INSPECT',raising=False)
+    def forbidden(*args,**kw):
+        pytest.fail('unexpected native record read')
+    monkeypatch.setattr(view,'read_bound_transaction',forbidden)
+    assert not view.browse_session({'native_apply':{'transaction_id':'x'}},tmp_path)
+    monkeypatch.setenv('DEVTOOL_UI_INSPECT','1')
+    assert not view.browse_session({'native_apply':{'transaction_id':'x'}},tmp_path,args=SimpleNamespace(json=True))
+
+
+def test_m6_saved_session_no_fabricated_success_or_raw_credentials():
+    from devtool import m6_operation_view as view
+    payload={'native_apply':{'state':'COMMITTED','validation_steps':[{'name':'actual','outcome':'failed','returncode':17,'skipped':False}], 'changed_paths':['src/real.py']},'operator_status':{'state':'BLOCKED','target':{'head_sha':'a'*40,'source_binding':'drifted'},'session':{'id':'b'*32,'resumable':False},'ci':{'required':{'state':'RECORDED_NEEDS_LIVE_RECHECK','passed':False},'regression':{'state':'NOT_ATTESTED'},'release_qualification':'NOT_PERFORMED'}},'credential':{'mode':'app','installation_id':123,'token':'ghp_'+ 'A'*40,'granted_permissions':{'contents':'read','password':'hidden'},'expires_at':'2030-01-01'}}
+    before=repr(payload)
+    pages=view.session_pages(payload,tx_state='archived',tx={'status':'completed','affected_paths':[{'path':'a.py','verified':False,'restore_state':'pending'}]})
+    text=repr(pages)
+    for value in ('actual','failed','17','src/real.py','drifted','RECORDED_NEEDS_LIVE_RECHECK','NOT_ATTESTED','NOT_PERFORMED','archived','Historical receipt only','pending'):
+        assert value in text
+    assert 'ghp_' not in text and 'hidden' not in text and repr(payload)==before
+    assert '[redacted]'==view._public('https://user:pass@example.invalid')
+    assert '[redacted]'==view._public('-----BEGIN PRIVATE KEY-----\nsecret')
+    assert '\x1b' not in view._public('\x1b[2Jnative')
+
+
+@pytest.mark.parametrize('width',[40,60,80,106])
+def test_m6_saved_inspection_all_hash_cells_reachable(width):
+    from devtool import m6_operation_view as view
+    pages={1:[('source', '1234567890abcdef'*4),('artifact','目标/e\u0301/very-long-artifact.zip'),('state','UNVERIFIED')]}
+    previous=-1; output=[]
+    for page in range(20):
+        frame,index=view.render_inspection(pages,1,page,width=width,height=15)
+        if index==previous: break
+        previous=index
+        buf=io.StringIO(); out=Console(file=buf,width=width,height=15,color_system=None)
+        out.print(frame)
+        output.append(buf.getvalue())
+    result=''.join(output)
+    assert 'UNVERIFIED' in result and 'source:' in result and '目标' in result
+    assert result.count('1234567890abcdef')>=2
+    assert 'q exit' in result
+
+
+def test_m6_native_transaction_real_readers_no_recovery(tmp_path,monkeypatch):
+    from devtool import transactions
+    from devtool import m6_operation_view as view
+    root=tmp_path/'private'; root.mkdir()
+    repo=tmp_path/'repo'; repo.mkdir()
+    txid='20261121T010101Z-aabbccddeeff'
+    monkeypatch.setattr(transactions,'transaction_root',lambda path:root)
+    active=root/txid/'transaction.json'; active.parent.mkdir()
+    history=root/'history'; history.mkdir()
+    archived=history/(txid+'.json')
+    import json
+    raw=json.dumps({'transaction_id':txid,'repo_root':str(repo.resolve()),'status':'active','affected_paths':[{'path':'a.py','verified':False}]})
+    active.write_text(raw)
+    assert view.read_bound_transaction(repo,txid)[0]=='active'
+    assert active.read_text()==raw and not archived.exists()
+    archived.write_text(raw)
+    assert view.read_bound_transaction(repo,txid)[0]=='ambiguous transaction records'
+    active.unlink()
+    state,result=view.read_bound_transaction(repo,txid)
+    assert state=='archived' and result['transaction_id']==txid and archived.read_text()==raw
+    active.symlink_to(archived)
+    assert view.read_bound_transaction(repo,txid)[0]=='unsafe transaction path'
+    assert view.read_bound_transaction(repo,'../foreign')[0]=='invalid transaction identity'
+
+
+def test_m6_saved_browser_real_pty(tmp_path):
+    import sys
+    import pexpect
+    from pathlib import Path
+    code='''import os,termios,sys
+from devtool.m6_operation_view import browse_inspection
+fd=sys.stdin.fileno(); old=termios.tcgetattr(fd)
+assert browse_inspection({0:[('state','UNVERIFIED')],1:[('source','HEAD-EXACT')],5:[('validation','FAILED-REAL')]})
+assert termios.tcgetattr(fd)==old
+print('M6_PTY_RESTORED',flush=True)
+'''
+    env=os.environ.copy(); env.update(TERM='xterm-256color',DEVTOOL_UI_INSPECT='1',PYTHONPATH=str(Path(__file__).resolve().parents[1]),PYTHONDONTWRITEBYTECODE='1');
+    for name in ('CI','NO_COLOR','CLICOLOR','DEVTOOL_RICH_LIVE','COLUMNS','LINES'): env.pop(name,None)
+    child=pexpect.spawn(sys.executable,['-B','-c',code],env=env,encoding='utf-8',timeout=12,dimensions=(24,60))
+    try:
+        child.expect('UNVERIFIED'); child.send('1'); child.expect('HEAD-EXACT')
+        child.setwinsize(19,40); child.send('5'); child.expect('FAILED-REAL'); child.send('q'); child.expect('M6_PTY_RESTORED'); child.expect(pexpect.EOF)
+        child.close(); assert child.exitstatus==0
+    finally:
+        if child.isalive(): child.close(force=True)
+
+
+def test_m6_history_projection_real_child_and_rollback_only():
+    from devtool.m6_operation_view import history_pages
+    payload={'history_id':'a'*32,'child_outcomes':[{'name':'artifact-test:real','returncode':1,'skipped':False}],'validation_plan':{'validation_step_outcomes':[{'name':'real','outcome':'failed','returncode':1}]},'validation_report_path':'/private/reports/real.json','rollback_status':'rolled-back','transaction':{'id':'real','status':'rolled-back'},'token':'secret-private'}
+    pages=history_pages(payload); assert 'artifact-test:real' in repr(pages[2]); assert 'failed' in repr(pages[2]); assert 'real.json' in repr(pages[4]); assert 'rolled-back' in repr(pages[5]); assert 'secret-private' not in repr(pages)
+
+
+def test_m6_native_history_real_identity_read_only(tmp_path,monkeypatch):
+    from devtool import artifacts
+    from devtool.m6_operation_view import read_bound_history
+    import json
+    native={'history_id':'a'*32,'operation_id':'native-run','artifact_sha256':'b'*64,'commit':'c'*40,'transaction_id':'20261121T010101Z-aabbccddeeff'}
+    monkeypatch.setattr(artifacts,'operation_history_entries_dir',lambda _:tmp_path)
+    path=tmp_path/(native['history_id']+'.json')
+    payload={'history_id':native['history_id'],'operation_id':native['operation_id'],'sha256':native['artifact_sha256'],'commit_hash':native['commit'],'transaction':{'id':native['transaction_id']}}
+    raw=json.dumps(payload); path.write_text(raw)
+    assert read_bound_history(tmp_path,native)==('exact native runtime history',payload)
+    assert path.read_text()==raw
+    assert read_bound_history(tmp_path,{**native,'commit':'d'*40})[0]=='runtime history identity mismatch'
+    assert read_bound_history(tmp_path,{**native,'history_id':'../foreign'})[0]=='history identity not recorded'

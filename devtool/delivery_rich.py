@@ -184,7 +184,7 @@ class NativeRichMonitor:
     def __enter__(self):
         if self.enabled:
             self._live=Live(self.render(),console=self.console,refresh_per_second=4,
-                            auto_refresh=False,transient=True,screen=False,
+                            auto_refresh=False,transient=False,screen=False,
                             redirect_stdout=False,redirect_stderr=False,
                             vertical_overflow="ellipsis")
             self._live.start()

@@ -16,6 +16,11 @@ def _c2_operator_view(payload: dict, args: Any) -> bool:
     return render_operator('operator_status',payload,args=args)
 
 
+def _browse_saved_session(payload: dict, root: Path, args: Any) -> bool:
+    from .m6_operation_view import browse_session
+    return browse_session(payload, root, args=args)
+
+
 def run_delivery_command(args: Any) -> int:
     operation = str(getattr(args, 'delivery_session_command', '') or '')
     root = Path(str(getattr(args, 'repo', None) or Path.cwd())).expanduser().resolve(strict=False)
@@ -162,6 +167,8 @@ def run_delivery_command(args: Any) -> int:
         raise
     if bool(getattr(args,'json',False) or getattr(args,'_devtool_json',False)):
         print(json.dumps(payload,indent=2,sort_keys=True,ensure_ascii=False))
+    elif operation in ('status','resume','report') and _browse_saved_session(payload, root, args):
+        pass
     elif operation in ('status','resume','report') and _c2_operator_view(
             payload['operator_status'], args):
         pass
