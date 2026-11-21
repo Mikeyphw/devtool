@@ -89,24 +89,28 @@ def ci_snapshot_view(snapshot: Mapping[str, Any], *, width: int = 80,
                      selected: int = 0, verbose: bool = False,
                      detail: bool = False, logs: bool = False,
                      log_lines: tuple[str,...] = (), log_page: int = 0,
-                     log_error: str = "") -> Group:
+                     log_error: str = "", focus: str = "overview",
+                     focus_page: int = 0) -> Group:
     """Shared M6 vertical Rich projection of existing CI evidence."""
     from .m6_live import build_live_view
     return build_live_view("ci", snapshot, width=width, selected=selected,
         detail=detail, verbose=verbose, logs=logs, log_lines=log_lines,
-        log_page=log_page, log_error=log_error)
+        log_page=log_page, log_error=log_error,
+        focus=focus, focus_page=focus_page)
 
 
 def actions_run_view(observation: Mapping[str, Any], *, width: int = 80,
                      selected: int = 0, verbose: bool = False,
                      detail: bool = False, logs: bool = False,
                      log_lines: tuple[str,...] = (), log_page: int = 0,
-                     log_error: str = "") -> Group:
+                     log_error: str = "", focus: str = "overview",
+                     focus_page: int = 0) -> Group:
     """Shared M6 vertical Rich projection of an exact provider run."""
     from .m6_live import build_live_view
     return build_live_view("run", observation, width=width, selected=selected,
         detail=detail, verbose=verbose, logs=logs, log_lines=log_lines,
-        log_page=log_page, log_error=log_error)
+        log_page=log_page, log_error=log_error,
+        focus=focus, focus_page=focus_page)
 
 
 def _log_panel(lines: tuple[str,...], page: int, *, width: int, error: str = "") -> Panel:
@@ -148,6 +152,10 @@ class NativeRichMonitor:
         self.refresh_requested=False
         self.ui_feedback=''
         self.log_requested=False
+        self.focus='overview'
+        self.focus_before_logs='overview'
+        self.focus_page=0
+        self._feedback_deadline=0.0
         self._live: Live | None=None
         self._keyboard=None
         self.log_fetcher=log_fetcher
@@ -161,7 +169,8 @@ class NativeRichMonitor:
         kwargs={'width':_width(self.console),'selected':self.selected,
                 'verbose':self.verbose,'detail':self.detail,'logs':self.log_requested,
                 'log_lines':self.log_lines,'log_page':self.log_page,
-                'log_error':self.log_error}
+                'log_error':self.log_error,
+                'focus':self.focus,'focus_page':self.focus_page}
         presentation = dict(self.last) if self.ui_feedback else self.last
         if self.ui_feedback:
             presentation['m6_ui_feedback'] = self.ui_feedback
@@ -170,7 +179,7 @@ class NativeRichMonitor:
     def __enter__(self):
         if self.enabled:
             self._live=Live(self.render(),console=self.console,refresh_per_second=4,
-                            auto_refresh=False,transient=False,screen=False,
+                            auto_refresh=False,transient=True,screen=False,
                             redirect_stdout=False,redirect_stderr=False,
                             vertical_overflow="ellipsis")
             self._live.start()
@@ -189,6 +198,7 @@ class NativeRichMonitor:
     def observe(self,source:Mapping[str,Any]) -> None:
         if self.ui_feedback in ('REFRESH_REQUESTED','REFRESH_CONSUMED'):
             self.ui_feedback='NATIVE_OBSERVATION_RENDERED'
+            self._feedback_deadline=time.monotonic()+1.0
         elif self.ui_feedback == 'NATIVE_OBSERVATION_RENDERED':
             self.ui_feedback=''
         self.last=dict(source)
@@ -228,6 +238,9 @@ class NativeRichMonitor:
             self.log_lines=values[:50000]
         except Exception as exc:
             self.log_error='Log fetch refused: '+type(exc).__name__+' · check exact source/permissions'
+        # Fetch happens in the native observer thread; redraw its first result
+        # immediately rather than requiring a second visit to this page.
+        self.refresh()
 
     def review_failed(self) -> None:
         """Leave a failed foreground monitor available for explicit log review.
@@ -267,11 +280,17 @@ class NativeRichMonitor:
         deadline=time.monotonic()+max(0.0,float(seconds))
         while time.monotonic()<deadline:
             self._consume_log_fetch()
+            if (self.ui_feedback and self._feedback_deadline and
+                    time.monotonic() >= self._feedback_deadline):
+                self.ui_feedback=''
+                self._feedback_deadline=0.0
+                self.refresh()
             if self.detached:
                 raise MonitorDetached('Foreground UI detached; native session retained; CI NOT qualified')
             if self.refresh_requested:
                 self.refresh_requested=False
                 self.ui_feedback='REFRESH_CONSUMED'
+                self._feedback_deadline=time.monotonic()+1.0
                 self.refresh()
                 return
             time.sleep(min(0.15,max(0.0,deadline-time.monotonic())))
@@ -284,14 +303,34 @@ class NativeRichMonitor:
         elif key in ('k','up'):self.selected=max(0,self.selected-1)
         elif key in ('\r','\n','enter'):self.detail=not self.detail
         elif key=='v':self.verbose=not self.verbose
+        elif key in ('0','h'):
+            self.focus='overview';self.focus_page=0
+        elif key in ('1','2','3','4','5'):
+            self.focus={'1':'identity','2':'stages','3':'events',
+                        '4':'output','5':'evidence'}[key]
+            self.focus_page=0
+        elif key=='\t':
+            pages=('overview','identity','stages','events','output','evidence')
+            self.focus=pages[(pages.index(self.focus)+1)%len(pages)]
+            self.focus_page=0
         elif key=='l':
             self.detail=True
             self.log_requested=not self.log_requested
-            if self.log_requested:self._pending_log_fetch=True
-        elif key=='[':self.log_page=max(0,self.log_page-1)
+            if self.log_requested:
+                self.focus_before_logs=self.focus
+                self.focus='output'
+                self._pending_log_fetch=True
+            else:
+                self.focus=self.focus_before_logs
+        elif key=='[':
+            if self.log_requested:self.log_page=max(0,self.log_page-1)
+            else:self.focus_page=max(0,self.focus_page-1)
         elif key==']':
-            from .m6_live import log_page_size
-            self.log_page=min(max(0,(len(self.log_lines)-1)//log_page_size(_width(self.console))),self.log_page+1)
+            if self.log_requested:
+                from .m6_live import log_page_size
+                self.log_page=min(max(0,(len(self.log_lines)-1)//log_page_size(_width(self.console))),self.log_page+1)
+            else:
+                self.focus_page=min(1000,self.focus_page+1)
         elif key=='r':self.refresh_requested=True;self.ui_feedback='REFRESH_REQUESTED'
         elif key=='q':self.detached=True
         if self.log_requested and key in ('j','k','up','down'):

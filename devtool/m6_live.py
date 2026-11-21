@@ -159,7 +159,8 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
                     selected: int = 0, detail: bool = False, verbose: bool = False,
                     logs: bool = False, log_lines: tuple[str,...] = (),
                     log_page: int = 0, log_error: str = '',
-                    icons: str | None = None) -> Group:
+                    icons: str | None = None, focus: str = 'overview',
+                    focus_page: int = 0) -> Group:
     """One projection; no I/O, source inference or mutation side effects."""
     if not isinstance(source, Mapping):
         raise TypeError('M6 native view requires existing structured evidence')
@@ -169,6 +170,8 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
         raise ValueError('Unsupported existing icon preference')
     if kind not in ('ci','run','overlay'):
         raise ValueError('Unsupported M6 live evidence type')
+    if focus not in ('overview','identity','stages','events','output','evidence'):
+        raise ValueError('Unsupported M6 focus page')
 
     remote = source.get('remote') if isinstance(source.get('remote'), Mapping) else {}
     evidence = source.get('evidence') if isinstance(source.get('evidence'), Mapping) else {}
@@ -190,8 +193,6 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
     status_label,status_color = _status(state)
     title = Text(f'DEVTOOL · {name}', style='bold')
     title.append('  ' + status_label, style=status_color)
-    if verbose and kind in ('run', 'ci'):
-        title.append('  [VERBOSE ON]', style='bold magenta')
 
     identity = [
         _row('Repository', _facts(source,'repository','repo_root') or _facts(remote,'repository') or 'not recorded'),
@@ -222,7 +223,8 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
     elif kind == 'run':
         done = sum(x.get('status') == 'completed' for x in rows)
         stages.append(_row(f'Jobs {done}/{len(rows)}' if rows else 'No observed jobs'))
-    for i,item in enumerate(_limited(rows,width=width)):
+    visible_rows=(rows[:80] if focus=='stages' else _limited(rows,width=width))
+    for i,item in enumerate(visible_rows):
         label = _facts(item,'name','label','phase','kind')
         state_item = _facts(item,'conclusion','state','status','result')
         indicator,style=_status(state_item)
@@ -251,12 +253,12 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
         for missing in _limited(source['missing'],width=width)[:3]:
             stages.append(_row('MISSING',missing,style='yellow'))
     if not stages:stages=[_row('No native stages observed')]
-    if len(rows)>(4 if width<60 else 7 if width<85 else 12):
+    if len(rows)>len(visible_rows):
         stages.append(_row('Additional stages retained in native JSON'))
 
     events: list[Text]=[]
     provided = _as_rows(source.get('events'))
-    for row in provided[-(2 if width<60 else 4):]:
+    for row in (provided[-80:] if focus=='events' else provided[-(2 if width<60 else 4):]):
         stamp = _facts(row,'timestamp','observed_at','at')
         line = _facts(row,'message','name','phase','type','kind')
         events.append(_row(safe(stamp) if stamp else 'time unrecorded',safe(line)))
@@ -339,8 +341,6 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
     feedback = feedback_messages.get(feedback_code) if isinstance(feedback_code, str) else None
     if feedback:
         blocks.insert(1, _row('UI', feedback, style='cyan'))
-    if verbose and kind in ('run', 'ci'):
-        blocks.insert(1, _row('VIEW', 'VERBOSE ON', style='magenta'))
 
     if verbose and kind in ('run', 'ci'):
         extra = []
@@ -357,8 +357,8 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
             ])
             if kind == 'run':
                 extra.append(_row('Recorded steps',len(_as_rows(current.get('steps')))))
-        blocks.insert(2 if feedback else 1,
-                      _segment('VERBOSE DETAILS','evidence',mode,extra))
+        blocks.insert(len(blocks)-1,
+                      _segment('VERBOSE DETAILS · VERBOSE ON','evidence',mode,extra))
 
     if logs and kind in ('run', 'ci'):
         # A requested log inspection must be visible on short portrait PTYs.
@@ -381,7 +381,7 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
         right_parts = [output_block,
                        _segment('EVIDENCE','evidence',mode,proof)]
         if verbose and kind in ('run','ci'):
-            right_parts.insert(0, _segment('VERBOSE DETAILS','evidence',mode,extra))
+            right_parts.append(_segment('VERBOSE DETAILS · VERBOSE ON','evidence',mode,extra))
         grid = Table.grid(expand=True, padding=(0,2))
         grid.add_column(ratio=1, overflow='fold')
         grid.add_column(ratio=1, overflow='fold')
@@ -389,8 +389,7 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
         blocks = [title]
         if feedback:
             blocks.append(_row('UI',feedback,style='cyan'))
-        if verbose and kind in ('run','ci'):
-            blocks.append(_row('VIEW','VERBOSE ON',style='magenta'))
+        # Verbose details belong in the evidence column, not in the title area.
         blocks.extend((grid, _row(hints)))
 
     if logs and width < 100 and kind in ('ci','run'):
@@ -400,9 +399,7 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
         focused = [title]
         if feedback:
             focused.append(_row('UI',feedback,style='cyan'))
-        if verbose:
-            focused.append(_row('VIEW','LOGS · VERBOSE ON (l returns to details)',
-                                style='magenta'))
+        # Do not displace log data with a redundant verbose banner.
         if kind == 'run':
             focused.extend((_row('Run',_facts(remote,'id')),
                             _row('Attempt',_facts(remote,'run_attempt')),
@@ -412,7 +409,55 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
         focused.extend((output_block, _row(status_msg), _row(hints)))
         blocks = focused
 
-    color='red' if str(state or '').casefold() in _FAILURE else 'cyan'
+    # Focus pages work for CI, provider runs AND overlays. They are pure
+    # projections; only the existing CI monitor handles keyboard/provider GET.
+    # The overlay runner never captures stdin because native prompts own it.
+    page_labels={'identity':'IDENTITY','stages':'STAGES','events':'EVENTS',
+                 'output':'OUTPUT','evidence':'EVIDENCE'}
+    if focus != 'overview':
+        entries = {'identity':identity, 'stages':stages, 'events':events,
+                   'output':output, 'evidence':proof}[focus]
+        if focus in ('stages','events','evidence'):
+            # Bounded pager exposes evidence omitted from the overview.
+            page_size = 10 if width < 100 else 18
+            page_count = max(1,(len(entries)+page_size-1)//page_size)
+            current = min(max(0,int(focus_page)),page_count-1)
+            visible = entries[current*page_size:(current+1)*page_size]
+            page_info = _row('Page',f'{current+1}/{page_count} · recorded {len(entries)}')
+        else:
+            visible = entries
+            page_info = _row('Details',f'{len(entries)} native rows')
+        if focus == 'identity' or focus == 'evidence':
+            if width >= 100 and len(visible)>1:
+                columns=Table.grid(expand=True,padding=(0,2))
+                columns.add_column(ratio=1,overflow='fold')
+                columns.add_column(ratio=1,overflow='fold')
+                for index in range(0,len(visible),2):
+                    columns.add_row(visible[index], visible[index+1] if index+1<len(visible) else '')
+                content=[columns]
+            else:
+                content=list(visible)
+        else:
+            content=list(visible)
+        # The details drawer is anchored BELOW the selected section; never
+        # flood the top of a portrait screen with verbose metadata.
+        if verbose and kind in ('ci','run') and focus in ('stages','evidence'):
+            content.append(_segment('VERBOSE DETAILS · VERBOSE ON','evidence',mode,extra))
+        navigation=('0 overview · 1 identity · 2 stages · 3 events · 4 output · 5 evidence')
+        shortcuts=('j/k select · Enter details · [/] page · l verified logs · r refresh · q detach'
+                   if kind!='overlay' else 'Native apply runs unmodified · prompts remain native')
+        blocks=[title,_row('PAGE',page_labels[focus],style='bold cyan'),page_info,
+                _segment(page_labels[focus],
+                         {'identity':'repo','stages':'stage','events':'events',
+                          'output':'logs','evidence':'evidence'}[focus],mode,content)]
+        if feedback and focus!='output':
+            blocks.append(_row('UI',feedback,style='cyan'))
+        blocks.extend((_row(navigation),_row(shortcuts)))
+    elif kind != 'overlay':
+        # Keep all section shortcuts discoverable in the full-width overview.
+        blocks.append(_row('0 overview · 1 identity · 2 stages · 3 events · 4 output · 5 evidence'))
+
+    color='red' if str(state or '').casefold() in _FAILURE else 'cyan' 
     return Group(shared_panel('M6 · NATIVE LIVE',blocks,color=color,width=width))
 
 

@@ -315,7 +315,8 @@ def test_m6_v4_full_width_and_responsive_mode(width):
         assert 'VERBOSE DETAILS' in output
         assert 'LOCAL_LINE_09' in output
         # The responsive grid puts identity and output in the same row.
-        assert any('IDENTITY' in line and 'VERBOSE DETAILS' in line for line in lines)
+        assert 'IDENTITY' in output and 'VERBOSE DETAILS' in output
+        assert output.index('OUTPUT') < output.index('VERBOSE DETAILS')
 
 
 @pytest.mark.parametrize('width',[40,52,82,106])
@@ -357,3 +358,89 @@ def test_m6_v4_refresh_and_quit_state_preserved():
     assert monitor.detached
     assert monitor.ui_feedback == 'REFRESH_REQUESTED'
     assert monitor.last['state']=='CHECKS_RUNNING'
+
+# M6.3: focused inspection, navigation, first-fetch redraw and bounded feedback.
+@pytest.mark.parametrize('kind',["run","ci","overlay"])
+@pytest.mark.parametrize('width',[40,52,60,82,100,106,120])
+def test_m6_v6_focused_pages_are_source_only(kind,width):
+    payload={'repository':'Mikeyphw/devtool','state':'CHECKS_FAILED',
+             'source_sha':'abcd','stages':[{'name':'validation','status':'failed'}],
+             'events':[{'name':'native event','at':'2026-11-21T01:00Z'}],
+             'evidence':{'ci_state':'CHECKS_FAILED'},
+             'remote':{'id':23,'run_attempt':2,'conclusion':'failure'},
+             'jobs':[{'name':'android','status':'completed','conclusion':'failure'}],
+             'runs':[{'name':'android','status':'completed','conclusion':'failure'}]}
+    unchanged=repr(payload)
+    for focus,label in (('identity','IDENTITY'),('stages','STAGES'),
+                        ('events','EVENTS'),('output','OUTPUT'),('evidence','EVIDENCE')):
+        out=render(kind,payload,width,focus=focus)
+        assert 'PAGE '+label in out
+        assert max(map(len,out.splitlines()))<=width
+        assert out.count('M6 · NATIVE LIVE')==1
+    assert repr(payload)==unchanged
+
+
+def test_m6_v6_overview_has_sections_and_legend_without_top_verbose():
+    payload={'remote':{'id':23,'run_attempt':2,'conclusion':'failure'},'jobs':[]}
+    out=render('run',payload,106,verbose=True)
+    assert '0 overview' in out
+    assert 'VERBOSE DETAILS' in out
+    assert 'VERBOSE ON' not in out.splitlines()[1]
+    assert 'IDENTITY' in out and 'OUTPUT' in out and 'EVIDENCE' in out
+
+
+def test_m6_v6_focused_log_uses_first_local_fetch_without_provider_network():
+    snapshots=[]
+    m=NativeRichMonitor(enabled=True,console=Console(file=io.StringIO(),width=82),
+                        log_fetcher=lambda row: tuple('LOCAL_%02d'%i for i in range(20)))
+    m.observe({'remote':{'id':23,'conclusion':'failure'},'jobs':[]})
+    m.kind='run'
+    m.key('l')
+    assert m.focus=='output' and m._pending_log_fetch
+    original=m.refresh
+    m.refresh=lambda: snapshots.append(render('run',m.last,82,focus=m.focus,
+        logs=m.log_requested,log_lines=m.log_lines,log_page=m.log_page))
+    try:m._consume_log_fetch()
+    finally:m.refresh=original
+    assert len(snapshots)==1 and 'LOCAL_00' in snapshots[-1]
+    assert len(m.log_lines)==20
+
+
+def test_m6_v6_pages_tab_and_quit_are_data_preserving():
+    m=NativeRichMonitor(enabled=False)
+    original={'state':'CHECKS_FAILED','runs':[{'name':'A','conclusion':'failure'}]}
+    m.observe(original)
+    for key,page in (('1','identity'),('2','stages'),('3','events'),
+                     ('4','output'),('5','evidence'),('0','overview'),
+                     ('\t','identity'),('h','overview')):
+        m.key(key)
+        assert m.focus==page
+    m.key(']');assert m.focus_page==1
+    m.key('[');assert m.focus_page==0
+    m.key('q');assert m.detached
+    assert m.last==original
+
+
+def test_m6_v6_refresh_feedback_expires_without_extra_poll():
+    import time
+    m=NativeRichMonitor(enabled=True,console=Console(file=io.StringIO(),width=82))
+    m.observe({'state':'CHECKS_RUNNING','runs':[]})
+    m.key('r')
+    m.wait_interval(0.05)
+    assert m.ui_feedback=='REFRESH_CONSUMED'
+    m._feedback_deadline=time.monotonic()-0.01
+    m.wait_interval(0.05)
+    assert m.ui_feedback==''
+    assert m.last['state']=='CHECKS_RUNNING'
+
+
+def test_m6_v6_explicit_output_focus_does_not_fetch_automatically():
+    fetches=[]
+    m=NativeRichMonitor(enabled=True,console=Console(file=io.StringIO(),width=82),
+                        log_fetcher=lambda row: fetches.append(row) or ('test',))
+    m.kind='run'
+    m.observe({'remote':{'id':23},'jobs':[]})
+    m.key('4');m._consume_log_fetch()
+    assert m.focus=='output' and fetches==[]
+    m.key('l');m._consume_log_fetch()
+    assert len(fetches)==1
