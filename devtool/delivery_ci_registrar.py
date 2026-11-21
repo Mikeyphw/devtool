@@ -37,75 +37,127 @@ def _date(value: Any) -> datetime:
     return result.astimezone(timezone.utc)
 
 
+
+
+
 def registration_window(session: Mapping[str, Any], horizon_seconds: int,
-                        *, now: datetime | None = None) -> dict[str, Any]:
+                        *, now: datetime | None = None,
+                        verified_pr_times: tuple[str | None, str | None] | None = None) -> dict[str, Any]:
+    """Build finite event windows from independently verified PR timestamps.
+
+    A delivery session may precede its PR by hours. Each verified PR anchor
+    receives its own *bounded* horizon; do not widen a session window across
+    arbitrary time or infer an event timestamp from a matching workflow run.
+    Retain the creation window if a later PR update/comment changes updated_at.
+    Exact workflow/PR/SHA/attempt checks still own qualification.
+    """
     if type(horizon_seconds) is not int or not 60 <= horizon_seconds <= 7200:
         raise DeliverySessionError('CI registration horizon must be 60..7200 seconds')
     began = _date(session.get('created_at'))
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if began > now + timedelta(seconds=_CLOCK_SKEW_SECONDS):
         raise DeliverySessionError('Delivery session timestamp is in the future')
-    deadline = began + timedelta(seconds=horizon_seconds)
-    return {'began': began, 'deadline': deadline, 'now': now,
-            'expired': now > deadline,
-            'started_at': began.isoformat(), 'deadline_at': deadline.isoformat(),
-            'horizon_seconds': horizon_seconds}
+    anchors: list[tuple[str, datetime]] = [('session_created_at', began)]
+    if verified_pr_times is not None:
+        if not isinstance(verified_pr_times, tuple) or len(verified_pr_times) != 2:
+            raise DeliverySessionError('Invalid verified PR registration timestamps')
+        created_raw, updated_raw = verified_pr_times
+        if created_raw is not None:
+            created = _date(created_raw)
+            if created > now + timedelta(seconds=_CLOCK_SKEW_SECONDS):
+                raise DeliverySessionError('Verified PR creation is in the future')
+            if created > began:
+                anchors.append(('verified_pr_created_at', created))
+            if updated_raw is not None:
+                updated = _date(updated_raw)
+                if updated < created or updated > now + timedelta(seconds=_CLOCK_SKEW_SECONDS):
+                    raise DeliverySessionError('Verified PR update time is invalid')
+                if updated > began and updated > created:
+                    anchors.append(('verified_pr_updated_at', updated))
+        elif updated_raw is not None:
+            raise DeliverySessionError('PR update timestamp lacks creation evidence')
+    # At most three bounded windows; avoid duplicate anchors without relying on
+    # the undocumented ordering of provider-side run lists.
+    ranges: list[dict[str, Any]] = []
+    seen: set[datetime] = set()
+    for source, anchor in anchors:
+        if anchor in seen:
+            continue
+        seen.add(anchor)
+        ranges.append({'began': anchor, 'deadline': anchor + timedelta(seconds=horizon_seconds),
+                       'source': source})
+    newest = max(ranges, key=lambda x: x['began'])
+    return {'began': newest['began'], 'deadline': newest['deadline'], 'now': now,
+            'expired': all(now > x['deadline'] for x in ranges),
+            'started_at': newest['began'].isoformat(),
+            'deadline_at': newest['deadline'].isoformat(),
+            'horizon_seconds': horizon_seconds, 'anchor_source': newest['source'],
+            'ranges': tuple(ranges)}
 
 
 def collect_runs(client: Any, slug: str, *, window: Mapping[str, Any] | None = None,
                  event: str = '') -> list[dict[str, Any]]:
-    """Exhaustive, session-window/event-scoped GitHub CI registration scan.
+    """Exhaustively scan event/time-scoped runs, without guessing identities.
 
-    Repository-wide runs are NOT a meaningful bound: a popular repo may have
-    >500 older runs unrelated to this session. For real GitHub clients, filter
-    the trusted API inventory by the fixed registration window and event,
-    validate total_count and EVERY page, and refuse on any truncation or drift.
-    Fake/legacy test clients retain the previous conservative interface.
+    Each registered window is <= 2 hours. Disjoint PR/session windows are
+    queried independently and deduplicated by immutable provider run ID.
+    Missing pages, inconsistent totals, duplicate IDs with different bodies,
+    or a combined inventory >= 500 all fail closed.
     """
     from .github_actions import GitHubActionsClient
     if window is not None and isinstance(client, GitHubActionsClient):
         from urllib.parse import urlencode
         if event not in _EVENTS:
             raise DeliverySessionError('Invalid scoped CI event')
-        start = window['began'] - timedelta(seconds=_CLOCK_SKEW_SECONDS)
-        end = min(window['deadline'], window['now']) + timedelta(seconds=_CLOCK_SKEW_SECONDS)
-        if end < start:
-            raise DeliverySessionError('Invalid scoped CI registration time window')
+        spans = tuple(window.get('ranges') or (window,))
+        if len(spans) < 1 or len(spans) > 3:
+            raise DeliverySessionError('Invalid bounded CI registration anchor count')
+
         def utc_stamp(value: datetime) -> str:
             return value.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-        date_filter = utc_stamp(start) + '..' + utc_stamp(end)
-        rows: list[dict[str, Any]] = []
-        ids: set[int] = set()
-        count: int | None = None
-        for page in range(1, 1 + (MAX_RESULTS + 99) // 100):
-            query = urlencode({'event': event, 'created': date_filter,
-                               'per_page': 100, 'page': page})
-            result = client._get(f'/repos/{slug}/actions/runs?{query}')
-            total = result.get('total_count')
-            items = result.get('workflow_runs')
-            if (type(total) is not int or total < 0 or total >= MAX_RESULTS or
-                    (count is not None and count != total) or
-                    not isinstance(items, list) or len(items) > 100):
-                raise DeliverySessionError('CI registration pagination totals are incomplete or inconsistent')
-            count = total
-            for item in items:
-                if not isinstance(item, dict) or item.get('event') != event:
-                    raise DeliverySessionError('CI registration API event filter was not honored')
-                rid = item.get('id')
-                if type(rid) is not int or rid <= 0 or rid in ids:
-                    raise DeliverySessionError('CI registration pagination duplicate or invalid run ID')
-                ids.add(rid)
-                created = _date(item.get('created_at'))
-                if not start <= created <= end:
-                    raise DeliverySessionError('CI registration API created filter was not honored')
-            rows.extend(items)
-            if len(rows) > total:
-                raise DeliverySessionError('CI registration pagination exceeded declared total')
-            if len(rows) == total:
-                return rows
-            if len(items) != 100:
-                raise DeliverySessionError('CI registration pagination ended before declared total')
-        raise DeliverySessionError('CI registration pagination exceeded bounded session window capacity')
+
+        unique: dict[int, dict[str, Any]] = {}
+        for span in spans:
+            start = span['began'] - timedelta(seconds=_CLOCK_SKEW_SECONDS)
+            end = min(span['deadline'], window['now']) + timedelta(seconds=_CLOCK_SKEW_SECONDS)
+            if end < start:
+                raise DeliverySessionError('Invalid scoped CI registration time window')
+            date_filter = utc_stamp(start) + '..' + utc_stamp(end)
+            count: int | None = None
+            found: set[int] = set()
+            for page in range(1, 1 + (MAX_RESULTS + 99) // 100):
+                query = urlencode({'event': event, 'created': date_filter,
+                                   'per_page': 100, 'page': page})
+                result = client._get(f'/repos/{slug}/actions/runs?{query}')
+                total = result.get('total_count')
+                items = result.get('workflow_runs')
+                if (type(total) is not int or total < 0 or total >= MAX_RESULTS or
+                        (count is not None and count != total) or
+                        not isinstance(items, list) or len(items) > 100):
+                    raise DeliverySessionError('CI registration pagination totals are incomplete or inconsistent')
+                count = total
+                for item in items:
+                    if not isinstance(item, dict) or item.get('event') != event:
+                        raise DeliverySessionError('CI registration API event filter was not honored')
+                    rid = item.get('id')
+                    if type(rid) is not int or rid <= 0 or rid in found:
+                        raise DeliverySessionError('CI registration pagination duplicate or invalid run ID')
+                    found.add(rid)
+                    created = _date(item.get('created_at'))
+                    if not start <= created <= end:
+                        raise DeliverySessionError('CI registration API created filter was not honored')
+                    if rid in unique and unique[rid] != item:
+                        raise DeliverySessionError('CI run changed across registration anchors')
+                    unique[rid] = item
+                if len(found) > total or len(unique) >= MAX_RESULTS:
+                    raise DeliverySessionError('CI registration inventory exceeds bounded limit')
+                if len(found) == total:
+                    break
+                if len(items) != 100:
+                    raise DeliverySessionError('CI registration pagination ended before declared total')
+            else:
+                raise DeliverySessionError('CI registration pagination exceeded bounded session window capacity')
+        return list(unique.values())
     if callable(getattr(client, '_paged', None)):
         rows = client._paged(slug, f'/repos/{slug}/actions/runs', 'workflow_runs',
                              max_results=MAX_RESULTS)
@@ -235,9 +287,13 @@ def select_registration(rows: list[dict[str, Any]], session: Mapping[str, Any],
         except DeliverySessionError:
             unknown_time.add(name)
             continue
-        if (registered < window['began'] - timedelta(seconds=_CLOCK_SKEW_SECONDS)
-                or registered > window['deadline'] + timedelta(seconds=_CLOCK_SKEW_SECONDS)
-                or registered > window['now'] + timedelta(seconds=_CLOCK_SKEW_SECONDS)):
+        spans = window.get('ranges') or (window,)
+        in_any_window = any(
+            span['began'] - timedelta(seconds=_CLOCK_SKEW_SECONDS) <= registered
+            <= span['deadline'] + timedelta(seconds=_CLOCK_SKEW_SECONDS)
+            for span in spans
+        )
+        if not in_any_window or registered > window['now'] + timedelta(seconds=_CLOCK_SKEW_SECONDS):
             continue
         if event == 'workflow_dispatch':
             # A legacy 204, unknown POST, or merely same-branch candidate is
@@ -269,6 +325,7 @@ def select_registration(rows: list[dict[str, Any]], session: Mapping[str, Any],
             'run_count': len(rows), 'event':event,
             'deadline_at':window['deadline_at'], 'started_at':window['started_at'],
             'horizon_seconds':window['horizon_seconds'], 'expired':window['expired'],
+            'anchor_source':window.get('anchor_source', 'session_created_at'),
             'dispatch_uncorrelated': event == 'workflow_dispatch' and not dispatch_run_ids}
 
 

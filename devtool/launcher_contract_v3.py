@@ -1058,15 +1058,28 @@ def runtime_probe(repo:Path,devtool_root:Path,m:dict[str,Any])->None:
     say('LAUNCHER_V3_DEVTOOL_BOUND module='+actual+' schema_pinned=yes native_probes=2')
 
 
+def _presentation_boundary(stage: str, *, enabled: bool = True):
+    if enabled:
+        try:
+            from .m6_operation_view import launcher_boundary
+            return launcher_boundary(stage)
+        except ImportError:
+            pass
+    return contextlib.nullcontext()
+
+
 def native(repo:Path,devtool_root:Path,*parts:str,stage:str,timeout:float=120,
            live:bool=False,tty_live:bool=False)->str:
     # The supported native global flag prevents both the post-run copy prompt
     # and automatic copying. Only Devtool CLI children receive this option;
     # never replace internal overlay file transactions with clipboard controls.
-    return exec_cmd([sys.executable,'-B','-m','devtool','--host','--repo',str(repo),
-                     '--no-clipboard',*parts],
-                    stage=stage,cwd=devtool_root,devtool_root=devtool_root,target_root=repo,
-                    timeout=timeout,live=live,tty_live=tty_live)
+    # Stage chrome never owns the child's terminal. Machine receipt captures
+    # remain pure; the authoritative command/result path is unchanged.
+    with _presentation_boundary(stage, enabled=live):
+        return exec_cmd([sys.executable,'-B','-m','devtool','--host','--repo',str(repo),
+                         '--no-clipboard',*parts],
+                        stage=stage,cwd=devtool_root,devtool_root=devtool_root,target_root=repo,
+                        timeout=timeout,live=live,tty_live=tty_live)
 
 
 def native_json(repo:Path,devtool_root:Path,*parts:str,stage:str)->dict[str,Any]:
@@ -1322,9 +1335,11 @@ def native_adopt_committed(repo:Path,devtool_root:Path,archive:Path,commit:str)-
 def apply_package(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,bytes],approve_remote:bool,
                   *,watch_ci:bool=False,checks:int=25,interval:int=8)->int:
     require_feature_delivery_branch(m)
-    check_source(repo,m);runtime_probe(repo,devtool_root,m)
+    with _presentation_boundary('source-preflight'):
+        check_source(repo,m);runtime_probe(repo,devtool_root,m)
     ci_policy=required_ci_preflight(repo,devtool_root,m) if watch_ci else None
-    archive=scaffold(repo,devtool_root,m,payload)
+    with _presentation_boundary('native-scaffold'):
+        archive=scaffold(repo,devtool_root,m,payload)
     # Full mode delegates executable tests/tasks/scripts to the existing
     # native Devtool validator and transaction. Static is explicitly bounded
     # and cannot silently skip declared validation.tests/tasks.
@@ -1340,8 +1355,9 @@ def apply_package(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,b
     native(repo,devtool_root,'apply','overlay',str(archive),'--yes','--commit',
            m['delivery']['commit_message'],'--commit-mode','new',*native_flags,
            '--keep-artifact',stage='native-atomic-apply-and-commit',timeout=1800,live=True)
-    after=repo_identity(repo,clean=False)
-    verify_postcommit_status(repo)
+    with _presentation_boundary('postcommit-proof'):
+        after=repo_identity(repo,clean=False)
+        verify_postcommit_status(repo)
     # A newly added required-CI policy cannot be checked before its
     # source-bound native commit. Once committed, verify it through
     # native Devtool before starting CI observation. Existing malformed
@@ -1361,7 +1377,8 @@ def apply_package(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,b
     say('LAUNCHER_V3_COMMITTED source='+after['source_sha'])
     # The existing native authority MUST adopt the original committed artifact
     # history before a session may authorize push/PR/CI. No synthetic receipts.
-    receipt=native_adopt_committed(repo,devtool_root,archive,after['source_sha'])
+    with _presentation_boundary('native-committed-history-adoption'):
+        receipt=native_adopt_committed(repo,devtool_root,archive,after['source_sha'])
     sid=receipt['id']
     say('LAUNCHER_V3_SESSION_ID '+sid)
     say('LAUNCHER_V3_RESUME_COMMAND: python3 -B PACKAGE.pyz status --repo PATH --devtool-repo PATH --session-id '+sid)
@@ -1396,7 +1413,8 @@ def runtime_command(args:argparse.Namespace,package:Path)->int:
     if op != 'inspect':
         repo,devtool_root=prepare_worktrees(repo,devtool_root,m,allow_ff=not getattr(args,'no_auto_ff',False),operation=op)
     if op=='check':
-        check_source(repo,m);runtime_probe(repo,devtool_root,m)
+        with _presentation_boundary('source-preflight'):
+            check_source(repo,m);runtime_probe(repo,devtool_root,m)
         archive=scaffold(repo,devtool_root,m,payload)
         say('LAUNCHER_V3_READ_ONLY_NATIVE_VALIDATION_PASS archive='+str(archive));return 0
     if op=='apply':
@@ -1911,7 +1929,10 @@ def _main_impl()->int:
                 result=unittest.TextTestRunner(verbosity=2).run(suite)
                 if not result.wasSuccessful() or result.testsRun<57:return 2
                 say('LAUNCHER_V3_SELF_TESTS_PASS count='+str(result.testsRun));return 0
-            if args.command=='build':build_package(args);return 0
+            if args.command=='build':
+                with _presentation_boundary('build-package'):
+                    build_package(args)
+                return 0
         else:
             if args.command in ('ci','apply') and (args.checks<1 or args.checks>60 or args.interval<1 or args.interval>120):
                 raise Refused('INVALID_BOUNDED_CI_POLLING')

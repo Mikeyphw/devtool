@@ -64,7 +64,12 @@ def execute_wrapper_resolution(
         command=resolution.command or resolution.command_spelling or wrapper_resolution_command_token(resolution),
         wrapper_schema=str(resolution.schema),
     ):
-        return int(reenter(canonical))
+        try:
+            from .m6_operation_view import wrapper_boundary
+        except ImportError:
+            return int(reenter(canonical))
+        return wrapper_boundary(wrapper_resolution_command_token(resolution), canonical,
+                                lambda: int(reenter(canonical)))
 
 
 @dataclass(frozen=True, slots=True)

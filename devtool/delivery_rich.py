@@ -89,116 +89,28 @@ def ci_snapshot_view(snapshot: Mapping[str, Any], *, width: int = 80,
                      selected: int = 0, verbose: bool = False,
                      detail: bool = False, logs: bool = False,
                      log_lines: tuple[str,...] = (), log_page: int = 0,
-                     log_error: str = "") -> Group:
-    """Pure Rich projection: faithful states, no success inference."""
-    narrow = width < 68
-    rows = list(snapshot.get('runs') or [])
-    state = str(snapshot.get('state') or 'WAITING_REGISTRATION')
-    summary, color = _STATES.get(state, (_truncate(state,24), 'yellow'))
-    required = list(snapshot.get('required') or [])
-    missing = list(snapshot.get('missing') or [])
-    phase = Text()
-    phase.append('DEVTOOL  ·  PR CHECKS', style='bold')
-    phase.append('   ' + summary, style=color)
-    info = Text()
-    info.append(f"poll {snapshot.get('poll','?')}", style='dim')
-    info.append(f"   required {len(required)}   observed {len(rows)}   missing {len(missing)}", style='dim')
-    table = Table(show_header=not narrow, header_style='dim', box=None,
-                  expand=True, show_edge=False, padding=(0,1))
-    if narrow:
-        table.add_column('Checks', ratio=1, overflow='fold')
-    else:
-        table.add_column('Workflow', ratio=3, overflow='ellipsis')
-        table.add_column('Result', ratio=1, no_wrap=True)
-        table.add_column('Run', ratio=1, no_wrap=True, style='dim')
-    for idx, row in enumerate(rows):
-        name = _truncate(row.get('name') or 'Unnamed', 58 if narrow else 75)
-        mark = _mark(row.get('status'), row.get('conclusion'))
-        focus = '› ' if idx == selected else '  '
-        if narrow:
-            cell=Text(focus+name+'  ', style='bold' if idx == selected else '')
-            cell.append_text(mark)
-            table.add_row(cell)
-        else:
-            table.add_row(Text(focus+name,style='bold' if idx==selected else ''),
-                          mark, str(row.get('id') or '—'))
-    for name in missing:
-        if narrow:
-            table.add_row(Text('  ' + _truncate(name,35) + '  ◷ MISSING', style='yellow'))
-        else:
-            table.add_row(Text('  ' + _truncate(name,60),style='yellow'),
-                          Text('◷ MISSING',style='yellow'), '—')
-    if not rows and not missing:
-        table.add_row('Waiting for source-bound GitHub run observations…', *(['',''] if not narrow else []))
-    body: list[Any] = [phase, info, table]
-    if detail and rows:
-        chosen = rows[min(selected,len(rows)-1)]
-        more = Text()
-        more.append('Selected  ',style='bold')
-        more.append(_truncate(chosen.get('name'),width-24))
-        more.append(f"\nRun {chosen.get('id')}  attempt {chosen.get('attempt','?')}",style='dim')
-        url=chosen.get('url')
-        if url:more.append('\n'+_truncate(url,width-5),style='cyan underline')
-        body.append(more)
-    if state != 'REQUIRED_CHECKS_PASSED':
-        body.append(Text('Native CI: NOT QUALIFIED · no release claim', style='yellow'))
-    else:
-        body.append(Text('Native required checks passed · release not qualified', style='green'))
-    if state == 'CHECKS_FAILED':
-        problems = (snapshot.get('diagnosis') or {}).get('failures') or []
-        if problems:
-            for problem in problems[:2]:
-                for job in (problem.get('jobs') or [])[:2]:
-                    label = _truncate(job.get('name') or 'Failed job', width-10)
-                    body.append(Text('✕ '+label,style='bold red'))
-                    for excerpt in (job.get('excerpt') or [])[:(8 if logs else 2)]:
-                        body.append(Text('  '+_truncate(excerpt,width-8),style='dim'))
-        elif snapshot.get('failures'):
-            body.append(Text('✕ Required check failed · inspect native diagnostics',style='red'))
-    if verbose:
-        registration = snapshot.get('registration') or {}
-        body.append(Text('Registrar '+_truncate(registration.get('event','?'),20)+
-                         ' · scanned '+str(registration.get('run_count','?'))+
-                         ' · policy '+str(snapshot.get('policy_sha256') or '')[:12],style='dim'))
-    body.append(Text('j/k select  Enter details  l logs  v verbose  r refresh  q detach',style='dim'))
-    return Group(Panel(Group(*body),border_style='red' if state=='CHECKS_FAILED' else 'cyan',
-                       padding=(0,1),expand=False))
+                     log_error: str = "", focus: str = "overview",
+                     focus_page: int = 0) -> Group:
+    """Shared M6 vertical Rich projection of existing CI evidence."""
+    from .m6_live import build_live_view
+    return build_live_view("ci", snapshot, width=width, selected=selected,
+        detail=detail, verbose=verbose, logs=logs, log_lines=log_lines,
+        log_page=log_page, log_error=log_error,
+        focus=focus, focus_page=focus_page)
 
 
 def actions_run_view(observation: Mapping[str, Any], *, width: int = 80,
                      selected: int = 0, verbose: bool = False,
                      detail: bool = False, logs: bool = False,
                      log_lines: tuple[str,...] = (), log_page: int = 0,
-                     log_error: str = "") -> Group:
-    """Read-only Actions run/job/step projection from exact provider snapshots."""
-    remote=observation.get('remote') or {}
-    jobs=list(observation.get('jobs') or [])
-    header=Text('DEVTOOL · RUN ', style='bold')
-    header.append(str(remote.get('id') or '?'),style='cyan')
-    header.append('   ' + str(remote.get('conclusion') or remote.get('status') or 'pending').upper(),
-                  style='green' if remote.get('conclusion')=='success' else
-                        'red' if remote.get('conclusion') in ('failure','cancelled','timed_out') else 'yellow')
-    body: list[Any]=[header,Text(f"Jobs {sum(j.get('status')=='completed' for j in jobs)}/{len(jobs)}  ·  Attempt {remote.get('run_attempt','?')}",style='dim')]
-    for i,job in enumerate(jobs[:30]):
-        t=Text('› ' if i==selected else '  ')
-        t.append(_truncate(job.get('name') or 'job',width-30), style='bold' if i==selected else '')
-        t.append('  ')
-        t.append_text(_mark(job.get('status'),job.get('conclusion')))
-        body.append(t)
-        if detail and i==selected:
-            for step in (job.get('steps') or [])[:25]:
-                st=Text('    '+_truncate(step.get('name') or 'step',width-30)+'  ')
-                st.append_text(_mark(step.get('status'),step.get('conclusion')))
-                body.append(st)
-    if not jobs:body.append(Text('Waiting for job details…',style='dim'))
-    if logs:
-        body.append(Text('Log inspection: native run URL · no silent remote archive fetch',style='dim'))
-        if remote.get('html_url'):
-            body.append(Text(_truncate(remote['html_url'],width-5),style='cyan underline'))
-    if verbose:
-        body.append(Text('Source '+str(remote.get('head_sha') or '')[:12]+' · source binding '+str(observation.get('source_binding') or 'unverified'),style='dim'))
-    body.append(Text('j/k select  Enter steps  l logs  v verbose  r refresh  q detach',style='dim'))
-    return Group(Panel(Group(*body),border_style='red' if remote.get('conclusion')=='failure' else 'cyan',padding=(0,1),expand=False))
+                     log_error: str = "", focus: str = "overview",
+                     focus_page: int = 0) -> Group:
+    """Shared M6 vertical Rich projection of an exact provider run."""
+    from .m6_live import build_live_view
+    return build_live_view("run", observation, width=width, selected=selected,
+        detail=detail, verbose=verbose, logs=logs, log_lines=log_lines,
+        log_page=log_page, log_error=log_error,
+        focus=focus, focus_page=focus_page)
 
 
 def _log_panel(lines: tuple[str,...], page: int, *, width: int, error: str = "") -> Panel:
@@ -238,7 +150,12 @@ class NativeRichMonitor:
         self.detail=False
         self.detached=False
         self.refresh_requested=False
+        self.ui_feedback=''
         self.log_requested=False
+        self.focus='overview'
+        self.focus_before_logs='overview'
+        self.focus_page=0
+        self._feedback_deadline=0.0
         self._live: Live | None=None
         self._keyboard=None
         self.log_fetcher=log_fetcher
@@ -246,21 +163,30 @@ class NativeRichMonitor:
         self.log_page=0
         self.log_error=''
         self._pending_log_fetch=False
+        self._ui_dirty=False
         self._log_identity=None
 
     def render(self) -> Group:
         kwargs={'width':_width(self.console),'selected':self.selected,
-                'verbose':self.verbose,'detail':self.detail,'logs':self.log_requested}
-        primary = actions_run_view(self.last,**kwargs) if self.kind=='run' else ci_snapshot_view(self.last,**kwargs)
-        if self.log_requested:
-            return Group(primary,_log_panel(self.log_lines,self.log_page,
-                        width=kwargs['width'],error=self.log_error))
+                'verbose':self.verbose,'detail':self.detail,'logs':self.log_requested,
+                'log_lines':self.log_lines,'log_page':self.log_page,
+                'log_error':self.log_error,
+                'focus':self.focus,'focus_page':self.focus_page}
+        presentation = dict(self.last) if self.ui_feedback else self.last
+        if self.ui_feedback:
+            presentation['m6_ui_feedback'] = self.ui_feedback
+        primary = actions_run_view(presentation,**kwargs) if self.kind=='run' else ci_snapshot_view(presentation,**kwargs)
+        if self.enabled:
+            from .m6_live import BoundedLiveFrame
+            return BoundedLiveFrame(primary)
         return primary
 
     def __enter__(self):
         if self.enabled:
             self._live=Live(self.render(),console=self.console,refresh_per_second=4,
-                            auto_refresh=False,transient=False,screen=False)
+                            auto_refresh=False,transient=False,screen=False,
+                            redirect_stdout=False,redirect_stderr=False,
+                            vertical_overflow="ellipsis")
             self._live.start()
             # Optional keyboard path; no keyboard hooks when attached to a pipe.
             self._keyboard=_Keyboard(self)
@@ -275,6 +201,11 @@ class NativeRichMonitor:
         return False
 
     def observe(self,source:Mapping[str,Any]) -> None:
+        if self.ui_feedback in ('REFRESH_REQUESTED','REFRESH_CONSUMED'):
+            self.ui_feedback='NATIVE_OBSERVATION_RENDERED'
+            self._feedback_deadline=time.monotonic()+1.0
+        elif self.ui_feedback == 'NATIVE_OBSERVATION_RENDERED':
+            self.ui_feedback=''
         self.last=dict(source)
         if self.detached:
             raise MonitorDetached('Foreground UI detached; native session retained; CI NOT qualified')
@@ -312,6 +243,9 @@ class NativeRichMonitor:
             self.log_lines=values[:50000]
         except Exception as exc:
             self.log_error='Log fetch refused: '+type(exc).__name__+' · check exact source/permissions'
+        # Fetch happens in the native observer thread; redraw its first result
+        # immediately rather than requiring a second visit to this page.
+        self.refresh()
 
     def review_failed(self) -> None:
         """Leave a failed foreground monitor available for explicit log review.
@@ -337,6 +271,11 @@ class NativeRichMonitor:
             except (OSError,AttributeError,ValueError):
                 new_width = shutil.get_terminal_size((80,24)).columns
             self.console.width = max(40,min(180,new_width))
+            try:
+                # Android zoom/rotation can change the actual PTY height.
+                self.console.height=max(8,min(120,os.get_terminal_size(sys.stdin.fileno()).lines))
+            except (OSError,AttributeError,ValueError):
+                pass
             self._live.update(self.render(),refresh=True)
 
     def wait_interval(self,seconds:float)->None:
@@ -351,10 +290,22 @@ class NativeRichMonitor:
         deadline=time.monotonic()+max(0.0,float(seconds))
         while time.monotonic()<deadline:
             self._consume_log_fetch()
+            if self._ui_dirty:
+                # Only the native main observer renders to the PTY.
+                self._ui_dirty=False
+                self.refresh()
+            if (self.ui_feedback and self._feedback_deadline and
+                    time.monotonic() >= self._feedback_deadline):
+                self.ui_feedback=''
+                self._feedback_deadline=0.0
+                self.refresh()
             if self.detached:
                 raise MonitorDetached('Foreground UI detached; native session retained; CI NOT qualified')
             if self.refresh_requested:
                 self.refresh_requested=False
+                self.ui_feedback='REFRESH_CONSUMED'
+                self._feedback_deadline=time.monotonic()+1.0
+                self.refresh()
                 return
             time.sleep(min(0.15,max(0.0,deadline-time.monotonic())))
         if self.detached:
@@ -366,17 +317,45 @@ class NativeRichMonitor:
         elif key in ('k','up'):self.selected=max(0,self.selected-1)
         elif key in ('\r','\n','enter'):self.detail=not self.detail
         elif key=='v':self.verbose=not self.verbose
+        elif key in ('0','h'):
+            self.focus='overview';self.focus_page=0
+        elif key in ('1','2','3','4','5'):
+            self.focus={'1':'identity','2':'stages','3':'events',
+                        '4':'output','5':'evidence'}[key]
+            self.focus_page=0
+        elif key=='\t':
+            pages=('overview','identity','stages','events','output','evidence')
+            self.focus=pages[(pages.index(self.focus)+1)%len(pages)]
+            self.focus_page=0
         elif key=='l':
             self.detail=True
             self.log_requested=not self.log_requested
-            if self.log_requested:self._pending_log_fetch=True
-        elif key=='[':self.log_page=max(0,self.log_page-1)
-        elif key==']':self.log_page=min(max(0,(len(self.log_lines)-1)//18),self.log_page+1)
-        elif key=='r':self.refresh_requested=True
+            if self.log_requested:
+                self.focus_before_logs=self.focus
+                self.focus='output'
+                self._pending_log_fetch=True
+            else:
+                self.focus=self.focus_before_logs
+        elif key=='[':
+            if self.log_requested:self.log_page=max(0,self.log_page-1)
+            else:self.focus_page=max(0,self.focus_page-1)
+        elif key==']':
+            if self.log_requested:
+                from .m6_live import log_page_size
+                self.log_page=min(max(0,(len(self.log_lines)-1)//log_page_size(_width(self.console))),self.log_page+1)
+            else:
+                self.focus_page=min(1000,self.focus_page+1)
+        elif key=='r':self.refresh_requested=True;self.ui_feedback='REFRESH_REQUESTED'
         elif key=='q':self.detached=True
         if self.log_requested and key in ('j','k','up','down'):
             self._pending_log_fetch=True
-        self.refresh()
+        # Keyboard worker updates state only; never prints/repositions Live.
+        # The next bounded native wait/observer cycle owns redrawing.
+        self._ui_dirty=True
+        if self._keyboard is None or (
+                __import__('threading').current_thread() is not self._keyboard.thread):
+            self._ui_dirty=False
+            self.refresh()
 
 
 class _Keyboard:
@@ -415,7 +394,13 @@ class _Keyboard:
                     if more:
                         nxt=os.read(self.fd,2)
                         value='up' if nxt==b'[A' else 'down' if nxt==b'[B' else ''
-                if value:self.monitor.key(value)
+                if value:
+                    try:
+                        self.monitor.key(value)
+                    except Exception as exc:
+                        # Diagnostic only; preserve the keyboard, especially q.
+                        print("M6_KEYBOARD_CALLBACK_WARNING "+type(exc).__name__+
+                              "; keyboard remains active",file=sys.stderr,flush=True)
             except (OSError,ValueError):
                 return
 
