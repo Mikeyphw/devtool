@@ -12,12 +12,14 @@ from unittest.mock import patch
 from devtool.recovery import __version__
 from devtool.recovery import engine, native_cli, provider, health
 
+_IMPORT_TIME_HOME = Path.home()  # Before pytest fixture patches HOME.
+
 class NativeRecoveryContractTests(unittest.TestCase):
     def test_engine_is_native_source_package(self):
         self.assertTrue(engine.__name__.startswith('devtool.recovery.'))
         self.assertEqual(engine.VERSION,__version__)
         self.assertNotIn('repo_rebuild',engine.__name__)
-        self.assertEqual(engine.DEFAULT_ROOT,Path.home()/'.local/share/devtool/recovery')
+        self.assertEqual(engine.DEFAULT_ROOT,_IMPORT_TIME_HOME/'.local/share/devtool/recovery')
 
     def test_client_does_not_execute_standalone_app(self):
         import inspect

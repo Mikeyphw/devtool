@@ -6151,3 +6151,190 @@ Native source-bound report without duplicating delivery engines
 | `--session-id NATIVE_SESSION_ID` | Previously adopted native delivery session Required. |
 | `--repo REPO` | Source-bound Git worktree Required. |
 
+### `devtool recovery`
+
+Native GitHub repository backup, recreation and recovery
+
+**Subcommands:** `inspect`, `wizard`, `sessions`, `prepare`, `execute`, `reconcile-default`, `activate-actions`, `workflow-audit`, `qualify-pr`, `recover-operational`, `credentials`, `status`, `attest-manual`, `ci-check`, `verify`, `doctor`, `plan`, `report`
+
+### `devtool recovery inspect`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `RECOVERY_REPOSITORY` | Accepted by this command. |
+
+### `devtool recovery wizard`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `RECOVERY_REPOSITORY` | OWNER/REPO |
+| `--root ROOT` | Accepted by this command. |
+| `--independent-copy-dir INDEPENDENT_COPY_DIR` | Accepted by this command. |
+| `--accept-local-only-risk` | Accepted by this command. |
+| `--secrets-vault SECRETS_VAULT` | Accepted by this command. |
+| `--age-identity AGE_IDENTITY` | Accepted by this command. |
+| `--accept-missing-secrets` | Accepted by this command. |
+| `--accept-manual-recovery` | Accepted by this command. |
+| `--credentials-policy CREDENTIALS_POLICY` | Source-bound external credential dependency policy |
+| `--accept-credential-manual-risk` | Danger: acknowledge PAT manual reauthorization; post gate remains unverified |
+
+### `devtool recovery sessions`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `RECOVERY_REPOSITORY` | Accepted by this command. |
+| `--root ROOT` | Accepted by this command. |
+
+### `devtool recovery prepare`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `RECOVERY_REPOSITORY` | OWNER/REPO |
+| `--root ROOT` | Accepted by this command. |
+| `--accept-archive-gaps` | Explicitly accept expired/unavailable Actions logs/artifacts |
+| `--skip-logs` | Archive run metadata/artifacts but deliberately skip logs |
+| `--skip-action-artifacts` | Keep Actions artifact metadata; skip historical ZIP downloads |
+| `--max-artifact-mb MAX_ARTIFACT_MB` | Accepted by this command. |
+| `--session SESSION` | Resume partial backup session |
+| `--independent-copy-dir INDEPENDENT_COPY_DIR` | Write a verified snapshot to a different filesystem |
+| `--accept-local-only-risk` | Danger: approve same-device local backups with no independent copy |
+| `--secrets-vault SECRETS_VAULT` | Age-encrypted JSON recovery vault; never stored in snapshot |
+| `--age-identity AGE_IDENTITY` | Age private identity file, mode 0600 |
+| `--accept-missing-secrets` | Danger: explicitly accept secrets that cannot be recovered |
+| `--accept-manual-recovery` | Danger: accept integrations/scan gaps that cannot be automatically recovered |
+| `--credentials-policy CREDENTIALS_POLICY` | JSON declaration of cross-repository PAT and GitHub App credentials |
+| `--accept-credential-manual-risk` | Danger: PAT manual reauthorization acknowledged; never claims access verified |
+
+### `devtool recovery execute`
+
+**Aliases:** `devtool recovery run`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session SESSION` | Required. |
+| `--ack-delete ACK_DELETE` | Exact OWNER/REPO confirmation; required on first run |
+| `--secrets-vault SECRETS_VAULT` | Same encrypted vault used in prepare |
+| `--age-identity AGE_IDENTITY` | Age identity for vault (0600) |
+| `--adopt-created-repo-id ADOPT_CREATED_REPO_ID` | Explicitly adopt previously created replacement ID after investigating crash |
+| `--accept-base-drift` | Accept changed upstream default base SHA for restored PRs |
+| `--post-recovery` | After restore, perform explicitly approved post-recreation stages |
+| `--ack-reconcile-default ACK_RECONCILE_DEFAULT` | Exact repo consent to reconcile fork default ref |
+| `--ack-enable-actions ACK_ENABLE_ACTIONS` | Exact repo consent to restore Actions policy |
+| `--pr PR` | Optional restored PR for hosted CI qualification |
+| `--required-workflow REQUIRED_WORKFLOW` | Reviewed required workflow names/paths if no base policy exists |
+| `--ack-retrigger ACK_RETRIGGER` | Exact OWNER/REPO#PR consent to close/reopen PR |
+| `--watch` | Accepted by this command. |
+| `--timeout-seconds TIMEOUT_SECONDS` | Accepted by this command. |
+
+### `devtool recovery reconcile-default`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session SESSION` | Required. |
+| `--ack-reconcile-default ACK_RECONCILE_DEFAULT` | Exact OWNER/REPO required for branch rename and ref restoration |
+
+### `devtool recovery activate-actions`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session SESSION` | Required. |
+| `--ack-enable-actions ACK_ENABLE_ACTIONS` | Exact OWNER/REPO required to enable Actions |
+
+### `devtool recovery workflow-audit`
+
+**Aliases:** `devtool recovery workflows`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session SESSION` | Required. |
+| `--record` | Persist the read-only audit evidence in the session |
+
+### `devtool recovery qualify-pr`
+
+**Aliases:** `devtool recovery qualify`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session SESSION` | Required. |
+| `--pr PR` | Required. |
+| `--required-workflow REQUIRED_WORKFLOW` | Reviewed workflow path or name; required if no Devtool policy at PR base |
+| `--ack-retrigger ACK_RETRIGGER` | Exact OWNER/REPO#NUMBER permission to close/reopen PR once |
+| `--watch` | Poll current live run status until complete or timeout |
+| `--timeout-seconds TIMEOUT_SECONDS` | Accepted by this command. |
+
+### `devtool recovery recover-operational`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session SESSION` | Required. |
+| `--ack-reconcile-default ACK_RECONCILE_DEFAULT` | Exact OWNER/REPO for default-branch repair |
+| `--ack-enable-actions ACK_ENABLE_ACTIONS` | Exact OWNER/REPO for Actions activation |
+| `--pr PR` | Optional restored PR to qualify |
+| `--required-workflow REQUIRED_WORKFLOW` | Explicit CI path/name if policy absent |
+| `--ack-retrigger ACK_RETRIGGER` | Exact OWNER/REPO#NUMBER to close/reopen PR |
+| `--watch` | Accepted by this command. |
+| `--timeout-seconds TIMEOUT_SECONDS` | Accepted by this command. |
+
+### `devtool recovery credentials`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session SESSION` | Required. |
+| `--policy POLICY` | Attach policy after recreation; immutable once bound |
+| `--apply-app` | Add recreated repo to approved selected-repository App installation |
+| `--apply-pat` | Reprovision a validated supplied PAT to declared Actions secret hosts |
+| `--ack-pat-provision ACK_PAT_PROVISION` | Exact OWNER/REPO approval for Actions secret replacement |
+| `--ack-app-repair ACK_APP_REPAIR` | Exact OWNER/REPO approval to update App installation |
+| `--record` | Persist audit evidence without exposing secret values |
+
+### `devtool recovery status`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session SESSION` | Required. |
+
+### `devtool recovery attest-manual`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session SESSION` | Required. |
+| `--ack-external-recovery ACK_EXTERNAL_RECOVERY` | Exact OWNER/REPO plus manual confirmation of external repairs Required. |
+
+### `devtool recovery ci-check`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session SESSION` | Required. |
+| `--workflow WORKFLOW` | Registered .github/workflows/*.yml Required. |
+| `--ref REF` | Named branch Required. |
+| `--ack-dispatch ACK_DISPATCH` | Exact OWNER/REPO confirmation Required. |
+| `--timeout-seconds TIMEOUT_SECONDS` | Accepted by this command. |
+
+### `devtool recovery verify`
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session SESSION` | Required. |
+
+### `devtool recovery doctor`
+
+Read-only local recovery prerequisites
+
+This command has no additional public command-local arguments.
+
+### `devtool recovery plan`
+
+Read-only remote repository feasibility inventory
+
+| Argument / option | Meaning |
+| --- | --- |
+| `RECOVERY_REPOSITORY` | OWNER/REPO |
+
+### `devtool recovery report`
+
+Read-only durable repository recovery report
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--session SESSION` | Existing recovery session Required. |
+
