@@ -335,7 +335,13 @@ class _Keyboard:
                     if more:
                         nxt=os.read(self.fd,2)
                         value='up' if nxt==b'[A' else 'down' if nxt==b'[B' else ''
-                if value:self.monitor.key(value)
+                if value:
+                    try:
+                        self.monitor.key(value)
+                    except Exception as exc:
+                        # Diagnostic only; preserve the keyboard, especially q.
+                        print("M6_KEYBOARD_CALLBACK_WARNING "+type(exc).__name__+
+                              "; keyboard remains active",file=sys.stderr,flush=True)
             except (OSError,ValueError):
                 return
 

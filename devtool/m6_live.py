@@ -16,6 +16,7 @@ from typing import Any
 from rich.console import Console, Group
 from rich.live import Live
 from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 
 # Provider output, filenames, paths and journal fields are ALL untrusted text.
@@ -122,7 +123,7 @@ def shared_panel(title: str, blocks: Sequence[object], *, color: str = 'cyan',
                  width: int = 80) -> Panel:
     """Shared inline single-column chrome for CI, overlay, and operator views."""
     return Panel(Group(*blocks), title=title, border_style=color, padding=(0,1),
-                 expand=False, width=None)
+                 expand=True, width=None)
 
 
 def _limited(rows: Sequence[Any], *, width: int) -> list[Any]:
@@ -367,6 +368,49 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
                             if block is output_block)
         blocks.insert(2 + bool(feedback) + 2 * bool(verbose),
                       blocks.pop(output_index))
+
+    if width >= 100:
+        # Full-width, true two-column layout on roomy Termux PTYs. A single
+        # panel uses the entire viewport; log inspection is not duplicated.
+        # Pure Rich composition only: no provider calls or new facts.
+        left = Group(
+            _segment('IDENTITY','repo',mode,identity),
+            _segment('STAGES','stage',mode,stages),
+            _segment('EVENTS','events',mode,events),
+        )
+        right_parts = [output_block,
+                       _segment('EVIDENCE','evidence',mode,proof)]
+        if verbose and kind in ('run','ci'):
+            right_parts.insert(0, _segment('VERBOSE DETAILS','evidence',mode,extra))
+        grid = Table.grid(expand=True, padding=(0,2))
+        grid.add_column(ratio=1, overflow='fold')
+        grid.add_column(ratio=1, overflow='fold')
+        grid.add_row(left,Group(*right_parts))
+        blocks = [title]
+        if feedback:
+            blocks.append(_row('UI',feedback,style='cyan'))
+        if verbose and kind in ('run','ci'):
+            blocks.append(_row('VIEW','VERBOSE ON',style='magenta'))
+        blocks.extend((grid, _row(hints)))
+
+    if logs and width < 100 and kind in ('ci','run'):
+        # Log-focus mode prevents short portrait PTYs from clipping requested
+        # evidence beneath stages, events and expanded verbose metadata.
+        # 'l' restores the complete vertical view, without changing source.
+        focused = [title]
+        if feedback:
+            focused.append(_row('UI',feedback,style='cyan'))
+        if verbose:
+            focused.append(_row('VIEW','LOGS · VERBOSE ON (l returns to details)',
+                                style='magenta'))
+        if kind == 'run':
+            focused.extend((_row('Run',_facts(remote,'id')),
+                            _row('Attempt',_facts(remote,'run_attempt')),
+                            _row('Source',_facts(remote,'head_sha'))))
+        else:
+            focused.append(_row('Native CI',_facts(source,'state')))
+        focused.extend((output_block, _row(status_msg), _row(hints)))
+        blocks = focused
 
     color='red' if str(state or '').casefold() in _FAILURE else 'cyan'
     return Group(shared_panel('M6 · NATIVE LIVE',blocks,color=color,width=width))

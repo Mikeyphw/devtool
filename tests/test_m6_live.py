@@ -289,3 +289,71 @@ def test_m6_ux_legacy_log_lines_contract(width):
     assert 'real failure' in output
     assert 'verysecret' not in output
     assert all(len(line)<=width for line in output.splitlines())
+
+# M6.2 UX audit: full-width composition, compact log focus, callback resilience.
+@pytest.mark.parametrize('width',[40,52,60,80,82,99,100,106,120])
+def test_m6_v4_full_width_and_responsive_mode(width):
+    sample={'remote':{'id':23,'run_attempt':2,'head_sha':'abcd',
+                       'status':'completed','conclusion':'failure'},
+            'source_binding':'matching',
+            'jobs':[{'name':'Android tests','status':'completed','conclusion':'failure'}]}
+    output=render('run',sample,width,verbose=True,detail=True,
+                  logs=True,log_lines=tuple('LOCAL_LINE_%02d'%i for i in range(1,33)),
+                  log_page=1)
+    lines=output.splitlines()
+    assert max(map(len,lines)) == width
+    assert all(len(line) <= width for line in lines)
+    assert 'Log page 2/' in output
+    assert 'Lines ' in output
+    assert 'Attempt 2' in output
+    if width < 100:
+        assert 'STAGES' not in output, 'compact log-focus should keep logs visible'
+        assert len(lines) <= 22
+    else:
+        assert 'STAGES' in output
+        assert 'EVIDENCE' in output
+        assert 'VERBOSE DETAILS' in output
+        assert 'LOCAL_LINE_09' in output
+        # The responsive grid puts identity and output in the same row.
+        assert any('IDENTITY' in line and 'VERBOSE DETAILS' in line for line in lines)
+
+
+@pytest.mark.parametrize('width',[40,52,82,106])
+def test_m6_v4_refresh_feedback_visible_during_logs(width):
+    source={'remote':{'id':23,'run_attempt':2,'conclusion':'failure'},
+            'source_binding':'matching',
+            'm6_ui_feedback':'REFRESH_REQUESTED', 'jobs':[]}
+    output=render('run',source,width,logs=True,log_lines=('real failure',))
+    assert 'Refresh requested' in output
+    assert 'real failure' in output
+    assert all(len(line)<=width for line in output.splitlines())
+
+
+def test_m6_v4_keyboard_keeps_processing_q_after_bad_callback():
+    from devtool.delivery_rich import _Keyboard
+    from unittest.mock import patch
+    keys=[]
+    class FailingCallback:
+        def key(self,value):
+            keys.append(value)
+            if value=='r':
+                raise AttributeError('synthetic callback regression')
+            if value=='q':
+                keyboard.stop_requested=True
+    keyboard=_Keyboard(FailingCallback())
+    keyboard.fd=123
+    with (patch('select.select',side_effect=[([123],[],[]),([123],[],[])]),
+          patch('os.read',side_effect=[b'r',b'q'])):
+        keyboard._run()
+    assert keys==['r','q']
+
+
+def test_m6_v4_refresh_and_quit_state_preserved():
+    monitor=NativeRichMonitor(enabled=False)
+    monitor.observe({'state':'CHECKS_RUNNING','runs':[]})
+    monitor.key('r')
+    monitor.key('q')
+    assert monitor.refresh_requested
+    assert monitor.detached
+    assert monitor.ui_feedback == 'REFRESH_REQUESTED'
+    assert monitor.last['state']=='CHECKS_RUNNING'
