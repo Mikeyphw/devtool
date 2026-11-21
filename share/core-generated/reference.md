@@ -1,6 +1,6 @@
 # Devtool generated CORE reference
 
-Registry digest: `094b6bb3c23a7907cd34f503e0d0c687d09ab770927dfe7d435e7c5c31f39ea8`
+Registry digest: `239c926009bba12446f160ddfe70c7125aeb1e6cccc929aca820685d8195f2c9`
 
 This file is generated from the CORE command/config registry and the canonical CLI schema.
 
@@ -438,6 +438,12 @@ This file is generated from the CORE command/config registry and the canonical C
 - `recovery doctor` — Read-only local recovery prerequisites
 - `recovery plan` — Read-only remote repository feasibility inventory
 - `recovery report` — Read-only durable repository recovery report
+- `credentials` — M7 credential health and guided recovery
+- `credentials doctor` — M7 credential health and guided recovery
+- `credentials repair` — M7 credential health and guided recovery
+- `credentials drift` — M7 credential health and guided recovery
+- `credentials predelete` — M7 credential health and guided recovery
+- `credentials postrecreate` — M7 credential health and guided recovery
 
 ## Configuration documents
 
