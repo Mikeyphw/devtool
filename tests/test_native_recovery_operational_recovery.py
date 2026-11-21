@@ -87,6 +87,9 @@ class ReconcileTests(unittest.TestCase):
         rr.write_json(self.s/'report.json',{'recovery_classification':'RESTORED_WITH_ACTION_REQUIRED'})
         self.gh=FakeGitHub()
         patches=[
+            # This suite isolates the original branch/Actions transaction;
+            # credential failure injection is exercised in the new boundary suite.
+            patch('devtool.recovery.credentials.post_restore',return_value={'status':'verified'}),
             patch.object(rr,'verify_pair',return_value={}),
             patch.object(rr,'require_independent_backup',return_value=None),
             patch.object(rr,'get_new_repo',side_effect=self.gh.info),

@@ -256,6 +256,10 @@ def activate_actions(session: Path, *, ack_repo: str | None = None):
             rr.log('Historical workflow registrations, run IDs and CI remain unqualified')
             rr.log('No mutation made. To authorize: --ack-enable-actions '+repo)
             return
+        from . import credentials
+        proof=credentials.post_restore(session,state,apply_apps=False,apply_pats=False,record=True)
+        rr.require(proof.get('status')=='verified',
+                   'external credential authorization and required federation evidence unverified; Actions activation refused')
         state['post_recovery_actions_activation']='intent'
         rr.save_state(session,state)
         rr.restore_actions_enabled_after_safety(session,state,unresolved=False)

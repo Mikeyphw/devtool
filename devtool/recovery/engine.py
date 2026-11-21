@@ -109,7 +109,7 @@ def safe_root(path:Path):
 def run(argv, *, cwd=None, timeout=180, input_data=None, check=True, capture=True):
     args=[str(a) for a in argv]
     env=os.environ.copy()
-    env.update({'GH_PROMPT_DISABLED':'1','GIT_TERMINAL_PROMPT':'0',
+    env.update({'GH_HOST':'github.com','GH_PROMPT_DISABLED':'1','GIT_TERMINAL_PROMPT':'0',
                 'DEVTOOL_EXECUTION_PRESENTATION':'plain','DEVTOOL_JOB_UI':'plain',
                 'DEVTOOL_TEXTUAL_APPLY_HOST':'0','DEVTOOL_TEXTUAL_EXECUTION_HOST':'0'})
     try:
@@ -1189,7 +1189,9 @@ def prepare(session:Path, *, accept_archive_gaps=False, skip_logs=False,
         if state['stage']=='prepared':
             verify_pair(session,state)
             require_independent_backup(session,state)
-            log('Backups already verified',style='green');return
+            from . import credentials
+            credentials.verify_preparation_anchor(session,state)
+            log('Backups and credential preparation anchor already verified',style='green');return
         repo=state['repo']
         for exe in ('gh','git'):
             require(shutil.which(exe),f'{exe} is required')
@@ -1202,6 +1204,8 @@ def prepare(session:Path, *, accept_archive_gaps=False, skip_logs=False,
         repo=info['full_name']
         state['repo']=repo
         save_state(session,state)
+        from . import credentials
+        credentials.require_declaration(session,state,credentials_policy)
         require(info and info.get('permissions',{}).get('admin'),
                 'repository admin permission required for recreation')
         owner=info.get('owner') or {}
@@ -1283,6 +1287,7 @@ def prepare(session:Path, *, accept_archive_gaps=False, skip_logs=False,
                          accept_manual_recovery=accept_manual_recovery,
                          credentials_policy=credentials_policy,
                          accept_credential_manual_risk=accept_credential_manual_risk)
+        credentials.seal_preparation(session,state,info['id'])
         predelete_compare(primary)
         state['manifest_sha256']=sha256(primary/'MANIFEST.json')
         state['original_repo_id']=info['id']
@@ -1326,16 +1331,26 @@ def get_new_repo(state,*,optional=False):
 
 def delete_original(session,state):
     if state['stage'] not in ('prepared','delete-intent'):return
+    from . import credentials
+    require(state.get('approved') is True,'exact deletion approval not journaled')
     if state['stage']=='prepared':
         require_independent_backup(session,state)
         require(not state.get('preflight_blockers'),'preflight no longer cleared')
+        credentials.verify_preparation_anchor(session,state)
         predelete_compare(session/'primary')
         state['stage']='delete-intent';save_state(session,state)
     existing=repo_info(state['repo'])
     if existing is not None:
-        predelete_compare(session/'primary')
         require(existing['id']==state['original_repo_id'],
                 'different repository now occupies target; refuse delete')
+        credentials.recheck_before_delete(session,state)
+        # Preserve the original complete source/metadata drift check at the last
+        # possible boundary, after the additional credential observations.
+        predelete_compare(session/'primary')
+        # Recheck target identity after credential/dependency observations.
+        immediately_current=repo_info(state['repo'])
+        require(immediately_current is not None and immediately_current.get('id')==state['original_repo_id'],
+                'original repository changed during final credential gate; refuse delete')
         log(f'Deleting EXACT original repository ID {existing["id"]}',style='yellow bold')
         p=run(['gh','repo','delete',state['repo'],'--yes'],timeout=240,check=False)
         if p.returncode:
@@ -2247,7 +2262,7 @@ def final_verify(session,state):
         write_json(session/'report.json', _rr_report)
         log('ACTION REQUIRED: some Actions workflows are not registered; see report.json', style='yellow')
     from . import credentials
-    credential_acceptance=credentials.post_restore(session,state,apply_apps=True,record=True)
+    credential_acceptance=credentials.post_restore(session,state,apply_apps=False,record=True)
     pending_manual=list(state.get('manual_obligations',[]))
     org_selected=read_json(b/'configuration.json').get('organization',{}).get('selected',[])
     if org_selected and len(set(state.get('org_rebound',[])))>=len(org_selected):
@@ -2464,10 +2479,12 @@ def render_status(session,state):
                         ('Approved deletion',state.get('approved')),
                         ('Independent copy',state.get('independent_copy') or 'NOT VERIFIED'),
                         ('Unresolved secrets',len(state.get('missing_secret_names',[]))),
-                        ('Manual recovery',len(state.get('manual_obligations',[])))]:
+                        ('Manual recovery',len(state.get('manual_obligations',[]))),
+                        ('Credential recovery',state.get('credential_recovery_status') or 'NOT_ATTESTED')]:
         t.add_row(label,str(value))
     CONSOLE.print(t)
-    for name in ('readiness.json','migration-plan.json','report.json'):
+    for name in ('readiness.json','credential-readiness.json','credential-predelete-recheck.json',
+                 'credential-acceptance.json','migration-plan.json','report.json'):
         if (session/name).is_file():log('Evidence: '+str(session/name),style='blue')
 
 def archive_release_assets(repo,root,max_bytes,allow_gaps):

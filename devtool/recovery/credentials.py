@@ -81,6 +81,7 @@ def _verify_policy(policy: dict, repo: str) -> dict:
             rr.require(isinstance(hosts,list) and len(hosts)<=25 and
                        all(isinstance(h,str) and SAFE_REPO.fullmatch(h) for h in hosts),
                        'invalid secret_hosts for '+name)
+            rr.require(len(set(hosts))==len(hosts),'duplicate secret host for '+name)
         else:
             installation_id=item.get('installation_id')
             rr.require(type(installation_id) is int and installation_id>0,
@@ -237,8 +238,12 @@ def _pat_verify(item:dict, *, source: str, provision=False,
                 rr.require(session is not None and journal is not None,
                            'PAT provisioning requires a durable recovery session')
                 for host in item['secret_hosts']:
-                    # Idempotent: after a lost response we retry the same secret
-                    # value, never accept name-only metadata as proof.
+                    # A lost response leaves an unresolved intent. A secret
+                    # value cannot be read back, so a later token cannot be
+                    # assumed to be the exact previously submitted value.
+                    prior=journal.get('pat_provision_intents',{}).get(name+'@'+host)
+                    rr.require(not prior or prior.get('phase')=='verified',
+                               'PAT provision response uncertain; inspect and reconcile outside automatic replay')
                     state={'credential':name,'repository':host,
                            'replacement_id':journal.get('created_new_id'), 'phase':'intent'}
                     journal.setdefault('pat_provision_intents',{})[name+'@'+host]=state
@@ -348,7 +353,7 @@ def _app_verify(item:dict, repo:str, *, apply=False, journal=None, session=None)
     return result
 
 
-def preflight(session: Path, state:dict, policy_path:Path|None, *, accept_manual=False) -> dict:
+def preflight(session: Path, state:dict, policy_path:Path|None, *, accept_manual=False, record=True) -> dict:
     """Mandatory feasibility gate before original repository deletion.
 
     A PAT tied to selected repository identities cannot be fixed automatically
@@ -362,6 +367,13 @@ def preflight(session: Path, state:dict, policy_path:Path|None, *, accept_manual
                       {n for n in source_audit.get('referenced_secret_names',[])
                        if HIGH_RISK.search(n) and n not in ('GITHUB_TOKEN','GH_TOKEN')})
     bound=session/'credential-policy.json'
+    if not record:
+        rr.require(policy_path is None and bound.is_file() and not bound.is_symlink(),
+                   'credential recheck requires the existing bound policy')
+    if state.get('credential_policy_sha256'):
+        rr.require(bound.is_file() and not bound.is_symlink() and
+                   rr.sha256(bound)==state['credential_policy_sha256'],
+                   'bound credential policy changed since preparation')
     if policy_path is not None:
         policy=load_policy(policy_path,state['repo'])
         if bound.exists():
@@ -393,15 +405,146 @@ def preflight(session: Path, state:dict, policy_path:Path|None, *, accept_manual
             'entries':entries,'unclassified':unknown,'manual_obligations':needs_manual,
             'status':'blocked' if blocked else 'prepared-with-credential-obligations' if needs_manual
                      else 'prepared-no-known-credential-dependencies'}
-    rr.write_json(session/'credential-readiness.json',result)
-    state['credential_policy_sha256']=result['policy_sha256']
-    state['credential_manual_risk_accepted']=bool(accept_manual)
-    state['credential_preflight']=result['status']
-    rr.save_state(session,state)
+    if record:
+        rr.write_json(session/'credential-readiness.json',result)
+        state['credential_policy_sha256']=result['policy_sha256']
+        state['credential_manual_risk_accepted']=bool(accept_manual)
+        state['credential_preflight']=result['status']
+        rr.save_state(session,state)
     rr.require(not blocked,'credential pre-deletion feasibility BLOCKED; see credential-readiness.json. '
                'Use --credentials-policy and resolve dependencies, or explicitly '
                '--accept-credential-manual-risk (never marks credentials operational).')
     return result
+
+
+def require_declaration(session: Path, state: dict, policy_path: Path | None) -> dict:
+    """An empty declaration is explicit; absence cannot imply no inbound dependencies."""
+    from . import external_dependencies as external
+    rr = _rr()
+    bound = session / 'credential-policy.json'
+    rr.require(policy_path is not None or bound.is_file(),
+               'explicit --credentials-policy required (declare even an empty credentials list)')
+    policy = load_policy(policy_path if policy_path is not None else bound, state['repo'])
+    if bound.exists():
+        rr.require(not bound.is_symlink() and rr.read_json(bound) == policy,
+                   'stored credential policy is immutable for this session')
+    external.validate_policy(policy)
+    return policy
+
+
+def _admin_observation(repo, expected_id):
+    """Same intended REST administrator and actual gh lifecycle identity, read-only.
+
+    This is current-repository authorization, not proof of future repository
+    selection or deletion/creation scope.  Never log a token or provider body.
+    """
+    rr = _rr()
+    admin_env = 'DEVTOOL_RECOVERY_ADMIN_TOKEN'
+    actor = _token_api('user', admin_env)
+    admin = _token_api('repos/' + repo, admin_env)
+    try:
+        env = os.environ.copy()
+        env.update({'GH_HOST':'github.com', 'GH_PROMPT_DISABLED':'1', 'GIT_TERMINAL_PROMPT':'0'})
+        def read_cli(endpoint):
+            p = subprocess.run(['gh','api','--hostname','github.com',endpoint],
+                               env=env, capture_output=True, text=True, timeout=70)
+            rr.require(p.returncode == 0, 'GitHub lifecycle CLI identity probe failed (redacted)')
+            return json.loads(p.stdout)
+        cli_actor = read_cli('user')
+        cli_admin = read_cli('repos/' + repo)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        raise rr.Refused('GitHub lifecycle CLI identity probe unavailable (redacted)') from None
+    rr.require(isinstance(actor,dict) and isinstance(cli_actor,dict),
+               'Recovery administrator account evidence malformed')
+    login = actor.get('login')
+    rr.require(isinstance(login, str) and bool(login) and cli_actor.get('login') == login,
+               'Recovery REST and lifecycle CLI authenticated identities differ')
+    for row in (admin, cli_admin):
+        rr.require(isinstance(row, dict) and row.get('full_name') == repo and
+                   row.get('id') == expected_id and (row.get('permissions') or {}).get('admin') is True,
+                   'Current exact-repository administrator access not independently proved')
+    return {'repository':repo, 'repository_id':expected_id, 'login':login, 'admin':True}
+
+
+def seal_preparation(session: Path, state: dict, original_id: int) -> None:
+    """Anchor the successful immutable policy, readiness, external inventory and actor."""
+    rr = _rr()
+    from . import external_dependencies as external
+    policy = require_declaration(session, state, None)
+    bound = session / 'credential-policy.json'
+    ready = session / 'credential-readiness.json'
+    original = rr.read_json(ready)
+    digest = rr.sha256(bound)
+    rr.require(type(original_id) is int and original_id > 0 and
+               state.get('credential_policy_sha256') == digest == original.get('policy_sha256') and
+               original.get('repo') == state['repo'] and
+               original.get('status') in ('prepared-with-credential-obligations','prepared-no-known-credential-dependencies'),
+               'credential readiness not prepared or policy identity mismatch')
+    observation = external.observe(policy, expected_target_id=original_id)
+    admin = _admin_observation(state['repo'], original_id)
+    state['credential_readiness_sha256'] = rr.sha256(ready)
+    state['external_credential_inventory'] = observation
+    state['credential_deletion_authority'] = admin
+    rr.save_state(session, state)
+
+
+def verify_preparation_anchor(session: Path, state: dict):
+    rr = _rr()
+    from . import external_dependencies as external
+    bound = session / 'credential-policy.json'
+    ready = session / 'credential-readiness.json'
+    expected = state.get('credential_policy_sha256')
+    readiness = state.get('credential_readiness_sha256')
+    rr.require(isinstance(expected, str) and re.fullmatch(r'[0-9a-f]{64}', expected) and
+               isinstance(readiness, str) and re.fullmatch(r'[0-9a-f]{64}', readiness) and
+               bound.is_file() and not bound.is_symlink() and ready.is_file() and not ready.is_symlink() and
+               rr.sha256(bound) == expected and rr.sha256(ready) == readiness,
+               'CREDENTIAL_PREPARATION_ANCHOR_REQUIRED: legacy or drifted prepared session; prepare a new verified session before deletion')
+    policy = load_policy(bound, state['repo'])
+    original = rr.read_json(ready)
+    rr.require(original.get('repo') == state['repo'] and original.get('policy_sha256') == expected and
+               original.get('status') == state.get('credential_preflight') and
+               original.get('status') in ('prepared-with-credential-obligations','prepared-no-known-credential-dependencies') and
+               isinstance(state.get('external_credential_inventory'), dict) and
+               isinstance(state.get('credential_deletion_authority'), dict),
+               'Credential preparation receipt does not match journal')
+    external.validate_policy(policy)
+    return policy, original
+
+
+def recheck_before_delete(session: Path, state: dict):
+    """Independently recheck without replacing history, waivers or policy.
+
+    Both originally waived and verified dependencies must retain exactly the
+    approved readiness evidence; a permission loss or a new obligation blocks.
+    This must be called immediately before each possible DELETE, including a
+    resumed delete-intent while the original repository still exists.
+    """
+    rr = _rr()
+    from . import external_dependencies as external
+    policy, original = verify_preparation_anchor(session, state)
+    current = preflight(session, state, None,
+                       accept_manual=state.get('credential_manual_risk_accepted') is True,
+                       record=False)
+    rr.require(current == original,
+               'CREDENTIAL_READINESS_DRIFT: authorization, identities or acknowledged obligations changed')
+    actual = external.observe(policy, expected_target_id=state['original_repo_id'],
+                              prior=state['external_credential_inventory'])
+    rr.require(actual == state['external_credential_inventory'],
+               'EXTERNAL_CREDENTIAL_INVENTORY_DRIFT: prepare a new session')
+    admin = _admin_observation(state['repo'], state['original_repo_id'])
+    rr.require(admin == state['credential_deletion_authority'],
+               'RECOVERY_ADMIN_IDENTITY_DRIFT')
+    # Preserve the original anchored readiness; store a separate recheck receipt.
+    report = {'schema':1, 'repo':state['repo'], 'original_repository_id':state['original_repo_id'],
+              'policy_sha256':state['credential_policy_sha256'],
+              'readiness_sha256':state['credential_readiness_sha256'],
+              'observed_at':rr.now(), 'status':'CURRENT_FEASIBILITY_REVERIFIED',
+              'future_replacement_access_verified':False,
+              'external_dependency_inventory':actual, 'admin':admin}
+    rr.write_json(session/'credential-predelete-recheck.json', report)
+    rr.log('Credential readiness, dependency identities and administrator reverified before deletion', style='green')
+    return report
 
 
 def post_restore(session:Path, state:dict, *, apply_apps=False, apply_pats=False,
@@ -413,11 +556,18 @@ def post_restore(session:Path, state:dict, *, apply_apps=False, apply_pats=False
     rr=_rr()
     bound=session/'credential-policy.json'
     expected=state.get('credential_policy_sha256')
-    if expected:
-        rr.require(bound.is_file() and rr.sha256(bound)==expected,
-                   'credential policy provenance has changed since preflight')
+    if expected or bound.exists():
+        rr.require(isinstance(expected,str) and bound.is_file() and not bound.is_symlink() and rr.sha256(bound)==expected,
+                   'credential policy provenance has changed since preflight or is not anchored')
     policy=load_policy(bound,state['repo']) if bound.exists() else {
         'schema':1,'repository':state['repo'],'credentials':[]}
+    from . import external_dependencies as external
+    if apply_apps or apply_pats:
+        external.validate_policy(policy)
+        # Explicit writes cannot be redirected to a stale or wrong secret host.
+        rr.require(type(state.get('created_new_id')) is int,'replacement repository identity missing')
+        external.observe(policy, expected_target_id=state.get('created_new_id'),
+                         prior=state.get('external_credential_inventory'), probe_token=True)
     rows=[]
     for item in policy['credentials']:
         if item['kind']=='fine_grained_pat':
@@ -433,13 +583,37 @@ def post_restore(session:Path, state:dict, *, apply_apps=False, apply_pats=False
     candidates=set(secret_candidates(config)) | {
         n for n in source_audit.get('referenced_secret_names',[]) if HIGH_RISK.search(n) and n not in ('GITHUB_TOKEN','GH_TOKEN')}
     unknown=sorted(candidates - {x['name'] for x in policy['credentials']})
-    verified=(not unknown and all(x['status']=='verified' for x in rows))
+    federation = external.qualify(session, state, policy)
+    external_inventory_verified=True
+    if policy['credentials'] and not external.applies(state['repo']):
+        try:
+            rr.require(type(state.get('created_new_id')) is int,'replacement repository identity missing')
+            external.observe(policy, expected_target_id=state.get('created_new_id'),
+                             prior=state.get('external_credential_inventory'), probe_token=False)
+        except (rr.Refused, OSError, KeyError, ValueError, TypeError):
+            external_inventory_verified=False
+    if external.applies(state['repo']):
+        if federation.get('qualified') is True:
+            # Actual fresh hosted evidence independently proves the deployed
+            # secret worked; the local supplied PAT is separately probed.
+            for row in rows:
+                if row['name'] == external.SECRET and row['kind'] == 'fine_grained_pat':
+                    row['status'] = 'verified'
+                    row['reason'] = 'current protected PAT proof and independently verified hosted federation receipt'
+        else:
+            if not any(x['name'] == external.SECRET for x in policy['credentials']):
+                unknown = sorted(set(unknown) | {external.SECRET})
+    verified=(external_inventory_verified and not unknown and all(x['status']=='verified' for x in rows) and
+              (not external.applies(state['repo']) or federation.get('qualified') is True))
     result={'schema':1,'repo':state['repo'],'replacement_id':state.get('created_new_id'),
+            'federation':federation,
+            'external_inventory_verified':external_inventory_verified,
             'policy_sha256':expected,'credential_results':rows,'unclassified':unknown,
             'status':'verified' if verified else 'CREDENTIAL_ACCESS_UNVERIFIED',
             'secret_presence_is_not_permission_proof':True}
     if record:
         rr.write_json(session/'credential-acceptance.json',result)
+        state['credential_acceptance_sha256']=rr.sha256(session/'credential-acceptance.json')
         state['credential_recovery_status']=result['status']
         rr.save_state(session,state)
         report_path=session/'report.json'
@@ -470,6 +644,10 @@ def bind_post_restore_policy(session:Path, state:dict, policy_path:Path)->dict:
     """
     rr=_rr()
     value=load_policy(policy_path,state['repo'])
+    from . import external_dependencies as external
+    # A legacy completed MMRL session may be bound to the actual host policy,
+    # but a wrong-host dependency can never be introduced by this command.
+    external.validate_policy(value)
     dest=session/'credential-policy.json'
     if dest.exists():
         rr.require(rr.read_json(dest)==value,'cannot replace a bound credential policy')

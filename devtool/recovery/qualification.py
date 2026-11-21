@@ -460,7 +460,12 @@ def _persist_result(session, state, identity, entries, source, policy_sha, *,
         'PR hosted checks not yet qualified; see pr_ci_qualifications')
     report['fully_operationally_verified'] = False
     if verified and not historical:
-        report['recovery_classification'] = 'RESTORED_SCOPED_PR_CI_QUALIFIED_HISTORICAL_LIMITATIONS_REMAIN'
+        from . import external_dependencies
+        credential_unverified=(external_dependencies.applies(state['repo']) and
+                               state.get('credential_recovery_status')!='verified') or (
+                               state.get('credential_recovery_status') not in (None,'verified'))
+        report['recovery_classification'] = ('RESTORED_WITH_ACTION_REQUIRED' if credential_unverified else
+            'RESTORED_SCOPED_PR_CI_QUALIFIED_HISTORICAL_LIMITATIONS_REMAIN')
     rr.write_json(session/'report.json',report)
     return scope
 

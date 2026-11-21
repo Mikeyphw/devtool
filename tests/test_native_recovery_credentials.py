@@ -215,7 +215,7 @@ class CredentialTests(unittest.TestCase):
         self.assertEqual(result['unclassified'],['MMRL_FEDERATION_TOKEN'])
 
     def test_previously_bound_policy_cannot_be_replaced(self):
-        file=self.policy({**PAT,'secret_hosts':[]})
+        file=self.policy({**PAT,'secret_hosts':['Mikeyphw/MMRL-Shared']})
         cr.bind_post_restore_policy(self.session,self.state,file)
         digest=self.state['credential_policy_sha256']
         rr.write_json(file,{'schema':1,'repository':REPO,'credentials':[APP]})
