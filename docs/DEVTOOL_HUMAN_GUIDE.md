@@ -6338,3 +6338,68 @@ Read-only durable repository recovery report
 | --- | --- |
 | `--session SESSION` | Existing recovery session Required. |
 
+### `devtool credentials`
+
+M7 credential health, drift and guided recovery
+
+**Subcommands:** `doctor`, `repair`, `drift`, `predelete`, `postrecreate`
+
+### `devtool credentials doctor`
+
+M7 read-only credential doctor
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--repo CREDENTIAL_REPOSITORY` | Exact owner/repository GitHub slug Required. |
+| `--head-repo CREDENTIAL_HEAD_REPOSITORY` | Optional distinct fork/head owner/repository (requires its own installation) |
+| `--auth CREDENTIAL_AUTH` | Explicit credential provider (App is opt-in) Choices: app, auto, env, gh, ssh |
+| `--probe-read` | Explicit read-only API or SSH probe; App mints one scoped read token |
+| `--save-baseline CREDENTIAL_SAVE_BASELINE` | Write one private non-overwriting local drift baseline after effective read verification |
+
+### `devtool credentials repair`
+
+M7 read-only credential repair
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--repo CREDENTIAL_REPOSITORY` | Exact owner/repository GitHub slug Required. |
+| `--head-repo CREDENTIAL_HEAD_REPOSITORY` | Optional distinct fork/head owner/repository (requires its own installation) |
+| `--auth CREDENTIAL_AUTH` | Explicit credential provider (App is opt-in) Choices: app, auto, env, gh, ssh |
+| `--probe-read` | Explicit read-only API or SSH probe; App mints one scoped read token |
+
+### `devtool credentials drift`
+
+M7 read-only credential drift
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--repo CREDENTIAL_REPOSITORY` | Exact owner/repository GitHub slug Required. |
+| `--head-repo CREDENTIAL_HEAD_REPOSITORY` | Optional distinct fork/head owner/repository (requires its own installation) |
+| `--auth CREDENTIAL_AUTH` | Explicit credential provider (App is opt-in) Choices: app, auto, env, gh, ssh |
+| `--probe-read` | Explicit read-only API or SSH probe; App mints one scoped read token |
+| `--baseline CREDENTIAL_BASELINE` | Read private credential baseline; no network write Required. |
+
+### `devtool credentials predelete`
+
+M7 read-only credential predelete
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--repo CREDENTIAL_REPOSITORY` | Exact owner/repository GitHub slug Required. |
+| `--head-repo CREDENTIAL_HEAD_REPOSITORY` | Optional distinct fork/head owner/repository (requires its own installation) |
+| `--auth CREDENTIAL_AUTH` | Explicit credential provider (App is opt-in) Choices: app, auto, env, gh, ssh |
+| `--probe-read` | Explicit read-only API or SSH probe; App mints one scoped read token |
+| `--backup-sha256 CREDENTIAL_BACKUP_SHA256` | Recorded backup checksum (not destructive permission) |
+
+### `devtool credentials postrecreate`
+
+M7 read-only credential postrecreate
+
+| Argument / option | Meaning |
+| --- | --- |
+| `--repo CREDENTIAL_REPOSITORY` | Exact owner/repository GitHub slug Required. |
+| `--head-repo CREDENTIAL_HEAD_REPOSITORY` | Optional distinct fork/head owner/repository (requires its own installation) |
+| `--auth CREDENTIAL_AUTH` | Explicit credential provider (App is opt-in) Choices: app, auto, env, gh, ssh |
+| `--probe-read` | Explicit read-only API or SSH probe; App mints one scoped read token |
+| `--previous-repository-id CREDENTIAL_PREVIOUS_REPO_ID` | Previous immutable numeric GitHub repository ID Required. |
+

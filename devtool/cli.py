@@ -13480,6 +13480,9 @@ def _main_impl(argv: list[str] | None = None) -> int:
     parse_argv, universal_json = extract_universal_json_flag(parse_argv)
     parser = build_parser()
     args = parser.parse_args(parse_argv)
+    if args.command == 'credentials':
+        from .m7_credential_cli import run as m7_credentials_run
+        return m7_credentials_run(args)
     # M5: source-bound native ZIP/PYZ operator dispatch precedes project, HUD,
     # clipboard, logger and workspace initialization. Never replace Devtool
     # atomic apply, committed history or delivery-session authorities.

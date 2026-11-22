@@ -1551,3 +1551,76 @@ historical failures or treat selected local tests as hosted authority.
   source qualification workflow.
 - Live hosted outcome and formal release qualification stay OPEN until real
   GitHub execution evidence is received; consumers are untouched.
+
+## M7-GUIDES-CI24-20261121 — M7 exact-HEAD CI24 and operator-integration findings
+
+- **Evidence anchor:** `Mikeyphw/devtool` draft PR #43, source commit
+  `2f1154126cea366593bb8f9e1fcaae4189451254`, native session
+  `2907e3a5ee5243d1994137dd64eb3559`, CI24 run
+  [44964186941](https://github.com/Mikeyphw/devtool/actions/runs/44964186941)
+  attempt 1, workflow `devtool-full-repository-pytest.yml` and durable
+  dispatch request `79d1eda9d1bb488bba5e3293d2573e16`.
+  This section records findings; it is not a release or CI24 PASS claim.
+
+- **M7-CLI-GEN-001 — Canonical CLI projection drift (repaired at source,
+  exact-commit CI24 not yet passed):** The initial PR head `a8ee107...`
+  introduced M7 `credentials` commands without regenerating seven dependent
+  CORE surfaces and its manifest. Required hosted workflow S7 P02 failed
+  with content-drift, although parser parity was 567 covered / 0 missing.
+  Source-pinned native overlay committed `2f115412...`, regenerating the
+  canonical projections. All nine PR-hosted workflows subsequently passed,
+  and the native delivery session recorded `REQUIRED_CHECKS_PASSED`.
+  CI24 on `2f115412...` was separately dispatched and is **not** covered
+  by the hosted required-CI receipt.
+
+- **M7-GUIDES-002 — Complete human/agent CLI guides lag canonical M7 parser
+  (confirmed CI24 failure, remediation candidate):** CI24 run
+  `44964186941`, Python 3.13 shard 8, job `137029384626` failed
+  `tests/test_complete_feature_guides.py` because both complete guides
+  lack the `devtool credentials` heading and other current
+  parser projections. Existing `tools/generate_complete_feature_guides.py`
+  is the canonical guide generator. This correction regenerates both guides
+  from the *exact* committed parser, verifies deterministic fixed-point
+  equality, and validates guide tests through native Devtool.
+  Acceptance remains OPEN until a new native commit, exact-PR-HEAD hosted
+  checks and a new correlated full CI24 run pass.
+
+- **M7-HELP-003 — Golden root CLI help fixture stale after M7 parser
+  addition (confirmed CI24 failure, remediation candidate):** CI24 run
+  `44964186941`, Python 3.13 shard 16, job `137029384724`, failed
+  `tests/test_arch_final_seal.py::test_golden_cli_help_contract`.
+  The tracked `tests/golden/cli-help.txt` reflected an earlier parser and
+  omitted the new `credentials` command family. The correction regenerates
+  the fixture from `build_parser().format_help()` with `COLUMNS=80`, normalizing
+  ANSI SGR styling just as the golden test does. The original CI24 run
+  completed with 22 successful shards, 2 failed shards, a failed fail-closed
+  summary, and all 25 uploaded artifacts. No CI24 PASS is claimed.
+
+- **M7-OPERATOR-003 — Incorrect JSON envelope handling (operator-side,
+  not a demonstrated Devtool defect):** Two externally authored CI24
+  scripts inspected `repository`, `ref`, `workflow_path`, and
+  `pre_dispatch_sha` at JSON root and falsely refused a successful read-only
+  Actions plan. Native `--json` correctly returns machine envelope with
+  command data in `root.data`; confirmed via read-only plan with
+  `workflow_id=383977915` and `state=validated-plan`.
+  Correction: validate envelope `ok`, `exit_code` and `data` while never
+  copying tokens. No dispatch was performed during those refusals.
+
+- **M7-OPERATOR-004 — Termux/Zsh operator portability (operator-side,
+  not a demonstrated Devtool defect):** An earlier delivery wrapper
+  accidentally concatenated Python `--version` output into an executable
+  path (`exit 127`), and another enabled Zsh `NO_UNSET`, provoking
+  `@zinit-scheduler:3: 1: parameter not set`. Commands also incorrectly
+  invoked Bash despite a Zsh-only execution contract. Corrections used
+  direct native Python 3 execution inside Zsh with `NO_UNSET` disabled
+  locally, preserved process exit codes, and sanitized clipboard reports.
+  The original native delivery then passed and pushed exactly `2f115412...`.
+
+- **Follow-up / acceptance rule:** Do not rewrite M7's prior commits, erase
+  CI24 run 44964186941, quietly rerun its failed jobs as a passing
+  substitute, replay the source overlay, or reassign its historical session
+  to a new commit. The next exact-source native overlay needs its own
+  transaction, immutable commit, adopted session, approved existing-PR
+  delivery, nine hosted checks, and separately correlated 24/24 plus
+  fail-closed summary and 25 non-expired artifact receipts. Formal release
+  and device qualification are NOT PERFORMED.
