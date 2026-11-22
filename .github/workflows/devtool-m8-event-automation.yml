@@ -1,0 +1,30 @@
+name: Devtool M8 Event Automation Source Acceptance
+on:
+  pull_request:
+    paths:
+      - 'devtool/m8_webhooks.py'
+      - 'devtool/m8_automation.py'
+      - 'devtool/delivery_session.py'
+      - 'devtool/github_app.py'
+      - 'tests/test_m8_webhooks.py'
+      - 'tests/test_m8_automation.py'
+      - 'tests/test_m8_native_bridge.py'
+      - '.github/workflows/devtool-m8-event-automation.yml'
+      - 'docs/DEVTOOL_M8_EVENT_AUTOMATION.md'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  m8-security:
+    name: M8 signed events and explicit approval contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+      - name: Validate new M8 Python contracts
+        run: python -B -m compileall -q devtool/m8_webhooks.py devtool/m8_automation.py tests/test_m8_webhooks.py tests/test_m8_automation.py tests/test_m8_native_bridge.py
+      - name: Run M8 security, replay and PR maintenance tests
+        run: python -B -m unittest discover -s tests -p 'test_m8_*.py' -v

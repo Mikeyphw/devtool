@@ -32,6 +32,8 @@ _PERMISSIONS = {
     'repository_read': {'contents': 'read'},
     'pr_read': {'pull_requests': 'read', 'contents': 'read'},
     'pr_create': {'pull_requests': 'write', 'contents': 'read'},
+    'pr_maintain': {'pull_requests': 'write', 'contents': 'read'},
+    'status_write': {'statuses': 'write', 'contents': 'read'},
     'branch_write': {'contents': 'write'},
     'checks_read': {'actions': 'read', 'checks': 'read', 'contents': 'read'},
     'actions_dispatch': {'actions': 'write', 'contents': 'read'},

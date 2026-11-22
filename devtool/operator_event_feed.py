@@ -18,7 +18,7 @@ from rich.text import Text
 
 from .operator_rich import _secure
 
-DOMAIN_FILTERS = ('all', 'validation', 'runs')
+DOMAIN_FILTERS = ('all', 'validation', 'runs', 'm8')
 STATE_FILTERS = ('all', 'failure', 'active', 'terminal')
 _MAX_EVENTS = 120
 _MAX_QUERY = 64
@@ -106,13 +106,18 @@ def native_events(root: Path, *, limit: int = _MAX_EVENTS) -> dict[str, Any]:
     # Source quotas ensure a noisy run catalog cannot starve validation proof.
     run_limit = limit // 2
     val_limit = limit - run_limit
+    from .m8_automation import m6_events
+    m8_records = m6_events(root, limit=max(1, min(40, limit // 4)))
+    if m8_records:
+        run_limit = (limit - len(m8_records)) // 2
+        val_limit = limit - len(m8_records) - run_limit
     runs = _run_events(root, limit=run_limit)
     validations, sid = _validation_events(root, limit=val_limit)
     return {'kind':'devtool.native-event-feed','read_only':True,
             'state':'observed' if runs or validations else 'no-records',
-            'events':runs + validations,
+            'events':runs + validations + m8_records,
             'run_count':len(runs),'validation_count':len(validations),
-            'validation_session':sid,'count':len(runs) + len(validations),
+            'validation_session':sid,'m8_count':len(m8_records),'count':len(runs) + len(validations) + len(m8_records),
             'source':'canonical RunCatalog coalesced events + validation_sessions.read_events',
             'chronology':'No cross-authority event ordering is asserted',
             'release_qualified':False}
@@ -122,7 +127,7 @@ def event_key(event: Mapping[str,Any]) -> str:
     """Key includes native authority; equal event IDs across producers are distinct."""
     domain=str(event.get('domain') or '')
     identity=str(event.get('event_id') or '')
-    return domain+':'+identity if domain in ('validation','runs') and identity else ''
+    return domain+':'+identity if domain in ('validation','runs','m8') and identity else ''
 
 
 def _severity(event: Mapping[str,Any]) -> str:
@@ -160,7 +165,7 @@ def event_view(snapshot: Mapping[str,Any], *, width: int=80, selected: int=0,
     rows=visible_events(snapshot,domain=domain,state=state,query=query)
     header=Text('NATIVE EVENTS  ·  '+str(len(rows))+' visible / '+
                 str(snapshot.get('count',0))+' observed',style='bold cyan')
-    scope=Text('Run events: coalesced, unordered  ·  Validation: append-only, timestamped',style='dim')
+    scope=Text('Run events: coalesced  ·  Validation: append-only  ·  M8: local observations',style='dim')
     filters=Text(f'Source [{domain}]  Status [{state}]  Search [{query[:_MAX_QUERY]}]',style='dim')
     if editing:
         filters.append('  /'+draft+'▌',style='bold yellow')
