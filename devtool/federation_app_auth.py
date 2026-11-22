@@ -107,11 +107,39 @@ def installed_app_environment(environ: Mapping[str, str] | None = None,
 
 
 def fetch_from_github_app(root: str | Path, locked_locator: str) -> subprocess.CompletedProcess[str]:
-    """One exact source-lock-scoped Git fetch, no implicit PAT or SSH fallback."""
+    """One exact source-lock-scoped fetch, with optional GA-02 policy binding.
+
+    Without GA-02 opt-in the preexisting M4 behavior is preserved. With
+    opt-in, the policy is digest pinned and the observed installation, owner
+    and repository IDs MUST match before any Git network mutation.
+    """
     root = Path(root).resolve()
     slug = github_slug_for_locator(locked_locator)
     if git_remote_locator(root) != locked_locator:
         raise GitHubAppError('APP_FEDERATION_REMOTE_MISMATCH')
-    provider = AppInstallationProvider.from_environment(installed_app_environment())
+    from .github_relationships import (RelationshipRefused, opted_in_registry,
+                                       authorize_federation_source)
+    registry = opted_in_registry()
+    if registry is not None:
+        owner = os.environ.get('DEVTOOL_GA02_FEDERATION_OWNER', '')
+        if not owner:
+            raise RelationshipRefused('GA02_FEDERATION_OWNER_EXPLICIT_ENROLLMENT_REQUIRED')
+        node = registry.node(slug)
+        if node.role == 'public':
+            raise RelationshipRefused('GA02_PUBLIC_UPSTREAM_CANNOT_AUTHORIZE_GIT_FETCH')
+        from .github_installations import observe_installed
+        from .github_app import _ProviderHTTP
+        # GA-02 chooses a distinct head installation ONLY when explicitly
+        # enrolled in the policy; base credentials never masquerade as head.
+        live = observe_installed(slug, role=node.role,
+            environ=(os.environ if node.role == 'head' else installed_app_environment()))
+        authorize_federation_source(registry, owner_repository=owner, target=live)
+        provider = AppInstallationProvider.from_environment(
+            os.environ if node.role == 'head' else installed_app_environment(),
+            role=node.role)
+    else:
+        provider = AppInstallationProvider.from_environment(installed_app_environment())
     credential = provider.issue(slug, 'repository_read')
+    if registry is not None and credential.repository_id != registry.node(slug).repository_id:
+        raise RelationshipRefused('GA02_FEDERATION_ACCESS_REPOSITORY_ID_DRIFT')
     return run_git_authenticated(root, ['fetch', '--prune', 'origin'], credential, timeout=120)
