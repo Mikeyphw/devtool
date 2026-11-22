@@ -24,7 +24,7 @@ _SCHEMA = "devtool.delivery-session.v1"
 _HEX32 = re.compile(r"[0-9a-f]{32}\Z")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
-_OPERATIONS = frozenset({"push", "pr_create", "dispatch", "rerun"})
+_OPERATIONS = frozenset({"push", "pr_create", "dispatch", "rerun", "pr_comment", "pr_labels", "commit_status"})
 _MAX_RECORD = 512 * 1024
 
 
@@ -412,6 +412,29 @@ def confirm_intent(identity: str, operation: str, key: str,
                     live['git_dir'] != record['git_dir'] or
                     live['repository'].casefold() != record['repository'].casefold()):
                 raise DeliverySessionError('Push verification source identity changed')
+        if operation in ('pr_comment', 'pr_labels', 'commit_status'):
+            pr_number = (record.get('pr') or {}).get('number')
+            if type(pr_number) is not int or pr_number < 1:
+                raise DeliverySessionError('M8 mutation requires exact saved PR identity')
+            if operation == 'pr_comment':
+                if (set(proof) != {'head_sha', 'pr_number', 'comment_id'} or
+                        proof.get('pr_number') != pr_number or
+                        type(proof.get('comment_id')) is not int or proof['comment_id'] < 1):
+                    raise DeliverySessionError('M8 comment proof must bind saved PR and comment ID')
+            elif operation == 'pr_labels':
+                labels = proof.get('labels')
+                if (set(proof) != {'head_sha', 'pr_number', 'labels'} or
+                        proof.get('pr_number') != pr_number or
+                        not isinstance(labels, list) or not 1 <= len(labels) <= 8 or
+                        len(set(str(v) for v in labels)) != len(labels) or
+                        any(not isinstance(v, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,48}', v) for v in labels)):
+                    raise DeliverySessionError('M8 labels proof is not exact and bounded')
+            else:
+                if (set(proof) != {'head_sha', 'status_id', 'context'} or
+                        type(proof.get('status_id')) is not int or proof['status_id'] < 1 or
+                        not isinstance(proof.get('context'), str) or
+                        not re.fullmatch(r'devtool/m8/[A-Za-z0-9_.-]{1,60}', proof['context'])):
+                    raise DeliverySessionError('M8 commit status proof invalid')
         key_hash = hashlib.sha256(key.encode('utf-8')).hexdigest()
         items = [x for x in record['intents'] if x['operation'] == operation and x['key_sha256'] == key_hash]
         if not items:
