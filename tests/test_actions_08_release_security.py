@@ -176,5 +176,5 @@ def test_workflow_requires_real_signing_and_attests_only_releases():
     assert 'apksigner" sign' in live and 'jarsigner -verify -strict' in live
     assert 'actions/attest@v4' in live and "inputs.variant == 'release'" in live
     assert 'artifact-metadata: write' in live
-    assert 'path: ${{ steps.package.outputs.package }}' in live
+    assert 'steps.debug_package.outputs.package || steps.package.outputs.package' in live
     assert '**/build/outputs/apk' not in live

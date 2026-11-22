@@ -311,6 +311,8 @@ def release_readiness(client: GitHubActionsClient, slug: str, root: Path, *, ref
             'signing_identity_id': selected_signer or None, 'signing_identity_problem': signer_problem,
             'gates': gates, 'ready': all(gates.values()), 'qualified_release': False,
             'scope': 'preflight only; not a release qualification',
+            'secret_assurance': ('metadata_present_value_unverified' if not missing else 'not_configured'),
+            'secret_values_verified': False,
             'next_actions': [msg for condition, msg in (
                 (not gates['source_match'], 'Push your intended source commit before setup'),
                 (not gates['branch_protected'], 'Protect the branch (setup --yes can create an additive ruleset)'),
@@ -360,6 +362,15 @@ def release_setup(client: GitHubActionsClient, slug: str, root: Path, *, ref: st
         if existing != document:
             raise GitHubActionsError('Existing private policy differs; refusing remote mutation')
     observed = set(SECRETS) - set(plan['secret_names_missing'])
+    # Check for an unresolved previous secret intent *before* even attempting
+    # a separate ruleset mutation. Full locking is reacquired at upload time.
+    from .ga00_secret_journal import opened_journal, SecretJournalRefusal
+    try:
+        with opened_journal(policy_target) as early_journal:
+            if early_journal.unresolved():
+                raise GitHubActionsError('Secret upload has an unresolved prior intent; reconcile before any remote setup mutation')
+    except SecretJournalRefusal as exc:
+        raise GitHubActionsError(str(exc)) from None
     if observed and observed != set(SECRETS) and not rotate_secrets:
         raise GitHubActionsError('Partial GitHub release secrets exist; refusing mixed signer material. Review them and use --rotate-secrets --yes only if intentionally replacing all four')
     # Protect before provisioning secrets. Creating a new ruleset is additive, not replacement.
@@ -372,21 +383,45 @@ def release_setup(client: GitHubActionsClient, slug: str, root: Path, *, ref: st
     payloads = (base64.b64encode(item.read_bytes()).decode('ascii'),
                 resolved_secrets['DEVTOOL_ANDROID_SIGNING_STORE_PASSWORD'], profile.alias,
                 resolved_secrets['DEVTOOL_ANDROID_SIGNING_KEY_PASSWORD'])
+    from .ga00_secret_journal import opened_journal, journal_path, SecretJournalRefusal
     uploaded = []
-    if rotate_secrets or not observed:
-        for name, value in zip(SECRETS, payloads):
-            _gh(['secret', 'set', name, '--repo', slug, '--app', 'actions'], input_text=value)
-            uploaded.append(name)
-    # Existing complete sets are never overwritten by a generic --yes.
-    # Name presence cannot attest their cryptographic correctness.
-    if _secrets(slug).issuperset(SECRETS) is False:
-        raise GitHubActionsError('GitHub did not confirm all secret names; private policy was not written')
+    # A single locked, fsynced intent journal covers every secret, including
+    # interrupted or ambiguous responses. Never replay an unresolved write.
+    try:
+        with opened_journal(policy_target) as journal:
+            if journal.unresolved():
+                raise GitHubActionsError('Secret upload has an unresolved prior intent; inspect the private journal and reconcile GitHub metadata and signer before retrying')
+            if rotate_secrets or not observed:
+                operation_id = journal.new_operation()
+                for name, value in zip(SECRETS, payloads):
+                    fields = dict(operation_id=operation_id, name=name, repository=slug,
+                                  source_sha=document['source_sha'], signer_sha256=signer)
+                    journal.record(event='INTENT', **fields)
+                    _gh(['secret', 'set', name, '--repo', slug, '--app', 'actions'], input_text=value)
+                    journal.record(event='ACK', **fields)
+                    uploaded.append(name)
+                # A successful CLI return isn't a read-back of the encrypted
+                # secret value. This check proves only remote metadata presence.
+                confirmed = _secrets(slug)
+                if not confirmed.issuperset(SECRETS):
+                    raise GitHubActionsError('Secret metadata is incomplete after upload; manual reconciliation required')
+                for name in SECRETS:
+                    journal.record(event='METADATA_PRESENT', operation_id=operation_id,
+                                   name=name, repository=slug,
+                                   source_sha=document['source_sha'], signer_sha256=signer)
+            elif not _secrets(slug).issuperset(SECRETS):
+                raise GitHubActionsError('GitHub did not confirm all secret names; private policy was not written')
+    except SecretJournalRefusal as exc:
+        raise GitHubActionsError(str(exc)) from None
     created = _write_policy(root, policy_target, document)
     return {'phase': 'ACTIONS-09', 'mode': 'apply', 'repository': slug,
             'ref': document['ref'], 'source_sha': document['source_sha'],
             'policy_file': str(policy_target), 'policy_created': created,
             'signer_sha256': signer, 'signing_identity_id': profile.identity_id,
             'application_id': app, 'secret_names_updated': uploaded,
-            'existing_secret_values_unverified': bool(observed) and not uploaded,
+            'existing_secret_values_unverified': True,
+            'secret_assurance': 'metadata_present_value_unverified',
+            'secret_values_verified': False,
+            'secret_journal': str(journal_path(policy_target)),
             'branch_protected': True, 'ready': True, 'qualified_release': False,
             'scope': 'configuration only; a real attested signed release remains mandatory'}
