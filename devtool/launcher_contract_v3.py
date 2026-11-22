@@ -1285,7 +1285,7 @@ def verify_postcommit_status(repo:Path)->None:
 
 
 
-def native_adopt_committed(repo:Path,devtool_root:Path,archive:Path,commit:str)->dict[str,Any]:
+def native_adopt_committed(repo:Path,devtool_root:Path,archive:Path,commit:str,*,base:str)->dict[str,Any]:
     """Use only Devtool's existing committed-history/session adoption authority.
 
     A failed post-commit adoption is a recovery stop, not an apply retry. Native
@@ -1296,7 +1296,7 @@ def native_adopt_committed(repo:Path,devtool_root:Path,archive:Path,commit:str)-
         raise Refused('NATIVE_ADOPTION_ARCHIVE_NOT_REGULAR')
     archive_hash=digest(archive.read_bytes())
     output=exec_cmd([sys.executable,'-B','-m','devtool.native_overlay_delivery',
-                     'adopt-committed','--repo',str(repo),'--overlay',str(archive)],
+                     'adopt-committed','--repo',str(repo),'--overlay',str(archive),'--base',base],
                      stage='native-committed-history-adoption',cwd=devtool_root,
                      devtool_root=devtool_root,target_root=repo,timeout=180)
     try:
@@ -1310,6 +1310,7 @@ def native_adopt_committed(repo:Path,devtool_root:Path,archive:Path,commit:str)-
     session=value.get('id')
     if (not isinstance(session,str) or not SESSION32.fullmatch(session)
             or value.get('head_sha') != commit
+            or value.get('base') != base
             or value.get('repo_root') != str(repo.resolve())
             or value.get('stage') != 'PLANNED'
             or native_apply.get('state') != 'COMMITTED'
@@ -1378,7 +1379,8 @@ def apply_package(repo:Path,devtool_root:Path,m:dict[str,Any],payload:dict[str,b
     # The existing native authority MUST adopt the original committed artifact
     # history before a session may authorize push/PR/CI. No synthetic receipts.
     with _presentation_boundary('native-committed-history-adoption'):
-        receipt=native_adopt_committed(repo,devtool_root,archive,after['source_sha'])
+        receipt=native_adopt_committed(repo,devtool_root,archive,after['source_sha'],
+                                       base=m['delivery']['base'])
     sid=receipt['id']
     say('LAUNCHER_V3_SESSION_ID '+sid)
     say('LAUNCHER_V3_RESUME_COMMAND: python3 -B PACKAGE.pyz status --repo PATH --devtool-repo PATH --session-id '+sid)
