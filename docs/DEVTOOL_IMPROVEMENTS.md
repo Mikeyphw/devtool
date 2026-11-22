@@ -1624,3 +1624,11 @@ historical failures or treat selected local tests as hosted authority.
   delivery, nine hosted checks, and separately correlated 24/24 plus
   fail-closed summary and 25 non-expired artifact receipts. Formal release
   and device qualification are NOT PERFORMED.
+
+## M8-SIGNED-CONTINUATION-20261122 — signed event-driven continuation
+
+- Implemented source-pinned GitHub App webhook intake in `devtool/m8_webhooks.py`: raw-body SHA-256 HMAC verification before JSON decoding; exact repository, numeric repository/installation identities, PR, SHA and durable delivery-UUID replay protection; bounded events in private, locked, immutable journal files; fork and source-drift refusals; loopback-only HTTP receiver requiring a separately configured trusted TLS reverse proxy.
+- GitHub webhook claims are **wakeup hints**, not CI evidence. No webhook can dispatch Actions, push, merge, approve release, or qualify itself. Read-only `qualify` delegates to the existing native B3 source/session/CI24 verifier. Explicit `maintain-pr --yes` delegates approved PR maintenance to native `delivery_github.pr` with all of its source and intent checks.
+- Scope deliberately excludes public TLS endpoint deployment, replay reprocessing after uncertain native writes, unapproved automatic merges, and release/device qualification. Native source-bound CI24 and B3 acceptance remain required. Observed local tests do not imply hosted or physical-device qualification.
+
+- **M8-OVERLAY-001 (confirmed operator packaging defect, repaired in V2):** Initial M8 schema-v3 overlay omitted `source_sha256` keys for added files, although native Devtool requires explicit JSON `null` preimages for every addition. Native check correctly refused the original ZIP before apply/commit. V2's operator verifies its private checkpoint, exact source and original ZIP bytes, preserves the refused artifact, writes a distinct corrected overlay, and uses only native check/apply/CI/B3 authorities. Local regression tests cover both fail-closed migration and safe re-entry. Device acceptance remains pending.
