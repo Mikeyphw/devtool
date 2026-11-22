@@ -105,12 +105,12 @@ def run_actions_command(args: Any) -> int:
             print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
             return 0
         if monitor is not None:
-            from .github_actions import GitHubActionsClient,resolve_repository,resolve_token
+            from .github_actions import resolve_repository,_actions_client
             from .delivery_remote_logs import fetch_selected_run_logs
             def _fetch_logs(run):
                 selected=resolve_repository(str(getattr(args,'github_repo','') or ''),root)
-                token,_=resolve_token(str(getattr(args,'auth','auto') or 'auto'))
-                return fetch_selected_run_logs(GitHubActionsClient(token),selected,run)
+                client,_=_actions_client(args,selected)
+                return fetch_selected_run_logs(client,selected,run)
             monitor.log_fetcher=_fetch_logs
             with monitor:
                 payload = actions_cli(args, root, observation_callback=callback,
