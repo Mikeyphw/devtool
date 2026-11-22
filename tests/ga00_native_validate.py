@@ -20,6 +20,7 @@ import pytest
 TESTS = (
     'tests/test_ga00_security_baseline.py',
     'tests/test_ga00_actions_secret_integration.py',
+    'tests/test_ga00_followup_security.py',
     'tests/test_github_app_m4.py',
     'tests/test_federation_app_auth.py',
     'tests/test_delivery_m4_integration.py',

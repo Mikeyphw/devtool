@@ -57,3 +57,48 @@ No ruleset, approval count or check context is modified.
 
 No merge, signing, release, branch protection mutation, PAT revocation, or
 Android device operation is authorized by this source candidate.
+
+
+## GA-00 P09/P15 follow-up: external owner configuration and safe migration
+
+**Release signing secrets are ENVIRONMENT-scoped only.** ACTIONS-09 now reads
+`gh secret list -R OWNER/REPO --env devtool-android-signing` and writes
+`gh secret set SECRET -R OWNER/REPO --env devtool-android-signing`.
+Legacy repository-level signing secret names (the four `DEVTOOL_RELEASE_*` names)
+**block** preparation: the owner must migrate/revoke them independently after
+checking consumers. The operator never deletes, rewrites or silently rotates
+repository secrets. GitHub returns metadata, not decrypted secret values.
+
+Required signing environment: `devtool-android-signing`. The owner's GitHub
+Settings > Environments configuration must have **required reviewers**,
+**prevent self review**, **deployment branches restricted to protected branches**
+and **administrator bypass disabled**. The read-only Devtool check uses the
+GitHub environment API; unavailable fields, unprotected branches or missing
+approval are **NOT VERIFIED**, not PASS. A YAML environment label alone can
+auto-create an unprotected environment. Actual deployment approval and signed
+artifact verification are separate requirements. The current public-repository
+GitHub plan may support the required reviewer policy; verify the current plan.
+
+Branch governance remains a **different** owner action. ACTIONS-09 release
+setup cannot POST rulesets, even with `--yes`. Use the read-only
+`python3 -B -m devtool.ga00_governance_approval preview --repository OWNER/REPO
+--branch main` to inspect current source, rulesets and proposed additive rules.
+Then, only if necessary, a separate owner/admin may run
+`python3 -B -m devtool.ga00_governance_approval approve --repository OWNER/REPO
+--branch main --owner-login EXACT_LOGIN --approval-digest EXACT_PREVIEW_SHA256 --yes`.
+This requires live exact digest revalidation, a private fsynced intent before POST,
+and refuses automatic retry if the POST outcome cannot be classified. A preview
+does not enforce the six committed required CI workflows and this additive rule
+only blocks deletion and non-fast-forward changes. Owner must independently
+review required status-check contexts and approving review requirements.
+
+### Source scope vs environment acceptance
+
+Local adversarial tests cover absent/malformed environment rules, repo-wide
+secret leakage, non-admin actions, stale approval digests, failed/ambiguous POST
+and idempotent refusal. These are **simulated API tests**. An actual authorized
+GitHub actor must run the read-only environment and governance checks and
+record redacted receipts. Actual App installation grants, secret value provenance,
+protected signing approvals and live signed output cannot be certified by unit
+tests or earlier CI24 on a different source SHA. P09 and P15 source paths are
+implemented; external configuration/acceptance remains PENDING ENVIRONMENT.

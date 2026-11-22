@@ -18,7 +18,8 @@ def test_partial_upload_writes_durable_intent_and_refuses_automatic_retry(canoni
     attempts=[]
     monkeypatch.setattr('devtool.actions_setup._source',lambda _:SHA)
     monkeypatch.setattr('devtool.actions_setup._application',lambda *a:'org.example.release')
-    monkeypatch.setattr('devtool.actions_setup._secrets',lambda slug:set(names))
+    monkeypatch.setattr('devtool.actions_setup._secrets',lambda slug:set())
+    monkeypatch.setattr('devtool.actions_setup._environment_secrets',lambda slug:set(names))
     monkeypatch.setattr(AndroidSigningManager,'inspect_profile',lambda self,profile,*,store_password=None:SimpleNamespace(sha256=SIGNER,expired=False))
     def gh(args,*,input_text=None,**kwargs):
         attempts.append(args[2])

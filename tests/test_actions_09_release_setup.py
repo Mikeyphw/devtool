@@ -28,6 +28,11 @@ class Client:
     def _get(self,path):
         if '/commits/' in path:return {'sha':SHA}
         if '/branches/' in path:return {'protected':self.protected}
+        if '/environments/' in path:return {'name':'devtool-android-signing',
+            'protection_rules':[{'type':'required_reviewers','reviewers':[{'type':'User','reviewer':{'id':12}}],
+            'prevent_self_review':True}],
+            'deployment_branch_policy':{'protected_branches':True,'custom_branch_policies':False},
+            'can_admins_bypass':False}
         raise AssertionError(path)
 
 @pytest.fixture
@@ -62,6 +67,7 @@ def test_plan_never_reads_material_or_mutates(canonical_signer,monkeypatch,tmp_p
     root,_,_=canonical_signer
     monkeypatch.setattr('devtool.actions_setup._source',lambda root:SHA)
     monkeypatch.setattr('devtool.actions_setup._secrets',lambda s:set())
+    monkeypatch.setattr('devtool.actions_setup._environment_secrets',lambda s:set())
     monkeypatch.setattr('devtool.actions_setup._gh',lambda *a,**kw:(_ for _ in ()).throw(AssertionError('called')))
     monkeypatch.setattr('devtool.actions_setup._signer_material',lambda *a,**k:(_ for _ in ()).throw(AssertionError('secret touched')))
     p=tmp_path/'policy.json'
@@ -75,7 +81,8 @@ def test_plan_never_reads_material_or_mutates(canonical_signer,monkeypatch,tmp_p
 
 def test_readiness_only_when_all_gates_pass(canonical_signer,tmp_path,monkeypatch):
     root,_,_=canonical_signer;p=tmp_path/'trust.json'
-    monkeypatch.setattr('devtool.actions_setup._secrets',lambda s:set(SECRETS))
+    monkeypatch.setattr('devtool.actions_setup._environment_secrets',lambda s:set(SECRETS))
+    monkeypatch.setattr('devtool.actions_setup._secrets',lambda s:set())
     doc={'schema':1,'repository':'Owner/repo','workflow':'.github/workflows/devtool-android-build.yml',
          'ref':'refs/heads/main','source_sha':SHA,'application_id':'org.example.release',
          'signer_sha256':SIGNER,'format':'apk','minimum_version_code':1}
@@ -109,30 +116,31 @@ def test_existing_signing_manager_is_authority(canonical_signer,monkeypatch):
 
 def test_setup_sends_existing_secret_provider_via_stdin_and_creates_policy(canonical_signer,monkeypatch,tmp_path):
     root,store,_=canonical_signer
-    policy=tmp_path/'policy.json';events=[];names=set();client=Client()
+    policy=tmp_path/'policy.json';events=[];names=set();client=Client();client.protected=True
     monkeypatch.setattr('devtool.actions_setup._source',lambda root:SHA)
     monkeypatch.setattr('devtool.actions_setup._application',lambda *a:'org.example.release')
-    monkeypatch.setattr('devtool.actions_setup._secrets',lambda s:set(names))
+    monkeypatch.setattr('devtool.actions_setup._environment_secrets',lambda s:set(names))
+    monkeypatch.setattr('devtool.actions_setup._secrets',lambda s:set())
     monkeypatch.setattr(AndroidSigningManager,'inspect_profile',lambda self,profile,*,store_password=None:SimpleNamespace(sha256=SIGNER,expired=False))
     def gh(argv,*,input_text=None,**kwargs):
         assert 'existing-password' not in repr(argv)
         events.append((tuple(argv),input_text))
         if argv[:2]==['api','--method']:
-            client.protected=True
-            assert 'non_fast_forward' in input_text and 'deletion' in input_text
+            raise AssertionError('incidental ruleset mutation')
         elif argv[:2]==['secret','set']:
+            assert ('--env','devtool-android-signing') == (argv[-2],argv[-1])
             names.add(argv[2]);assert input_text
         return ''
     monkeypatch.setattr('devtool.actions_setup._gh',gh)
     result=release_setup(client,'Owner/repo',root,policy_file=str(policy),execute=True)
     assert result['ready'] and result['policy_created'] and not result['qualified_release']
     assert result['signing_identity_id']=='life-release'
-    assert len(events)==5 and names==set(SECRETS)
+    assert len(events)==4 and names==set(SECRETS)
     assert policy.stat().st_mode & 0o777==0o600
     assert release_policy(root,str(policy))['signer_sha256']==SIGNER
     again=release_setup(client,'Owner/repo',root,policy_file=str(policy),execute=True)
     assert not again['policy_created']
-    assert len([x for x in events if x[0][:2]==('api','--method')])==1
+    assert len([x for x in events if x[0][:2]==('api','--method')])==0
     assert len([x for x in events if x[0][:2]==('secret','set')])==4  # existing values preserved
 
 
@@ -140,12 +148,14 @@ def test_no_unregistered_or_conflicting_signer_can_be_exported(canonical_signer,
     root,store,_=canonical_signer
     monkeypatch.setattr('devtool.actions_setup._source',lambda root:SHA)
     monkeypatch.setattr('devtool.actions_setup._secrets',lambda s:set())
+    monkeypatch.setattr('devtool.actions_setup._environment_secrets',lambda s:set())
     monkeypatch.setattr('devtool.actions_setup._gh',lambda *a,**k:(_ for _ in ()).throw(AssertionError('remote mutation')))
+    client=Client();client.protected=True
     with pytest.raises(GitHubActionsError,match='conflicts'):
-        release_setup(Client(),'Owner/repo',root,signing_identity='another',execute=True)
+        release_setup(client,'Owner/repo',root,signing_identity='another',execute=True)
     store.chmod(0o644)
     with pytest.raises(GitHubActionsError,match='private'):
-        release_setup(Client(),'Owner/repo',root,execute=True)
+        release_setup(client,'Owner/repo',root,execute=True)
     store.chmod(0o600)
     with pytest.raises(GitHubActionsError,match='outside'):
         _keystore(str(root/'store.p12'),root)
@@ -155,6 +165,7 @@ def test_existing_policy_conflict_precedes_remote_mutation(canonical_signer,tmp_
     root,_,_=canonical_signer; policy=tmp_path/'policy.json';policy.write_text('{}');policy.chmod(0o600)
     monkeypatch.setattr('devtool.actions_setup._source',lambda root:SHA)
     monkeypatch.setattr('devtool.actions_setup._secrets',lambda s:set())
+    monkeypatch.setattr('devtool.actions_setup._environment_secrets',lambda s:set())
     monkeypatch.setattr('devtool.actions_setup._gh',lambda *a,**kw:(_ for _ in ()).throw(AssertionError('mutation')))
     monkeypatch.setattr('devtool.actions_setup._signer_material',lambda *a,**k:(_ for _ in ()).throw(AssertionError('signing material accessed')))
     # The policy must be parsed and rejected ahead of reading the signer.
@@ -240,12 +251,13 @@ test "$2" = :app:assembleRelease
 def test_partial_github_secrets_fail_closed_without_explicit_rotation(canonical_signer,monkeypatch,tmp_path):
     root,_,_=canonical_signer
     monkeypatch.setattr('devtool.actions_setup._source',lambda root:SHA)
-    monkeypatch.setattr('devtool.actions_setup._secrets',lambda s:{SECRETS[0]})
+    monkeypatch.setattr('devtool.actions_setup._secrets',lambda s:set())
+    monkeypatch.setattr('devtool.actions_setup._environment_secrets',lambda s:{SECRETS[0]})
     monkeypatch.setattr('devtool.actions_setup._gh',lambda *a,**kw:(_ for _ in ()).throw(AssertionError('remote mutation')))
     monkeypatch.setattr(AndroidSigningManager,'inspect_profile',lambda self,profile,*,store_password=None:SimpleNamespace(sha256=SIGNER,expired=False))
     monkeypatch.setattr('devtool.actions_setup._application',lambda *a:'org.example.release')
     with pytest.raises(GitHubActionsError,match='Partial GitHub release secrets'):
-        release_setup(Client(),'Owner/repo',root,policy_file=str(tmp_path/'policy.json'),execute=True)
+        release_setup(type('ProtectedClient',(Client,),{'protected':True})(),'Owner/repo',root,policy_file=str(tmp_path/'policy.json'),execute=True)
     assert not (tmp_path/'policy.json').exists()
 
 
@@ -253,10 +265,11 @@ def test_invalid_signing_certificate_blocks_remote_mutation(canonical_signer,mon
     root,_,_=canonical_signer
     monkeypatch.setattr('devtool.actions_setup._source',lambda root:SHA)
     monkeypatch.setattr('devtool.actions_setup._secrets',lambda s:set())
+    monkeypatch.setattr('devtool.actions_setup._environment_secrets',lambda s:set())
     monkeypatch.setattr('devtool.actions_setup._gh',lambda *a,**kw:(_ for _ in ()).throw(AssertionError('remote mutation')))
     monkeypatch.setattr(AndroidSigningManager,'inspect_profile',lambda self,profile,*,store_password=None:SimpleNamespace(sha256='0'*64,expired=False))
     with pytest.raises(GitHubActionsError,match='does not match'):
-        release_setup(Client(),'Owner/repo',root,policy_file=str(tmp_path/'policy.json'),execute=True)
+        release_setup(type('ProtectedClient',(Client,),{'protected':True})(),'Owner/repo',root,policy_file=str(tmp_path/'policy.json'),execute=True)
 
 
 def test_release_readiness_uses_real_github_workflow_identifier(canonical_signer, monkeypatch, tmp_path):
@@ -264,6 +277,7 @@ def test_release_readiness_uses_real_github_workflow_identifier(canonical_signer
     from devtool.github_actions import GitHubActionsClient
     root, _, _ = canonical_signer
     monkeypatch.setattr('devtool.actions_setup._secrets', lambda s: set())
+    monkeypatch.setattr('devtool.actions_setup._environment_secrets', lambda s: set())
 
     class RealClient(GitHubActionsClient):
         def __init__(self):
