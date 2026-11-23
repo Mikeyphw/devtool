@@ -39,6 +39,8 @@ _OPERATION_CAPABILITIES = {
     'actions.android.artifacts': 'actions_read',
     'delivery.pr.create': 'pr_create',
     'delivery.pr.read': 'pr_read',
+    'm8.pr.body.set': 'pr_maintain',
+    'm8.pr.labels.replace': 'pr_maintain',
     'delivery.checks.read': 'checks_read',
     'federation.source.fetch': 'repository_read',
 }
@@ -68,6 +70,14 @@ class AppClient:
                 'token_persisted':False, 'write_execution_verified':False}
 
 
+def capability_for_operation(operation: str) -> str:
+    """Fail-closed GA-01 operation admission; never grants a token by itself."""
+    capability = _OPERATION_CAPABILITIES.get(operation)
+    if capability is None:
+        raise AppOperationRefused('GA01_OPERATION_NOT_ADMITTED')
+    return capability
+
+
 def issue_for_operation(repository: str, operation: str, *,
                         environ: Mapping[str,str] | None = None,
                         expected_repository_id: int | None = None,
@@ -78,9 +88,7 @@ def issue_for_operation(repository: str, operation: str, *,
     literal-only loader. Explicit injected environments are for constrained
     callers and tests, never an alternate fallback to GH_TOKEN.
     """
-    capability = _OPERATION_CAPABILITIES.get(operation)
-    if capability is None:
-        raise AppOperationRefused('GA01_OPERATION_NOT_ADMITTED')
+    capability = capability_for_operation(operation)
     try:
         slug = _repository(repository)
         if provider is None:

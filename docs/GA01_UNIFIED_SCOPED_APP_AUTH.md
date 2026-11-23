@@ -65,3 +65,32 @@ private-key persistence and no generic GitHub credential helper. Existing
 native Delivery/PR/Actions/Federation/PAT `auto` paths are maintained. Source
 validation is run by `python3 -u -B tests/ga01_native_validate.py` from the
 candidate worktree; local tests are not hosted acceptance or a release.
+
+## GA-01 operation-specific PATCH/PUT M8 integration — source amendment
+
+`m8_automation.Policy` now supports two independently approved, exact-preimage
+PR effects. `pr_body_set` updates one PR body by `PATCH /pulls/{number}` only
+when `pr_body_before_sha256` matches its live preimage; `pr_labels_replace`
+uses `PUT /issues/{number}/labels` only when the sorted current-label receipt
+matches `pr_labels_before_sha256`. Both keep the existing immutable M8 policy,
+source-bound Delivery session, native durable intent, strictly bounded methods,
+repository identity checks, postimage reads, and no automatic replay after
+ambiguous HTTP outcomes. A declined/expired policy never reaches the network.
+
+New policy v1 fields are `pr_body`, `pr_body_before_sha256`, and
+`pr_labels_before_sha256`; they are optional solely for existing v1 policies
+that do not authorize either new effect. With a new effect, the corresponding
+field/pin must be set explicitly. Prior policy semantics remain unchanged.
+The `pr_body` itself is not emitted in the public policy receipt. For labels,
+`pr_labels_before_sha256` is the SHA-256 of the canonical JSON bytes from
+`m8_automation._canonical({'labels': sorted(names)})`, not a hash of raw GitHub
+JSON. The selected operation is admitted by GA-01's allowlist with
+`pr_maintain` scope. There is no PAT fallback for explicit `--auth app`.
+
+This is **source implementation**, not a new permission grant, a GitHub
+App live-installation test, remote delivery, CI24, protected merge or release.
+One endpoint-specific transient failure or unknown response blocks unattended
+retry. The observed worktree, session and PR must be requalified before any
+subsequent authorized action. Source tests cover preimage drift, cross-repo,
+unknown write, token exposure and provider error categories. Applicable live
+App hostile tests remain a separate security-acceptance obligation.

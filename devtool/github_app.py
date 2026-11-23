@@ -457,6 +457,14 @@ def make_app_client(repository: str, capability: str, *, role: str = 'base'):
         def _assert_repository(self, slug):
             if _repository(slug).casefold()!=self._bound_repository.casefold():
                 raise GitHubAppError('APP_CLIENT_CROSS_REPOSITORY_REFUSED')
+        def assert_approved_pr_write(self, slug, operation, method, number):
+            """Guard the two managed M8 PR writes before exposing a scoped token."""
+            self._assert_repository(slug)
+            allowed = {'pr_body_set': 'PATCH', 'pr_labels_replace': 'PUT'}
+            if (capability != 'pr_maintain' or allowed.get(operation) != method
+                    or type(number) is not int or number < 1):
+                raise GitHubAppError('APP_CLIENT_PR_WRITE_NOT_ADMITTED')
+
         def _request(self, path):
             # Pagination and internal raw GET adapters must never escape the
             # chosen installation repository, even before the provider does a

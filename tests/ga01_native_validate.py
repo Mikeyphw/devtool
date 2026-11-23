@@ -13,6 +13,7 @@ import pytest
 
 TESTS=(
     'tests/test_ga01_scoped_auth.py',
+    'tests/test_ga01_managed_pr_writes.py',
     'tests/test_github_app_m4.py',
     'tests/test_ga00_security_baseline.py',
     'tests/test_m7_credentials.py',

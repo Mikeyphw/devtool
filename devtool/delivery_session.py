@@ -24,7 +24,7 @@ _SCHEMA = "devtool.delivery-session.v1"
 _HEX32 = re.compile(r"[0-9a-f]{32}\Z")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
-_OPERATIONS = frozenset({"push", "pr_create", "dispatch", "rerun", "pr_comment", "pr_labels", "commit_status"})
+_OPERATIONS = frozenset({"push", "pr_create", "dispatch", "rerun", "pr_comment", "pr_labels", "commit_status", "pr_body_set", "pr_labels_replace"})
 _MAX_RECORD = 512 * 1024
 
 
@@ -437,7 +437,8 @@ def confirm_intent(identity: str, operation: str, key: str,
                     live['git_dir'] != record['git_dir'] or
                     live['repository'].casefold() != record['repository'].casefold()):
                 raise DeliverySessionError('Push verification source identity changed')
-        if operation in ('pr_comment', 'pr_labels', 'commit_status'):
+        if operation in ('pr_comment', 'pr_labels', 'commit_status',
+                          'pr_body_set', 'pr_labels_replace'):
             pr_number = (record.get('pr') or {}).get('number')
             if type(pr_number) is not int or pr_number < 1:
                 raise DeliverySessionError('M8 mutation requires exact saved PR identity')
@@ -454,6 +455,22 @@ def confirm_intent(identity: str, operation: str, key: str,
                         len(set(str(v) for v in labels)) != len(labels) or
                         any(not isinstance(v, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,48}', v) for v in labels)):
                     raise DeliverySessionError('M8 labels proof is not exact and bounded')
+            elif operation == 'pr_body_set':
+                if (set(proof) != {'head_sha', 'pr_number', 'body_sha256'} or
+                        proof.get('pr_number') != pr_number or
+                        type(proof.get('body_sha256')) is not str or
+                        not re.fullmatch(r'[a-f0-9]{64}', proof['body_sha256'])):
+                    raise DeliverySessionError('GA01 PR body proof requires bound PR and SHA256')
+            elif operation == 'pr_labels_replace':
+                labels = proof.get('labels')
+                if (set(proof) != {'head_sha', 'pr_number', 'labels'} or
+                        proof.get('pr_number') != pr_number or
+                        type(labels) is not list or not 0 <= len(labels) <= 8 or
+                        len(set(str(v) for v in labels)) != len(labels) or
+                        any(type(v) is not str or
+                            not re.fullmatch(r'[A-Za-z0-9_.-]{1,48}', v)
+                            for v in labels)):
+                    raise DeliverySessionError('GA01 replacement labels proof invalid')
             else:
                 if (set(proof) != {'head_sha', 'status_id', 'context'} or
                         type(proof.get('status_id')) is not int or proof['status_id'] < 1 or
