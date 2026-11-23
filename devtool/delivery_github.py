@@ -626,6 +626,7 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
                              (lambda row: _ci_candidate(row, item, pr_info, merge_sha)))
             if not exact_evidence['verified']:
                 state = 'CHECKS_EVIDENCE_PENDING'
+        metadata_updated_only = False
         branch_rules = None
         branch_rules_issue = None
         if state == 'REQUIRED_CHECKS_PASSED' and strict_registration:
@@ -644,8 +645,16 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
             current_merge, current_pr_times = live_provenance()
             if current_merge != merge_sha:
                 raise DeliverySessionError('PR merge identity changed during CI poll; qualification blocked')
-            if current_pr_times != verified_pr_times:
-                raise DeliverySessionError('PR registration anchor changed during CI poll; qualification blocked')
+            # GitHub updates PR updated_at for comments, labels and other
+            # metadata without changing the source-bound head/base/merge ref.
+            # The first anchor was already used to bound run registration;
+            # independently verified run + attempt evidence remains valid.
+            # Changing PR created_at is an identity inconsistency and refuses.
+            if (current_pr_times is None) != (verified_pr_times is None) or (
+                    current_pr_times is not None and verified_pr_times is not None
+                    and current_pr_times[0] != verified_pr_times[0]):
+                raise DeliverySessionError('PR creation identity changed during CI poll; qualification blocked')
+            metadata_updated_only = current_pr_times != verified_pr_times
         diag = []
         if state == 'CHECKS_FAILED':
             from .delivery_ci_evidence import failed_job_details
@@ -660,7 +669,8 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
                              'detailed_jobs': sanitize_failed_metadata(
                                  failed_job_details(client, item['repository'], match), detailed=True),
                              'log_content_collected': False})
-        summary = {'state':state, 'checks_qualified':state=='REQUIRED_CHECKS_PASSED',
+        summary = {'pr_metadata_updated_during_poll': metadata_updated_only,
+                   'state':state, 'checks_qualified':state=='REQUIRED_CHECKS_PASSED',
                    'exact_run_evidence':exact_evidence,
                    'source_sha':item['head_sha'], 'required':list(required),
                    'policy_sha256':policy_sha256 or None,

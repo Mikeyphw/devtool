@@ -95,13 +95,43 @@ def registration_window(session: Mapping[str, Any], horizon_seconds: int,
             'ranges': tuple(ranges)}
 
 
+
+def _immutable_run_identity(row: Mapping[str, Any]) -> tuple[Any, ...]:
+    """Fields that must never drift for one GitHub Actions run ID.
+
+    Status, conclusion, updated_at, attempt, job counts, and PR backfill are
+    mutable; exact-run/attempt qualification takes fresh API evidence later.
+    """
+    repo = row.get('repository')
+    repo_id = repo.get('id') if isinstance(repo, dict) else None
+    head_repo = row.get('head_repository')
+    head_repo_id = head_repo.get('id') if isinstance(head_repo, dict) else None
+    return (row.get('id'), row.get('workflow_id'), row.get('event'),
+            row.get('created_at'), row.get('head_sha'), row.get('head_branch'),
+            row.get('run_number'), row.get('path'), repo_id, head_repo_id)
+
+
+def _newer_run_observation(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
+    """Choose a current provider observation, never infer a passed CI gate."""
+    previous = old.get('run_attempt')
+    latest = new.get('run_attempt')
+    if type(previous) is int and type(latest) is int and previous != latest:
+        return new if latest > previous else old
+    a, b = old.get('updated_at'), new.get('updated_at')
+    if isinstance(a, str) and isinstance(b, str) and a != b:
+        return new if _date(b) > _date(a) else old
+    # Provider pagination is not an authoritative success snapshot; the exact
+    # GET verifier must still re-fetch the selected run + attempt.
+    return new
+
+
 def collect_runs(client: Any, slug: str, *, window: Mapping[str, Any] | None = None,
                  event: str = '') -> list[dict[str, Any]]:
     """Exhaustively scan event/time-scoped runs, without guessing identities.
 
     Each registered window is <= 2 hours. Disjoint PR/session windows are
     queried independently and deduplicated by immutable provider run ID.
-    Missing pages, inconsistent totals, duplicate IDs with different bodies,
+    Missing pages, inconsistent totals, duplicate IDs with changed identity,
     or a combined inventory >= 500 all fail closed.
     """
     from .github_actions import GitHubActionsClient
@@ -146,9 +176,12 @@ def collect_runs(client: Any, slug: str, *, window: Mapping[str, Any] | None = N
                     created = _date(item.get('created_at'))
                     if not start <= created <= end:
                         raise DeliverySessionError('CI registration API created filter was not honored')
-                    if rid in unique and unique[rid] != item:
-                        raise DeliverySessionError('CI run changed across registration anchors')
-                    unique[rid] = item
+                    if rid in unique:
+                        if _immutable_run_identity(unique[rid]) != _immutable_run_identity(item):
+                            raise DeliverySessionError('CI run immutable identity changed across registration anchors')
+                        unique[rid] = _newer_run_observation(unique[rid], item)
+                    else:
+                        unique[rid] = item
                 if len(found) > total or len(unique) >= MAX_RESULTS:
                     raise DeliverySessionError('CI registration inventory exceeds bounded limit')
                 if len(found) == total:

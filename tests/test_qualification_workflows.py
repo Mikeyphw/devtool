@@ -63,20 +63,23 @@ def fake_artifacts(monkeypatch, tmp_path, sha=SHA):
     monkeypatch.setattr(q,'artifact_list',lambda client,slug,identity:{'artifacts':[
         {'name':name,'id':i+1,'digest':'sha256:'+'b'*64} for i,name in enumerate(names)]})
     content={'schema_version':1,'source_sha':sha,'status':'PASS','expected_shards':24,
-             'present_shards':24,'total_modules':800,'covered_modules':800,
-             'tests':20000,'failures':0,'errors':0,'issues':[], 'failed_modules':[],
+             'present_shards':24,'total_modules':24,'covered_modules':24,
+             'tests':24,'failures':0,'errors':0,'issues':[], 'failed_modules':[],
              'formal_release_qualified':False}
     archive=tmp_path/'summary.zip'
     with ZipFile(archive,'w') as z: z.writestr('summary.json',json.dumps(content))
     monkeypatch.setattr(q,'verify_download',lambda client,slug,rid,artifact,root:{
         'archive_verified':True,'sha256':'b'*64,'file':str(archive)})
+    monkeypatch.setattr(q,'_ci24_verified_shard_receipt',lambda path,shard,source,slug: {
+        'shard':shard, 'modules':[f'tests/test_{shard:02d}.py'],'tests':1,
+        'inventory_count':24,'inventory_sha256':'c'*64})
     return archive
 
 
 def test_config_commands_and_engine_contract():
     from devtool.config import load_project_config
     config=load_project_config(str(Path(__file__).resolve().parents[1]),None)
-    for command in ('ci24-start','ci24-resume','g3r-native','g3r-verify','qualify-status','qualify-seal'):
+    for command in ('ci24-start','ci24-resume','g3r-remote-start','g3r-remote-resume','g3r-native','g3r-verify','qualify-status','qualify-seal'):
         assert config.wrapper.commands[command].workflow in config.targets['devtool'].workflows
 
 
@@ -90,6 +93,8 @@ def test_ci24_idempotent_dispatch_and_pass(tmp_path,monkeypatch):
     fake_artifacts(monkeypatch,tmp_path)
     result=q.ci24_resume(root,client=api,slug=SLUG)
     assert result['ci_verified'] and result['verification']['shards_verified']==24
+    assert result['verification']['artifact_archives_verified'] == 25
+    assert result['verification']['shard_archives_verified'] == 24
     assert result['run_correlated']
     assert q.qualify_status(root)['ci24']=='PASS_CI24_VERIFIED'
     assert q.qualify_status(root)['automated_milestone_verified'] is False
@@ -155,10 +160,14 @@ def test_ci24_interrupted_dispatch_cannot_repeat(tmp_path,monkeypatch):
 def test_native_verifier_rejects_stale_and_false_success(tmp_path,monkeypatch):
     root=fixture_source(tmp_path,monkeypatch)
     archive=tmp_path/'candidate.zip';archive.write_bytes(b'fixture')
+    hosted_receipt={'run_id':101,'status':'PASS'}
+    hosted_digest=hashlib.sha256((json.dumps(hosted_receipt,sort_keys=True,indent=2)+'\n').encode()).hexdigest()
+    monkeypatch.setattr(q,'_g3r_live_evidence',lambda root:{'run_id':101,'receipt':hosted_receipt})
     def verdict(a,b,*,require_native):
         assert require_native
         return {'source_commit':SHA,'status':'PASS_CURRENT_SOURCE_AND_NATIVE_LANES',
-                'passed_lanes':13,'required_lanes':13}
+                'passed_lanes':13,'required_lanes':13,
+                'hosted_g1_receipt_sha256':hosted_digest,'hosted_g1_run_id':101}
     monkeypatch.setattr(q,'verify_native',verdict)
     result=q.g3r_verify(root,candidate=archive)
     assert result['passed_lanes']==13

@@ -689,7 +689,7 @@ def test_verified_pr_timestamp_future_or_out_of_order_refused(ctx):
         strict(ctx,client,clock=lambda:now)
 
 
-def test_pr_time_drift_during_observation_refused(ctx):
+def test_pr_metadata_update_during_observation_keeps_source_bound_success(ctx):
     item, _, _ = ctx
     created = reg._date(item['created_at'])
     client = _pr_times_client(item,[row(item)],created=created)
@@ -703,7 +703,27 @@ def test_pr_time_drift_during_observation_refused(ctx):
                 data['updated_at']=(created+timedelta(seconds=5)).isoformat()
         return data
     client._get=drift
-    with pytest.raises(DeliverySessionError,match='registration anchor changed'):
+    result=strict(ctx,client)
+    assert result['state']=='REQUIRED_CHECKS_PASSED'
+    assert result['checks_qualified'] is True
+    assert result['pr_metadata_updated_during_poll'] is True
+
+
+def test_pr_creation_identity_drift_during_observation_is_refused(ctx):
+    item, _, _ = ctx
+    created = reg._date(item['created_at'])
+    client = _pr_times_client(item,[row(item)],created=created)
+    original=client._get
+    counter={'pr':0}
+    def drift(path):
+        data=original(path)
+        if path.endswith('/pulls/17'):
+            counter['pr']+=1
+            if counter['pr']>=2:
+                data['created_at']=(created+timedelta(seconds=5)).isoformat()
+        return data
+    client._get=drift
+    with pytest.raises(DeliverySessionError,match='PR creation identity changed'):
         strict(ctx,client)
 
 

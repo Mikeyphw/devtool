@@ -174,7 +174,7 @@ class RichMonitorTests(unittest.TestCase):
                 result=lc.apply_package(root,root,m,{},False,watch_ci=True)
             self.assertEqual(result,0)
             self.assertEqual(preflight.call_count,2)
-            adoption.assert_called_once_with(root,root,archive,'b'*40)
+            adoption.assert_called_once_with(root,root,archive,'b'*40,base='main')
 
     def test_noninteractive_view_does_not_mutate_logs_or_clipboard(self):
         original=os.environ.copy()

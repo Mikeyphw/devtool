@@ -115,39 +115,104 @@ def _require_zip_v3_commit_session(package: Path) -> None:
         raise NativeM5Refused('M5_ZIP_V3_CONTINUITY_UNPROVEN')
 
 
-def _child_env() -> dict[str, str]:
-    env=os.environ.copy()
-    env.update(DEVTOOL_EXECUTION_PRESENTATION='plain',DEVTOOL_JOB_UI='plain',
-               DEVTOOL_TEXTUAL_APPLY_HOST='0',DEVTOOL_TEXTUAL_EXECUTION_HOST='0',
-               DEVTOOL_RICH_LIVE='0',PYTHONDONTWRITEBYTECODE='1',
-               GIT_TERMINAL_PROMPT='0')
+def _attached_terminal() -> bool:
+    """Use the operator's existing terminal; no tmux host or fake TTY."""
+    return all(getattr(stream, 'isatty', lambda: False)()
+               for stream in (sys.stdin, sys.stdout, sys.stderr))
+
+
+def _child_env(*, attached: bool | None = None) -> dict[str, str]:
+    env = os.environ.copy()
+    env['PYTHONDONTWRITEBYTECODE'] = '1'
+    # No separate full-screen Textual UI; preserve native Rich/ANSI otherwise.
+    env['DEVTOOL_TEXTUAL_APPLY_HOST'] = '0'
+    env['DEVTOOL_TEXTUAL_EXECUTION_HOST'] = '0'
+    if attached is None:
+        attached = _attached_terminal()
+    if not attached:
+        env['DEVTOOL_EXECUTION_PRESENTATION'] = 'plain'
+        env['DEVTOOL_JOB_UI'] = 'plain'
+        env['DEVTOOL_RICH_LIVE'] = '0'
+        env['GIT_TERMINAL_PROMPT'] = '0'
     return env
 
 
-def _run(argv: list[str], *, repo: Path, timeout: int = 1800) -> tuple[int,str]:
-    """Live child stdout/stderr with bounded, minimal line capture for session ID only."""
-    print('M5_NATIVE_DELEGATE '+argv[1]+' '+argv[2],flush=True)
-    with subprocess.Popen(argv,cwd=str(repo),env=_child_env(),stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE,text=True,bufsize=1) as p:
-        outputs=[]
-        def consume(stream,output,collect):
-            for line in iter(stream.readline,''):
-                output.write(line);output.flush()
+def _native_child_cwd(argv: list[str], repo: Path) -> Path:
+    """Do not shadow the independently selected M2 runtime with the target.
+
+    Native M5 controls target with an explicit `--repo`, but Python `-m`
+    searches `cwd` first. Starting the nested controller inside the target
+    makes M2 correctly refuse runtime==target. The runtime package containing
+    this function is the controller; only nested Devtool CLI commands move to
+    its root. Verified launcher PYZ and arbitrary native subprocesses keep
+    their previous cwd contract. M2 still checks the actual runtime Git tree.
+    """
+    if (len(argv)>=4 and argv[0]==sys.executable and
+            argv[1:4]==['-B','-m','devtool']):
+        runtime=Path(__file__).resolve().parent.parent
+        if runtime==repo.resolve():
+            raise NativeM5Refused('M5_SEPARATE_RUNTIME_REQUIRED')
+        return runtime
+    return repo
+
+
+def _run(argv: list[str], *, repo: Path, timeout: int = 1800) -> tuple[int, str]:
+    """Foreground child: actual native TTY when attached; bounded plain fallback.
+
+    The returned text is only machine-mode session output, NEVER evidence
+    for native success. Attached mode resolves committed sessions via native
+    history and integrity-checked journals, not by scraping Rich output.
+    """
+    attached = _attached_terminal()
+    print('M5_NATIVE_FOREGROUND '+ ' '.join(argv[:4]) +
+          ' tty=' + ('attached' if attached else 'plain-fallback'),flush=True)
+    if attached:
+        with subprocess.Popen(argv, cwd=str(_native_child_cwd(argv,repo)), env=_child_env(attached=True)) as p:
+            print('M5_CHILD_PID '+str(p.pid), flush=True)
+            try:
+                rc = p.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                p.terminate()
+                try: p.wait(timeout=10)
+                except subprocess.TimeoutExpired: p.kill(); p.wait()
+                raise NativeM5Refused('M5_NATIVE_TIMEOUT; inspect durable history; NEVER REAPPLY') from None
+            except KeyboardInterrupt:
+                # The foreground process group may have received Ctrl-C too.
+                # Do not leave an unreaped child or start a second native job.
+                try: p.wait(timeout=10)
+                except subprocess.TimeoutExpired: p.terminate(); p.wait()
+                raise
+        return rc, ''
+
+    # Nonterminal automation: do not force ANSI, report actual child streams.
+    outputs: list[str] = []
+    with subprocess.Popen(argv, cwd=str(_native_child_cwd(argv,repo)), env=_child_env(attached=False),
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True, bufsize=1) as p:
+        def consume(stream, output, collect):
+            for line in iter(stream.readline, ''):
+                output.write(line); output.flush()
                 if collect and len(line)<4096 and ('SESSION_ID' in line):
                     outputs.append(line)
-        threads=[threading.Thread(target=consume,args=(p.stdout,sys.stdout,True),daemon=True),
-                 threading.Thread(target=consume,args=(p.stderr,sys.stderr,False),daemon=True)]
-        for th in threads:th.start()
+        threads = [threading.Thread(target=consume,args=(p.stdout,sys.stdout,True),daemon=True),
+                   threading.Thread(target=consume,args=(p.stderr,sys.stderr,False),daemon=True)]
+        for thread in threads: thread.start()
         try:
-            rc=p.wait(timeout=timeout)
+            rc = p.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             p.terminate()
-            try:p.wait(timeout=10)
-            except subprocess.TimeoutExpired:p.kill();p.wait()
+            try: p.wait(timeout=10)
+            except subprocess.TimeoutExpired: p.kill(); p.wait()
             raise NativeM5Refused('M5_NATIVE_TIMEOUT; inspect durable history; NEVER REAPPLY') from None
         finally:
-            for th in threads:th.join(timeout=20)
-    return rc,''.join(outputs)
+            # Descendant processes may retain an inherited pipe after the
+            # direct child exits; never hang indefinitely during cleanup.
+            for thread in threads: thread.join(timeout=3)
+            if any(thread.is_alive() for thread in threads):
+                for stream in (p.stdout, p.stderr):
+                    if stream is not None: stream.close()
+                raise NativeM5Refused('M5_NATIVE_OUTPUT_PIPE_NOT_CLOSED; reconcile durable state, NEVER REAPPLY')
+    return rc, ''.join(outputs)
 
 
 def _session_id(s: str) -> str:
@@ -268,60 +333,161 @@ def _committed_zip_session(repo: Path, package: Path, before: str) -> str:
             or native_manifest.get('schema_version') != 3):
         raise NativeM5Refused('M5_ZIP_NATIVE_HISTORY_NOT_QUALIFIED; DO NOT REAPPLY')
 
-    # A deliberately private, canonical state path; NEVER trust arbitrary
-    # session IDs or names from a subprocess transcript.
-    folder = _state_root()
-    if (folder.is_symlink() or not folder.is_dir()
-            or folder.stat().st_mode & 0o077):
-        raise NativeM5Refused('M5_ZIP_SESSION_STORE_UNSAFE; DO NOT REAPPLY')
+    # Preserve discoverability after state-root upgrades. Always verify the
+    # exact matching session; never infer success from terminal log text.
+    from .xdg import state_roots
+    folders = tuple(base / 'delivery' / 'sessions' for base in state_roots())
     seen = 0
     candidates: list[str] = []
-    for entry in sorted(folder.iterdir()):
-        seen += 1
-        if seen > 4096:
-            raise NativeM5Refused('M5_ZIP_SESSION_STORE_OVERSIZED; DO NOT REAPPLY')
-        if not re.fullmatch(r'[a-f0-9]{32}\.json', entry.name):
+    for folder in folders:
+        if not folder.exists():
             continue
-        if entry.is_symlink() or not entry.is_file() or not stat.S_ISREG(entry.stat().st_mode):
-            raise NativeM5Refused('M5_ZIP_SESSION_ENTRY_UNSAFE; DO NOT REAPPLY')
-        if not 0 < entry.stat().st_size <= 262144:
-            raise NativeM5Refused('M5_ZIP_SESSION_ENTRY_SIZE_INVALID; DO NOT REAPPLY')
-        try:
-            envelope = json.loads(entry.read_text(encoding='utf-8'))
-        except (OSError, UnicodeError, ValueError):
-            # Corrupt unrelated entries do not become evidence.
-            continue
-        if not isinstance(envelope, dict) or envelope.get('repo_root') != str(repo):
-            continue
-        if envelope.get('head_sha') != current:
-            continue
-        # status verifies the native journal checksum, Git binding, and event
-        # stream. A corrupt *matching* record must refuse, never be skipped.
-        try:
-            bound = status(entry.stem)
-        except (OSError, ValueError, RuntimeError):
-            raise NativeM5Refused('M5_ZIP_MATCHING_SESSION_INVALID; DO NOT REAPPLY') from None
-        receipt = bound.get('native_apply') or {}
-        overlay = bound.get('overlay') or {}
-        if (bound.get('id') != entry.stem or bound.get('repo_root') != str(repo)
-                or bound.get('head_sha') != current
-                or bound.get('source_binding') != 'matching'
-                or bound.get('resumable') is not True
-                or bound.get('stage') != 'PLANNED'
-                or receipt.get('state') != 'COMMITTED'
-                or receipt.get('commit') != current
-                or receipt.get('transaction_status') != 'completed'
-                or receipt.get('transaction_id') != native_tx['id']
-                or receipt.get('history_id') != history['history_id']
-                or receipt.get('artifact_sha256') != fingerprint
-                or overlay.get('path') != artifact or overlay.get('sha256') != fingerprint
-                or bound.get('intents') or bound.get('pr') or bound.get('ci')):
-            raise NativeM5Refused('M5_ZIP_MATCHING_SESSION_EVIDENCE_DRIFT; DO NOT REAPPLY')
-        candidates.append(bound['id'])
+        if (folder.is_symlink() or not folder.is_dir()
+                or folder.stat().st_mode & 0o077):
+            raise NativeM5Refused('M5_ZIP_SESSION_STORE_UNSAFE; DO NOT REAPPLY')
+        for entry in sorted(folder.iterdir()):
+            seen += 1
+            if seen > 4096:
+                raise NativeM5Refused('M5_ZIP_SESSION_STORE_OVERSIZED; DO NOT REAPPLY')
+            if not re.fullmatch(r'[a-f0-9]{32}\.json', entry.name):
+                continue
+            if entry.is_symlink() or not entry.is_file() or not stat.S_ISREG(entry.stat().st_mode):
+                raise NativeM5Refused('M5_ZIP_SESSION_ENTRY_UNSAFE; DO NOT REAPPLY')
+            if not 0 < entry.stat().st_size <= 262144:
+                raise NativeM5Refused('M5_ZIP_SESSION_ENTRY_SIZE_INVALID; DO NOT REAPPLY')
+            try:
+                envelope = json.loads(entry.read_text(encoding='utf-8'))
+            except (OSError, UnicodeError, ValueError):
+                # Corrupt unrelated entries do not become evidence.
+                continue
+            if not isinstance(envelope, dict) or envelope.get('repo_root') != str(repo):
+                continue
+            if envelope.get('head_sha') != current:
+                continue
+            # status verifies the native journal checksum, Git binding, and event
+            # stream. A corrupt *matching* record must refuse, never be skipped.
+            try:
+                bound = status(entry.stem)
+            except (OSError, ValueError, RuntimeError):
+                raise NativeM5Refused('M5_ZIP_MATCHING_SESSION_INVALID; DO NOT REAPPLY') from None
+            receipt = bound.get('native_apply') or {}
+            overlay = bound.get('overlay') or {}
+            if (bound.get('id') != entry.stem or bound.get('repo_root') != str(repo)
+                    or bound.get('head_sha') != current
+                    or bound.get('source_binding') != 'matching'
+                    or bound.get('resumable') is not True
+                    or bound.get('stage') != 'PLANNED'
+                    or receipt.get('state') != 'COMMITTED'
+                    or receipt.get('commit') != current
+                    or receipt.get('transaction_status') != 'completed'
+                    or receipt.get('transaction_id') != native_tx['id']
+                    or receipt.get('history_id') != history['history_id']
+                    or receipt.get('artifact_sha256') != fingerprint
+                    or overlay.get('path') != artifact or overlay.get('sha256') != fingerprint
+                    or bound.get('intents') or bound.get('pr') or bound.get('ci')):
+                raise NativeM5Refused('M5_ZIP_MATCHING_SESSION_EVIDENCE_DRIFT; DO NOT REAPPLY')
+            candidates.append(bound['id'])
 
     if len(candidates) != 1:
         raise NativeM5Refused('M5_ZIP_COMMITTED_SESSION_NOT_UNIQUE; DO NOT REAPPLY')
     print('M5_ZIP_SESSION_DURABLY_VERIFIED ' + candidates[0], flush=True)
+    return candidates[0]
+
+
+def _committed_pyz_session(repo: Path, package: Path, before: str) -> str:
+    """Read-only source + committed history + journal reconciliation for v3 pyz.
+
+    Exact native SHA/tree plus payload inventory, transaction, history, and
+    journal must all identify one result. Never auto-adopt or replay here.
+    """
+    import hashlib
+    import stat
+    from .launcher_contract_v3 import read_embedded_package
+    from .artifacts import load_history
+    from .delivery_session import _state_root, status
+    from .xdg import state_roots
+    manifest, _ = read_embedded_package(package)
+    source = manifest.get('source') or {}
+    after = _native_git(repo, 'rev-parse', 'HEAD')
+    if (not _SHA40.fullmatch(before) or after == before or
+            source.get('source_sha') != before or
+            source.get('source_tree') != _native_git(repo,'rev-parse', before + '^{tree}') or
+            _native_git(repo,'rev-parse','HEAD^') != before or
+            _native_git(repo,'rev-parse','--show-toplevel') != str(repo) or
+            _native_git(repo,'status','--porcelain','--untracked-files=all')):
+        raise NativeM5Refused('M5_PYZ_COMMITTED_SOURCE_NOT_ATTESTED; DO NOT REAPPLY')
+    inventory = manifest.get('inventory')
+    if not isinstance(inventory, list) or not inventory:
+        raise NativeM5Refused('M5_PYZ_PAYLOAD_INVENTORY_UNVERIFIED; DO NOT REAPPLY')
+    for entry in inventory:
+        if not isinstance(entry, dict):
+            raise NativeM5Refused('M5_PYZ_INVENTORY_INVALID; DO NOT REAPPLY')
+        path = entry.get('path')
+        action = entry.get('action')
+        if not isinstance(path,str) or not path or path.startswith('/') or '..' in path.split('/'):
+            raise NativeM5Refused('M5_PYZ_INVENTORY_PATH_UNSAFE; DO NOT REAPPLY')
+        target = repo / path
+        if action == 'delete':
+            if target.exists() or target.is_symlink():
+                raise NativeM5Refused('M5_PYZ_POSTCOMMIT_DELETE_MISMATCH; DO NOT REAPPLY')
+        elif action in ('add','modify'):
+            expected = entry.get('payload_sha256')
+            if (not isinstance(expected,str) or not re.fullmatch(r'[0-9a-f]{64}',expected) or
+                    target.is_symlink() or not target.is_file() or
+                    hashlib.sha256(target.read_bytes()).hexdigest()!=expected):
+                raise NativeM5Refused('M5_PYZ_POSTCOMMIT_CONTENT_MISMATCH; DO NOT REAPPLY')
+        else:
+            raise NativeM5Refused('M5_PYZ_INVENTORY_ACTION_UNSUPPORTED; DO NOT REAPPLY')
+    histories=[h for h in load_history(repo) if isinstance(h, dict) and h.get('commit_hash')==after
+               and h.get('status') in ('ok','applied','success','succeeded')
+               and h.get('validation_status') in ('ok','passed','success','succeeded')
+               and isinstance(h.get('manifest'),dict)
+               and h['manifest'].get('schema_version')==3
+               and (h.get('transaction') or {}).get('status')=='completed'
+               and h.get('history_id')]
+    if len(histories)!=1:
+        raise NativeM5Refused('M5_PYZ_HISTORY_NOT_UNIQUE; DO NOT REAPPLY')
+    history=histories[0]
+    fingerprint=history.get('sha256')
+    if not isinstance(fingerprint,str) or not re.fullmatch(r'[0-9a-f]{64}',fingerprint):
+        raise NativeM5Refused('M5_PYZ_HISTORY_DIGEST_INVALID; DO NOT REAPPLY')
+    # History's archive is not the top-level pyz; it is the native archive
+    # scaffolded *by* the verified pyz. Do not confuse their SHA256s.
+    candidates=[]
+    for root in state_roots():
+        folder=root/'delivery'/'sessions'
+        if not folder.exists():continue
+        if folder.is_symlink() or not folder.is_dir() or folder.stat().st_mode & 0o077:
+            raise NativeM5Refused('M5_PYZ_SESSION_STORE_UNSAFE; DO NOT REAPPLY')
+        for index,entry in enumerate(sorted(folder.iterdir())):
+            if index>=4096:raise NativeM5Refused('M5_PYZ_SESSION_STORE_OVERSIZED')
+            if not re.fullmatch(r'[0-9a-f]{32}\.json',entry.name):continue
+            if entry.is_symlink() or not entry.is_file() or not stat.S_ISREG(entry.stat().st_mode):
+                raise NativeM5Refused('M5_PYZ_SESSION_ENTRY_UNSAFE')
+            if not 0<entry.stat().st_size<=262144:
+                raise NativeM5Refused('M5_PYZ_SESSION_ENTRY_OVERSIZED')
+            try: obj=json.loads(entry.read_text(encoding='utf-8'))
+            except (OSError,UnicodeError,ValueError):continue
+            if not isinstance(obj,dict) or obj.get('head_sha')!=after or obj.get('repo_root')!=str(repo):continue
+            try: bound=status(entry.stem)
+            except (OSError,ValueError,RuntimeError):
+                raise NativeM5Refused('M5_PYZ_MATCHING_JOURNAL_INVALID; DO NOT REAPPLY') from None
+            native=bound.get('native_apply') or {}
+            overlay=bound.get('overlay') or {}
+            if (bound.get('source_binding') != 'matching' or bound.get('resumable') is not True
+                    or bound.get('stage') != 'PLANNED' or bound.get('intents') or bound.get('pr') or bound.get('ci')
+                    or native.get('state')!='COMMITTED' or native.get('commit')!=after
+                    or native.get('source_commit')!=before
+                    or native.get('transaction_status')!='completed'
+                    or native.get('transaction_id')!=(history.get('transaction') or {}).get('id')
+                    or native.get('history_id')!=history['history_id']
+                    or native.get('artifact_sha256')!=fingerprint
+                    or overlay.get('sha256')!=fingerprint
+                    or overlay.get('path')!=history.get('artifact')):
+                raise NativeM5Refused('M5_PYZ_SESSION_EVIDENCE_DRIFT; DO NOT REAPPLY')
+            candidates.append(entry.stem)
+    if len(candidates)!=1:
+        raise NativeM5Refused('M5_PYZ_COMMITTED_SESSION_NOT_UNIQUE; DO NOT REAPPLY')
     return candidates[0]
 
 
@@ -357,12 +523,13 @@ def main(args: argparse.Namespace) -> int:
                          '--repo',str(repo),'validate-overlay',str(path)]
             rc,_=_run(command,repo=repo,timeout=720)
             if rc:
-                raise NativeM5Refused('M5_NATIVE_CHECK_FAILED rc='+str(rc))
+                print('M5_NATIVE_CHECK_FAILED rc='+str(rc),file=sys.stderr,flush=True)
+                return rc if rc>0 else 128-rc
             print('M5_NATIVE_CHECK_PASS kind='+kind,flush=True)
             if op=='check':return 0
             if not bool(getattr(args,'yes',False)):
                 raise NativeM5Refused('M5_APPLY_APPROVAL_REQUIRED --yes')
-            before_apply = _native_git(repo, 'rev-parse', 'HEAD') if kind=='native-zip' else ''
+            before_apply = _native_git(repo, 'rev-parse', 'HEAD')
             if kind=='verified-pyz-v3':
                 apply_cmd=[sys.executable,'-B',str(path),'apply',
                            '--repo',str(repo),'--devtool-repo',str(runtime),'--no-auto-ff']
@@ -375,11 +542,12 @@ def main(args: argparse.Namespace) -> int:
                            '--keep-artifact']
             rc,log=_run(apply_cmd,repo=repo,timeout=2100)
             if rc:
-                raise NativeM5Refused('M5_APPLY_FAILED rc='+str(rc)+'; inspect native transaction, NEVER REAPPLY')
+                print('M5_APPLY_FAILED rc='+str(rc)+'; inspect native transaction, NEVER REAPPLY',file=sys.stderr,flush=True)
+                return rc if rc>0 else 128-rc
             # Native history is authoritative; Rich output may omit the
             # NATIVE_M3_SESSION_ID text even after a committed M3 adoption.
             sid=(_committed_zip_session(repo,path,before_apply) if kind=='native-zip'
-                 else _session_from_log(log,kind))
+                 else _committed_pyz_session(repo,path,before_apply))
             bound=_bound_status(sid,repo)
             _summary(bound,verb='apply',format='json' if getattr(args,'_devtool_json',False) else 'text')
             return 0
@@ -402,7 +570,8 @@ def main(args: argparse.Namespace) -> int:
                      '--id',sid,'--auth',auth,'--yes']
                 rc,_=_run(cmd,repo=repo,timeout=480)
                 if rc:
-                    raise NativeM5Refused('M5_NATIVE_DELIVERY_'+action.upper()+'_UNQUALIFIED; read-only reconcile, NO REPOST')
+                    print('M5_NATIVE_DELIVERY_'+action.upper()+'_UNQUALIFIED rc='+str(rc)+'; read-only reconcile, NO REPOST',file=sys.stderr,flush=True)
+                    return rc if rc>0 else 128-rc
             bound=_bound_status(sid,repo)
         elif op=='ci':
             auth=str(getattr(args,'auth','auto') or 'auto')
@@ -416,7 +585,9 @@ def main(args: argparse.Namespace) -> int:
                  '--id',sid,'--auth',auth,
                  '--checks',str(checks),'--interval',str(interval)]
             rc,_=_run(cmd,repo=repo,timeout=checks*interval+240)
-            if rc:raise NativeM5Refused('M5_NATIVE_CI_NOT_QUALIFIED rc='+str(rc))
+            if rc:
+                print('M5_NATIVE_CI_NOT_QUALIFIED rc='+str(rc),file=sys.stderr,flush=True)
+                return rc if rc>0 else 128-rc
             bound=_bound_status(sid,repo)
         elif op not in ('status','report'):
             raise NativeM5Refused('M5_NATIVE_COMMAND_UNSUPPORTED')

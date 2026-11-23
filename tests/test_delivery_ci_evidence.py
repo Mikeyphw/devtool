@@ -119,6 +119,28 @@ def test_failed_corrob_does_not_qualify(ctx, change):
     assert status(item['id'],state_root=root)['ci']['checks_qualified'] is False
 
 
+def test_completed_list_but_live_provider_rerun_does_not_qualify(ctx):
+    item, folder = ctx
+    c=Client(item)
+    c.live=run(item,status='in_progress',conclusion=None)
+    result=observe(ctx,c)
+    assert result['state']=='CHECKS_EVIDENCE_PENDING'
+    assert result['checks_qualified'] is False
+    assert result['exact_run_evidence']['issues'][0]['reason']=='run-not-successful'
+    assert c.job_calls==[]
+
+
+def test_mutable_list_to_live_metadata_drift_still_qualifies_same_attempt(ctx):
+    item, folder=ctx
+    c=Client(item)
+    c.rows[0]['updated_at']='2026-11-22T01:00:00Z'
+    c.live=dict(c.rows[0],updated_at='2026-11-22T01:02:00Z')
+    result=observe(ctx,c)
+    assert result['state']=='REQUIRED_CHECKS_PASSED'
+    assert result['exact_run_evidence']['verified'] is True
+    assert c.job_calls==[(111,1)]
+
+
 def test_failure_diagnostics_are_exact_attempt_and_do_not_copy_logs(ctx):
     item, root=ctx
     c=Client(item)
