@@ -836,6 +836,8 @@ metadata = { read_only = false, roadmap_id = "DIST-R01", transaction_root_aware 
 [targets.devtool.workflows]
 qual-ci24-start = [{ id = "dispatch", ref = "test:qual-ci24-start" }]
 qual-ci24-resume = [{ id = "observe", ref = "test:qual-ci24-resume" }]
+qual-g3r-remote-start = [{ id = "dispatch", ref = "test:qual-g3r-remote-start" }]
+qual-g3r-remote-resume = [{ id = "verify", ref = "test:qual-g3r-remote-resume" }]
 qual-g3r-native = [{ id = "native", ref = "test:qual-g3r-native" }]
 qual-g3r-verify = [{ id = "verify", ref = "test:qual-g3r-verify" }]
 qual-status = [{ id = "status", ref = "test:qual-status" }]
@@ -4787,6 +4789,16 @@ description = "Observe and independently verify 24-shard CI (never redispatch)"
 workflow = "qual-ci24-resume"
 target = "devtool"
 
+[wrapper.commands.g3r-remote-start]
+description = "Dispatch the hosted Android G1 lane once, preserving GitHub source identity"
+workflow = "qual-g3r-remote-start"
+target = "devtool"
+
+[wrapper.commands.g3r-remote-resume]
+description = "Verify exact G3R hosted Android G1 run, artifact and attempt"
+workflow = "qual-g3r-remote-resume"
+target = "devtool"
+
 [wrapper.commands.g3r-native]
 description = "Produce and independently verify 13-lane native Termux G3R evidence"
 workflow = "qual-g3r-native"
@@ -4821,6 +4833,20 @@ name = "QW01 ci24-resume canonical qualification workflow"
 runner = "command"
 timeout_seconds = 900
 command = ["python3", "-m", "devtool.qualification_workflows", "ci24-resume"]
+
+[[test]]
+id = "qual-g3r-remote-start"
+name = "QW02 hosted Android G1 dispatch (requires explicit authorization)"
+runner = "command"
+timeout_seconds = 300
+command = ["python3", "-B", "-m", "devtool.qualification_workflows", "g3r-remote-start"]
+
+[[test]]
+id = "qual-g3r-remote-resume"
+name = "QW02 hosted Android G1 exact-source evidence verification"
+runner = "command"
+timeout_seconds = 1200
+command = ["python3", "-B", "-m", "devtool.qualification_workflows", "g3r-remote-resume"]
 
 [[test]]
 id = "qual-g3r-native"

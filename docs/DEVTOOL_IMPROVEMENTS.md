@@ -1640,3 +1640,27 @@ historical failures or treat selected local tests as hosted authority.
 - **M8-LIVE-BRIDGE:** The existing M6 Rich event feed now includes a separate bounded `m8` domain for source-matched, sanitized local event observations and blocked/expired policy states; the projection is read-only, never treats webhook payloads as CI authority, and creates no files.
 - **M8-OVERLAY-003 (confirmed V2 packaging defect, pre-transaction refusal):** The gap operator wrote `manifest.json` while native M5 requires one `.devtool-artifact.json` archive member for schema-v3 apply. M5 native check passed but native apply refused `M5_ZIP_UNIQUE_MANIFEST_REQUIRED` before any child validation or transaction. V3 fixes the unique manifest member, audits its size and archive layout before staging an intent, and provides explicitly acknowledged, source-bound read-only reconciliation of the old `apply_intent` checkpoint. No original ZIP or native journal is removed or silently retried.
 - **M8-ACCEPTANCE-GATE:** Focused hosted signed-event/approval/maintenance tests, exact new PR HEAD hosted required checks, a fresh correlated CI24 and B3 qualification are mandatory. Actual public TLS deployment, GitHub App effective production grants, user/device and release qualification remain separately unverified. Never re-use prior PR #44 CI24/B3 receipt for this new commit.
+
+
+## DT-20261122-12/13/14/15 — Native session and CI reliability remediation (source staged)
+
+- **Preimage:** `Mikeyphw/devtool` PR #47 `feature/devtool-r06-base-adoption`, commit `69a0c5ee50b264de6025f7720750e55ab84e87ca`, tree `a7aadebc736705c55cc0a3bb767a0ed4af841c37`; source patch NOT_COMMITTED. The main roadmap milestone is M6 maintenance/reliability, not a new M10 overlay.
+- **DT-12:** the native CLI only invokes postcommit M3 adoption after a qualifying commit; classify precommit validation failure separately from uncertain postcommit recovery, retaining native transaction replay refusal.
+- **DT-13:** GitHub CI registration deduplicates by immutable run identity while allowing status/conclusion/updated_at and attempt observations to evolve, followed by independent exact-attempt verification; changed SHA/workflow/run ID still refuse.
+- **DT-14:** `xdg`, delivery sessions, Actions dispatches and CI24 qualification receipts use the canonical state root and read uniquely identified legacy journals without migration or duplicate POST; cross-root conflicts fail closed.
+- **DT-15:** native M5 delegates foreground TTY-attached children with live Rich/ANSI and real exit codes; committed native ZIP/pyz session lookup reads validated history/journals rather than scraping Rich output. For verified pyz commits, compare launcher *preimage* tree with `HEAD^` tree (not the modified `HEAD` tree) and inspect resulting payloads separately.
+- **Verification scope:** local focused tests including PTY simulation, CI mutable-run regression, old/new state paths, CI24 duplicate dispatch, and postcommit tree; exact-PR-head native check/apply/commit, hosted required CI, independent CI24 and Termux interactive acceptance remain PENDING. Prior CI receipts are historical and never qualify a new commit.
+- **Recovery:** never reset dirty worktrees, assume a postcommit session from an exit code, auto-retry uncertain GitHub dispatches, or migrate receipt roots without a verified plan. Library canonical ledger: `/Devtool/DEVTOOL_BUG_LEDGER_cg.md`; receipt/handoff remains a source checkpoint.
+
+## DT-20261122-17 · M5 nested native runtime import shadow
+
+Native M5 previously invoked a nested `python -B -m devtool` with `cwd=target`,
+which imports target source as the runtime and causes M2 to reject the valid
+separate attested runtime. `native_delivery_m5._native_child_cwd` now selects
+the importing controller package root *only for* nested native Devtool CLI
+commands, retaining explicit `--repo` target, existing M2 independent
+attestation, child stdout/stderr/exit code, and existing PYZ cwd behavior.
+An adversarial subprocess regression places an invalid `devtool` package in
+the target and verifies the real `devtool --help` nested child executes from
+the runtime source instead. No local Gradle, unsafe worktree rewrite,
+transaction replay, or remote CI qualification occurs in source tests.

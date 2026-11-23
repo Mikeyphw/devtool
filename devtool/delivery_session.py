@@ -41,11 +41,22 @@ def _digest(obj: Mapping[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _state_root(state_root: Path | None = None) -> Path:
+def _state_root(state_root: Path | None = None, *, identity: str | None = None) -> Path:
     if state_root is not None:
         return Path(state_root).expanduser().absolute()
-    home = Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state"))
-    return home.expanduser().absolute() / "devtool" / "delivery" / "sessions"
+    from .xdg import state_roots
+    candidates = tuple(root / "delivery" / "sessions" for root in state_roots())
+    if identity is not None:
+        if not _HEX32.fullmatch(identity):
+            raise DeliverySessionError("Invalid delivery session identity")
+        found = [path for path in candidates if (path / (identity + ".json")).exists()
+                 or (path / (identity + ".json")).is_symlink()]
+        if len(found) > 1:
+            raise DeliverySessionError("Conflicting canonical and legacy delivery journals; inspect before migration")
+        if found:
+            _directory(found[0], create=False)
+            return found[0]  # Read/update the verified existing journal in place.
+    return candidates[0]
 
 
 def _directory(path: Path, *, create: bool) -> None:
@@ -298,7 +309,7 @@ def _public(record: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def status(identity: str, *, state_root: Path | None = None, inspect_git: bool = True) -> dict[str, Any]:
-    folder = _state_root(state_root)
+    folder = _state_root(state_root, identity=identity)
     _directory(folder, create=False)
     record = _read(_path(folder, identity))
     result = _public(record)
@@ -351,7 +362,7 @@ def record_intent(identity: str, operation: str, key: str, *, approved: bool,
     key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()
     if not approved:
         raise DeliverySessionError("Explicit authorization required before remote mutation intent")
-    folder = _state_root(state_root)
+    folder = _state_root(state_root, identity=identity)
     with _locked(folder):
         path = _path(folder, identity)
         record = _read(path)
@@ -405,7 +416,7 @@ def confirm_intent(identity: str, operation: str, key: str,
     if operation not in _OPERATIONS or not isinstance(key, str):
         raise DeliverySessionError('Invalid mutation intent reconciliation')
     proof = dict(evidence)
-    folder = _state_root(state_root)
+    folder = _state_root(state_root, identity=identity)
     with _locked(folder):
         path = _path(folder, identity)
         record = _read(path)
@@ -494,7 +505,7 @@ def record_pr_observation(identity: str, observation: Mapping[str, Any], *,
         raise DeliverySessionError('Invalid PR observation identity')
     if not isinstance(pr.get('url'), str) or len(pr['url']) > 300:
         raise DeliverySessionError('Invalid PR observation URL')
-    folder = _state_root(state_root)
+    folder = _state_root(state_root, identity=identity)
     with _locked(folder):
         path = _path(folder, identity)
         record = _read(path)
@@ -543,7 +554,7 @@ def record_ci_observation(identity: str, observation: Mapping[str, Any], *,
         raise DeliverySessionError('CI qualification state is inconsistent')
     if len(json.dumps(obs, ensure_ascii=False)) > 140_000:
         raise DeliverySessionError('CI observation exceeds allowed budget')
-    folder = _state_root(state_root)
+    folder = _state_root(state_root, identity=identity)
     with _locked(folder):
         path = _path(folder, identity)
         record = _read(path)
@@ -892,20 +903,36 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
             ],
         })
     folder = _state_root(state_root)
-    with _locked(folder):
-        same_commit: list[dict[str, Any]] = []
-        for candidate in folder.glob('*.json'):
-            existing = _read(candidate)  # Corrupt journal blocks guessing.
-            if (existing['repo_root'] == inspected['repo_root']
-                    and existing['head_sha'] == inspected['head_sha']
-                    and existing['git_dir'] == inspected['git_dir']
-                    and existing['head'] == inspected['head']
-                    and existing['base'] == inspected['base']):
-                same_commit.append(existing)
+    # New journals belong in the canonical location. Previously committed M3
+    # sessions may still live under the old root: lock and inspect both before
+    # authorizing a second adoption. Never move or silently delete the old one.
+    from contextlib import ExitStack
+    from .xdg import state_roots
+    folders = (folder,) if state_root is not None else tuple(
+        base / 'delivery' / 'sessions' for base in state_roots())
+    with ExitStack() as locks:
+        for journal_root in folders:
+            if journal_root == folder:
+                locks.enter_context(_locked(journal_root))
+            elif journal_root.exists() or journal_root.is_symlink():
+                _directory(journal_root, create=False)
+                locks.enter_context(_locked(journal_root))
+        same_commit: list[tuple[dict[str, Any], Path]] = []
+        for journal_root in folders:
+            if not journal_root.exists():
+                continue
+            for candidate in journal_root.glob('*.json'):
+                existing = _read(candidate)  # Corrupt journal blocks guessing.
+                if (existing['repo_root'] == inspected['repo_root']
+                        and existing['head_sha'] == inspected['head_sha']
+                        and existing['git_dir'] == inspected['git_dir']
+                        and existing['head'] == inspected['head']
+                        and existing['base'] == inspected['base']):
+                    same_commit.append((existing, journal_root))
         if len(same_commit) > 1:
             raise DeliverySessionError('Ambiguous native sessions already bound to applied commit')
         if same_commit:
-            existing = same_commit[0]
+            existing, existing_root = same_commit[0]
             if (existing.get('base_repository',existing['repository']).casefold() !=
                     inspected['base_repository'].casefold() or
                     existing.get('head_repository',existing['repository']).casefold() !=
@@ -932,7 +959,7 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
                                            'commit': inspected['head_sha'],
                                            'overlay_sha256': digest})
                 existing['updated_at'] = now
-                _write(_path(folder, existing['id']), existing)
+                _write(_path(existing_root, existing['id']), existing)
             return {**_public(existing), 'reused': True,
                     'native_apply_replayed': False}
         identity = uuid.uuid4().hex

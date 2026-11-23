@@ -112,10 +112,12 @@ def verify_exact_attempts(client: Any, slug: str, records: list[dict[str, Any]],
         matched = validate_run(live)
         if (not isinstance(matched, dict) or any(matched.get(key) != row.get(key)
                     for key in ('id', 'attempt', 'name', 'workflow_id', 'event',
-                                'head_sha', 'status', 'conclusion'))):
+                                'head_sha'))):
             issues.append({'workflow': name, 'reason': 'exact-run-identity-changed'})
             continue
-        if row.get('status') != 'completed' or row.get('conclusion') != 'success':
+        # A list snapshot can be queued while the exact GET is completed, or
+        # vice versa. Qualify only the fresh GET state and its exact attempt.
+        if matched.get('status') != 'completed' or matched.get('conclusion') != 'success':
             issues.append({'workflow': name, 'reason': 'run-not-successful'})
             continue
         try:

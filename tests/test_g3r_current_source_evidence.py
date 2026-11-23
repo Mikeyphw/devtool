@@ -60,7 +60,7 @@ def test_missing_native_lanes_fail_closed(candidate):
     # Source-only candidates generated *on* Termux correctly identify their
     # native host, but have zero executed lanes. Both environments must fail,
     # for different reasons; neither can be treated as native G3R proof.
-    expected = 'Native/semantic lanes incomplete' if native else 'native Termux'
+    expected = 'Hosted Android G1 is required'
     with pytest.raises(gate.G3REvidenceError, match=expected):
         gate.evaluate(evidence, checkout, require_native=True)
 
@@ -78,7 +78,7 @@ def test_missing_native_lanes_rejected_with_both_host_dispositions(candidate, tm
     runtime['host_os'] = 'Android' if native else 'Linux'
     runtime_path.write_text(json.dumps(runtime, sort_keys=True))
     _rewrite_receipts(copy)
-    expected = 'Native/semantic lanes incomplete' if native else 'native Termux'
+    expected = 'Hosted Android G1 is required'
     with pytest.raises(gate.G3REvidenceError, match=expected):
         gate.evaluate(copy, checkout, require_native=True)
     # Source-only verification must never assert full native qualification.

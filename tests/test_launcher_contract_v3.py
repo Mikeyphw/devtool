@@ -860,7 +860,7 @@ class NativeDeliveryClipboardAndCITests(unittest.TestCase):
         digest=lc.digest(archive.read_bytes())
         receipt={
             'id':'b'*32, 'head_sha':commit, 'repo_root':str(self.repo.resolve()),
-            'stage':'PLANNED', 'intents':[], 'pr':None, 'ci':None,
+            'stage':'PLANNED', 'base':'main', 'intents':[], 'pr':None, 'ci':None,
             'overlay':{'path':str(archive.resolve()),'sha256':digest},
             'native_apply':{
                 'state':'COMMITTED','commit':commit,
@@ -1308,7 +1308,7 @@ class NativeCommittedPreRemoteAdoptionTests(unittest.TestCase):
     def result(self):
         hash_value=lc.digest(self.archive.read_bytes())
         return {'id':'b'*32,'head_sha':self.commit,'repo_root':str(self.repo),
-                'stage':'PLANNED','intents':[],'pr':None,'ci':None,
+                'stage':'PLANNED','base':'main','intents':[],'pr':None,'ci':None,
                 'overlay':{'path':str(self.archive),'sha256':hash_value},
                 'native_apply':{'state':'COMMITTED','commit':self.commit,
                   'history_id':'c'*32,'transaction_id':'tx-123',
@@ -1319,14 +1319,14 @@ class NativeCommittedPreRemoteAdoptionTests(unittest.TestCase):
         self.archive.unlink()
         with patch('devtool.launcher_contract_v3.exec_cmd') as cli:
             with self.assertRaisesRegex(lc.Refused,'NATIVE_ADOPTION_ARCHIVE_NOT_REGULAR'):
-                lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit)
+                lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit,base='main')
         cli.assert_not_called()
 
     def test_qualified_native_adoption_uses_only_existing_canonical_authority(self):
         response=self.result()
         with patch('devtool.launcher_contract_v3.exec_cmd',
                    return_value=json.dumps(response)) as cli:
-            found=lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit)
+            found=lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit,base='main')
         self.assertEqual(found['id'],'b'*32)
         argv=cli.call_args.args[0]
         self.assertEqual(argv[3], 'devtool.native_overlay_delivery')
@@ -1334,21 +1334,41 @@ class NativeCommittedPreRemoteAdoptionTests(unittest.TestCase):
         self.assertNotIn('start',argv)
         self.assertEqual(cli.call_args.kwargs['stage'],'native-committed-history-adoption')
 
+    def test_stacked_base_is_forwarded_and_source_bound(self):
+        base = 'feature/parent-milestone'
+        response = self.result()
+        response['base'] = base
+        with patch('devtool.launcher_contract_v3.exec_cmd',
+                   return_value=json.dumps(response)) as cli:
+            found = lc.native_adopt_committed(self.repo,self.repo,self.archive,
+                                              self.commit,base=base)
+        self.assertEqual(found['base'],base)
+        argv = cli.call_args.args[0]
+        self.assertEqual(argv[argv.index('--base') + 1],base)
+
+    def test_stacked_base_mismatch_refuses_before_remote(self):
+        response = self.result()  # Native receipt remains bound to main.
+        with patch('devtool.launcher_contract_v3.exec_cmd',
+                   return_value=json.dumps(response)):
+            with self.assertRaisesRegex(lc.Refused,'UNQUALIFIED'):
+                lc.native_adopt_committed(self.repo,self.repo,self.archive,
+                                          self.commit,base='feature/parent-milestone')
+
     def test_no_trusted_transaction_refuses(self):
         bad=self.result();bad['native_apply']['transaction_status']='unknown'
         with patch('devtool.launcher_contract_v3.exec_cmd',return_value=json.dumps(bad)):
             with self.assertRaisesRegex(lc.Refused,'UNQUALIFIED'):
-                lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit)
+                lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit,base='main')
 
     def test_original_commit_and_artifact_are_exactly_source_bound(self):
         bad=self.result();bad['overlay']['sha256']='0'*64
         with patch('devtool.launcher_contract_v3.exec_cmd',return_value=json.dumps(bad)):
             with self.assertRaisesRegex(lc.Refused,'UNQUALIFIED'):
-                lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit)
+                lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit,base='main')
         bad=self.result();bad['head_sha']='0'*40
         with patch('devtool.launcher_contract_v3.exec_cmd',return_value=json.dumps(bad)):
             with self.assertRaisesRegex(lc.Refused,'UNQUALIFIED'):
-                lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit)
+                lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit,base='main')
 
     def test_remote_progress_may_not_be_rebound(self):
         for change in ({'intents':[{'operation':'push'}]},
@@ -1359,12 +1379,12 @@ class NativeCommittedPreRemoteAdoptionTests(unittest.TestCase):
                 bad={**self.result(),**change}
                 with patch('devtool.launcher_contract_v3.exec_cmd',return_value=json.dumps(bad)):
                     with self.assertRaisesRegex(lc.Refused,'UNQUALIFIED'):
-                        lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit)
+                        lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit,base='main')
 
     def test_native_adoption_failure_is_a_recovery_stop_not_reapply(self):
         with patch('devtool.launcher_contract_v3.exec_cmd',return_value='invalid-receipt'):
             with self.assertRaisesRegex(lc.Refused,'INVALID_RECEIPT'):
-                lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit)
+                lc.native_adopt_committed(self.repo,self.repo,self.archive,self.commit,base='main')
         self.assertEqual(self.archive.read_bytes(),b'verified-artifact-byte-stream')
 
     def test_session_start_is_not_called_by_apply_after_native_commit(self):

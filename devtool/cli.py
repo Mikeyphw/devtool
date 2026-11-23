@@ -17054,35 +17054,46 @@ def _main_after_parse(
                         and not getattr(args, "validate_only", False)
                         and not getattr(args, "dry_run", False)
                         and not getattr(args, "preview", False)):
-                    try:
-                        from .native_delivery_continuity import adopt_after_apply
-                        m3 = adopt_after_apply(config.repo_root, getattr(args, "artifact", ""),
-                                               m3_manifest, results)
-                        if m3 is None:
-                            raise RuntimeError("M3_NATIVE_DELIVERY_CONTRACT_NOT_ADOPTED")
-                        m3_text = ("NATIVE_M3_SESSION_ID " + str(m3["id"]) +
-                                   " native_apply=COMMITTED delivery_stage=" + str(m3["stage"]) +
-                                   " replayed=false; remote approval NOT granted")
-                        results.append(OperationResult(
-                            "native-delivery-continuity", ["devtool", "native-overlay-delivery", "adopt-committed"],
-                            0, 0.0, m3_text, [],
-                            metadata={"native_delivery_session_id": m3["id"],
-                                      "native_apply_state": "COMMITTED", "remote_authorized": False}))
+                    from .native_delivery_continuity import classify_native_commit_phase
+                    m3_phase = classify_native_commit_phase(results)
+                    if m3_phase != 'COMMITTED_ADOPTION_REQUIRED':
+                        # A failed precommit validator has no committed session
+                        # to adopt. Preserve the ORIGINAL native failure and
+                        # avoid the misleading POSTCOMMIT_ADOPTION_PENDING label.
+                        m3_text = 'NATIVE_M3_' + m3_phase + '; inspect native history; NEVER REAPPLY blindly'
                         raw_output += "\n\n" + m3_text
                         _append_run_log(log_path, m3_text)
-                    except Exception as exc:
-                        # Do not call apply/rollback again: the Git commit may
-                        # already be durable even when session adoption fails.
-                        m3_text = ("NATIVE_M3_POSTCOMMIT_ADOPTION_PENDING " + type(exc).__name__ +
-                                   ": " + str(exc) +
-                                   "; recover with devtool.native_overlay_delivery recover-committed")
-                        results.append(OperationResult(
-                            "native-delivery-continuity", ["devtool", "native-overlay-delivery", "recover-committed"],
-                            2, 0.0, m3_text, [], failure_kind="postcommit_adoption_pending",
-                            metadata={"native_apply_state": "COMMITTED_OR_UNVERIFIED",
-                                      "remote_authorized": False, "reapply_forbidden": True}))
-                        raw_output += "\n\n" + m3_text
-                        _append_run_log(log_path, m3_text)
+                        print(m3_text, flush=True)
+                    else:
+                        try:
+                            from .native_delivery_continuity import adopt_after_apply
+                            m3 = adopt_after_apply(config.repo_root, getattr(args, "artifact", ""),
+                                                   m3_manifest, results)
+                            if m3 is None:
+                                raise RuntimeError("M3_NATIVE_DELIVERY_CONTRACT_NOT_ADOPTED")
+                            m3_text = ("NATIVE_M3_SESSION_ID " + str(m3["id"]) +
+                                       " native_apply=COMMITTED delivery_stage=" + str(m3["stage"]) +
+                                       " replayed=false; remote approval NOT granted")
+                            results.append(OperationResult(
+                                "native-delivery-continuity", ["devtool", "native-overlay-delivery", "adopt-committed"],
+                                0, 0.0, m3_text, [],
+                                metadata={"native_delivery_session_id": m3["id"],
+                                          "native_apply_state": "COMMITTED", "remote_authorized": False}))
+                            raw_output += "\n\n" + m3_text
+                            _append_run_log(log_path, m3_text)
+                        except Exception as exc:
+                            # Do not call apply/rollback again: the Git commit may
+                            # already be durable even when session adoption fails.
+                            m3_text = ("NATIVE_M3_POSTCOMMIT_ADOPTION_PENDING " + type(exc).__name__ +
+                                       ": " + str(exc) +
+                                       "; recover with devtool.native_overlay_delivery recover-committed")
+                            results.append(OperationResult(
+                                "native-delivery-continuity", ["devtool", "native-overlay-delivery", "recover-committed"],
+                                2, 0.0, m3_text, [], failure_kind="postcommit_adoption_pending",
+                                metadata={"native_apply_state": "COMMITTED_OR_UNVERIFIED",
+                                          "remote_authorized": False, "reapply_forbidden": True}))
+                            raw_output += "\n\n" + m3_text
+                            _append_run_log(log_path, m3_text)
     elif args.command in {"validation-finalize", "vf"}:
         try:
             results, raw_output = _handle_validation_finalize(
