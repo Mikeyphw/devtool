@@ -257,16 +257,25 @@ def test_federation_git_fetch_requires_enrolled_identity_before_git_write(monkey
     p,h=write_policy(tmp_path)
     url='https://github.com/Bob/fork.git'
     monkeypatch.setattr(f,'git_remote_locator',lambda _:url)
+    # The test must pass the independent source and owner guards before it can
+    # test the target numeric-ID drift that previously failed too early.
+    monkeypatch.setattr(f,'_local_commit',lambda _:SHA)
     calls=[]
+    observed=[]
     monkeypatch.setattr(f,'run_git_authenticated',lambda *a,**k:calls.append('FETCH'))
     monkeypatch.setattr(f,'github_slug_for_locator',lambda v:'Bob/fork')
     env=dict(ENV,DEVTOOL_GA02_RELATIONSHIPS_FILE=str(p),DEVTOOL_GA02_RELATIONSHIPS_SHA256=h,
              DEVTOOL_GA02_FEDERATION_OWNER='Alice/origin')
     monkeypatch.setattr(f.os,'environ',env)
-    monkeypatch.setattr('devtool.github_installations.observe_installed',lambda *a,**k:observation('Bob/fork',99,2,'head',201,visibility='private'))
-    # Imported in function, monkeypatch module's source explicitly.
+    def observe(repository,**kwargs):
+        observed.append((repository,kwargs['role']))
+        return (observation('Alice/origin',10,1,'base',200)
+                if repository=='Alice/origin' else
+                observation('Bob/fork',99,2,'head',201,visibility='private'))
+    monkeypatch.setattr('devtool.github_installations.observe_installed',observe)
     with pytest.raises(RelationshipRefused,match='GA02_REPOSITORY_RECREATED_OR_RENAMED'):
         f.fetch_from_github_app(tmp_path,url)
+    assert observed==[('Alice/origin','base'),('Bob/fork','head')]
     assert not calls
 
 

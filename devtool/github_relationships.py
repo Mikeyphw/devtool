@@ -254,16 +254,33 @@ def opted_in_registry(environ:Mapping[str,str]|None=None, *, source_sha:str|None
 
 def main(argv:list[str]|None=None)->int:
     p=argparse.ArgumentParser(description='Read-only GA-02 identity and policy inspector; never writes')
-    p.add_argument('action',choices=('inspect','verify-observation'))
+    p.add_argument('action',choices=('inspect','verify-observation','live-catalog','qualify-operation'))
     p.add_argument('--policy',required=True)
     p.add_argument('--sha256',required=True)
     p.add_argument('--source-sha',default=None)
     p.add_argument('--repository',default=None)
+    p.add_argument('--operation',default=None)
+    p.add_argument('--account-auth',choices=('none','env','gh'),default='none')
+    p.add_argument('--account-limit',type=int,default=100)
+    p.add_argument('--checkout',action='append',default=[])
+    p.add_argument('--host',default='termux')
+    p.add_argument('--alias',action='append',default=[])
     args=p.parse_args(argv)
     try:
+        from .ga02_live_registry import (LiveRegistryRefused, qualify_operation, catalog,
+            account_visible_repositories, local_checkouts)
         reg=load_registry(args.policy,expected_sha256=args.sha256,expected_source_sha=args.source_sha)
         if args.action=='inspect':
             report=reg.receipt()
+        elif args.action=='qualify-operation':
+            if not args.repository or not args.operation:
+                raise RelationshipRefused('GA02_LIVE_REPO_AND_OPERATION_REQUIRED')
+            report=qualify_operation(reg,args.repository,args.operation,source_sha=args.source_sha)
+        elif args.action=='live-catalog':
+            account=(account_visible_repositories(mode=args.account_auth,limit=args.account_limit)
+                     if args.account_auth!='none' else None)
+            checkouts=local_checkouts(args.checkout,host=args.host)
+            report=catalog(reg,source_sha=args.source_sha,account=account,checkouts=checkouts,aliases=args.alias)
         else:
             if not args.repository:
                 raise RelationshipRefused('GA02_REPOSITORY_ARG_REQUIRED')
@@ -276,7 +293,7 @@ def main(argv:list[str]|None=None)->int:
                     'result':'PASS_LIVE_APP_READ_NO_WRITE'}
         print(json.dumps(report,indent=2,sort_keys=True))
         return 0
-    except (RelationshipRefused,InstallationIdentityRefused) as exc:
+    except (RelationshipRefused,InstallationIdentityRefused,LiveRegistryRefused) as exc:
         print(json.dumps({'schema':'devtool.ga02.refusal.v1','status':'BLOCKED',
                           'reason':str(exc),'remote_mutation':False},sort_keys=True))
         return 2
