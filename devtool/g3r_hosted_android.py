@@ -14,9 +14,10 @@ import sys
 
 
 def _record_public_failure(output: Path, *, source: str, run_id: int,
-                           attempt: int, returncode: int, stderr: bytes) -> None:
+                           attempt: int, returncode: int, stderr: bytes,
+                           reason_code: str | None = None) -> None:
     """Persist no raw stderr, credentials or logs in the public failure artifact."""
-    code = ('HOST_AUTHORITY_REFUSED'
+    code = reason_code or ('HOST_AUTHORITY_REFUSED'
             if b'authoritative process proof requires native Termux' in stderr
                or b'requires native Termux or source-verified GitHub-hosted G1' in stderr
             else 'GRADLE_PRODUCER_FAILED'
@@ -72,12 +73,24 @@ def produce(output: Path) -> dict:
         _record_public_failure(output, source=head, run_id=run_id, attempt=attempt,
                                returncode=process.returncode, stderr=process.stderr)
         raise RuntimeError(f'HOSTED_ANDROID_G1_FAILED rc={process.returncode}; see bounded failure receipt')
-    report = json.loads(process.stdout)
+    try:
+        report = json.loads(process.stdout)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        # Even a successful child process is NOT qualified if stdout is not
+        # one canonical machine-readable report. Never parse the last '{' or
+        # filter out UI noise: that would weaken evidence provenance.
+        _record_public_failure(output, source=head, run_id=run_id, attempt=attempt,
+                               returncode=process.returncode, stderr=process.stderr,
+                               reason_code='MACHINE_STDOUT_NOT_JSON')
+        raise RuntimeError('HOSTED_ANDROID_G1_MACHINE_OUTPUT_INVALID; bounded failure receipt') from None
     if (not isinstance(report, dict) or report.get('gate') != 'ANDROID-G1'
         or report.get('status') != 'passed' or not report.get('gradle_receipt_id')
         or not report.get('artifact_sha256') or not report.get('standalone_runtime_sealed')
         or report.get('host', {}).get('termux') is not False):
-        raise RuntimeError('HOSTED_ANDROID_G1_UNQUALIFIED_REPORT')
+        _record_public_failure(output, source=head, run_id=run_id, attempt=attempt,
+                               returncode=process.returncode, stderr=process.stderr,
+                               reason_code='MACHINE_REPORT_UNQUALIFIED')
+        raise RuntimeError('HOSTED_ANDROID_G1_UNQUALIFIED_REPORT; bounded failure receipt')
     receipt = {
         'schema': 'devtool.g3r.hosted-g1.v1', 'source_commit': head,
         'source_tree': tree, 'run_id': run_id, 'run_attempt': attempt,

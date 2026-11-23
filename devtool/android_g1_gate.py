@@ -9,6 +9,7 @@ USB, TCP, emulator and root-loopback; the host's real ADB binary is still probed
 separately.  The Gradle producer process is the host's real Gradle executable.
 """
 
+from contextlib import redirect_stdout
 from hashlib import sha256
 import json
 import os
@@ -317,7 +318,11 @@ def run_gate() -> dict[str, Any]:
 
 def main() -> int:
     try:
-        print(json.dumps(run_gate(), indent=2, sort_keys=True))
+        # Execution/progress is human output, never part of the machine report.
+        # The hosted G1 verifier requires stdout to contain ONE JSON object.
+        with redirect_stdout(sys.stderr):
+            result = run_gate()
+        print(json.dumps(result, indent=2, sort_keys=True))
         return 0
     except Exception as exc:
         print(f"ANDROID-G1 failed: {exc}", file=sys.stderr)
