@@ -257,3 +257,21 @@ retain the canonical `validation` manifest policy key. M3 continuity fixtures
 now cover the real native event and reject aliases, failed/skipped children,
 and malformed validation policy. Original Guardian recovery is a distinct
 post-merge acceptance step; no original history/commit is rewritten.
+
+## QG01 — Qualification Reliability & Hosted G3R extension (2026-11-23)
+
+This **source-bound corrective overlay** depends on M3 native session continuity,
+M4 exact-source GitHub delivery and the verified M6 reliability remediation.
+Its authoritative detailed promise inventory is
+[`DEVTOOL_QUALIFICATION_RELIABILITY_QG01.md`](DEVTOOL_QUALIFICATION_RELIABILITY_QG01.md).
+
+- Prevent native Termux Gradle execution in G3R by routing Android G1 through
+  the existing hosted GitHub Actions workflow, with exact-run/attempt SHA-256
+  evidence and 13-lane fail-closed verification.
+- Strengthen CI24 to hash/verify all 24 shard archives plus one summary.
+- Preserve the earlier CI24 acceptance receipt, but require new-source
+  requalification after any QG01 commit.
+- Keep automated milestone acceptance separate from formal release and the
+  six still-open real-substrate obligations.
+- Implementation: **SOURCE IN PROGRESS**; native application, hosted CI24,
+  G3R native evidence, final seal and real substrates remain separate gates.

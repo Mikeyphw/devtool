@@ -17,7 +17,7 @@ import re
 import sys
 from time import monotonic
 from typing import Any, Iterator
-from zipfile import ZipFile
+from zipfile import ZipFile, BadZipFile
 
 from .actions_dispatch import _durable_record, dispatch_workflow, GitHubDispatchPreflightError
 from .actions_pipeline import _source, _git
@@ -30,6 +30,9 @@ from .github_actions import GitHubActionsClient, GitHubActionsError, resolve_rep
 from .remed_r04b_fixed_point import G3R_REAL_SUBSTRATE_CARRY
 
 WORKFLOW = 'devtool-full-repository-pytest.yml'
+G3R_REMOTE_WORKFLOW = 'devtool-g3r-current-evidence.yml'
+G3R_REMOTE_JOB = 'android-g1-hosted'
+G3R_REMOTE_ARTIFACT = 'g3r-android-g1-hosted'
 EXPECTED_JOB = re.compile(r'^Python 3\.13 / shard ([1-9]|1[0-9]|2[0-4])/24$')
 SHA = re.compile(r'^[a-f0-9]{40}$')
 EXPECTED_ARTIFACTS = {f'devtool-full-shard-{n}' for n in range(1, 25)} | {'devtool-full-pytest-summary'}
@@ -67,7 +70,7 @@ def _state_dir(root: Path) -> Path:
 
 
 def _state_path(root: Path, sha: str, kind: str) -> Path:
-    if not SHA.fullmatch(sha) or kind not in ('ci24', 'g3r'):
+    if not SHA.fullmatch(sha) or kind not in ('ci24', 'g3r', 'g3r-remote'):
         raise GitHubActionsError('Invalid qualification record identity')
     candidates = [parent / f'{sha}-{kind}.json' for parent in _state_dirs(root)]
     existing = [path for path in candidates if path.exists() or path.is_symlink()]
@@ -246,6 +249,76 @@ def _ci24_assert_same_remote_run(initial: dict[str, Any], final: dict[str, Any])
         raise GitHubActionsError('GitHub CI24 run identity/attempt/status changed during verification')
 
 
+def _ci24_verified_shard_receipt(file: Path, shard: int, source: str,
+                                 slug: str) -> dict[str, Any]:
+    """Prove a downloaded archive's own source, module inventory and logs.
+
+    GitHub archive SHA-256 and attempt provenance are verified by ACTIONS-04
+    before this function is called. Independent per-module hashes prevent a
+    metadata-only PASS or a forged aggregate summary from qualifying shards.
+    """
+    try:
+        with ZipFile(file) as z:
+            names = z.namelist()
+            if names.count('receipt.json') != 1 or z.getinfo('receipt.json').file_size > 512*1024:
+                raise GitHubActionsError('CI24 shard receipt missing/duplicate/oversized')
+            blob = z.read('receipt.json')
+            if len(blob) > 512*1024:
+                raise GitHubActionsError('CI24 shard receipt inflated beyond bound')
+            record = json.loads(blob)
+            if not isinstance(record, dict):
+                raise GitHubActionsError('CI24 shard receipt is not an object')
+            entries = record.get('modules')
+            expected = record.get('modules_expected')
+            if (record.get('schema_version') != 1 or
+                record.get('source_sha') != source or
+                record.get('shard') != shard or record.get('shards') != 24 or
+                record.get('success') is not True or record.get('complete') is not True or
+                record.get('formal_release_qualified') is not False or
+                (record.get('repository') not in ('', slug)) or
+                type(record.get('inventory_count')) is not int or record['inventory_count'] <= 0 or
+                not re.fullmatch('[a-f0-9]{64}', str(record.get('inventory_sha256') or '')) or
+                not isinstance(entries, list) or not entries or
+                not isinstance(expected, list) or len(entries) != len(expected) or
+                [e.get('module') if isinstance(e, dict) else None for e in entries] != expected):
+                raise GitHubActionsError('CI24 shard source/inventory/success receipt invalid')
+            test_sum = 0
+            for entry in entries:
+                if (not isinstance(entry, dict) or entry.get('status') != 'PASS' or
+                    entry.get('exit_code') != 0 or entry.get('failures') != 0 or
+                    entry.get('errors') != 0 or type(entry.get('tests')) is not int or
+                    entry['tests'] <= 0):
+                    raise GitHubActionsError('CI24 shard module did not pass')
+                test_sum += entry['tests']
+                for rel_key, digest_key, prefix in (
+                    ('log', 'log_sha256', 'logs/'),
+                    ('junit', 'junit_sha256', 'junit/')):
+                    name = entry.get(rel_key)
+                    if (not isinstance(name, str) or not name.startswith(prefix)
+                        or '/' in name[len(prefix):] or '..' in name or '\\' in name
+                        or names.count(name) != 1
+                        or not re.fullmatch('[a-f0-9]{64}', str(entry.get(digest_key) or ''))):
+                        raise GitHubActionsError('CI24 shard log/JUnit path or digest invalid')
+                    info = z.getinfo(name)
+                    if info.file_size > 64*1024*1024:
+                        raise GitHubActionsError('CI24 shard log/JUnit exceeds safe size')
+                    h = hashlib.sha256()
+                    with z.open(info) as stream:
+                        byte_count = 0
+                        while part := stream.read(65536):
+                            byte_count += len(part)
+                            if byte_count > 64*1024*1024:
+                                raise GitHubActionsError('CI24 shard log/JUnit inflated beyond bound')
+                            h.update(part)
+                    if h.hexdigest() != entry[digest_key]:
+                        raise GitHubActionsError('CI24 shard log/JUnit SHA-256 mismatch')
+            return {'shard': shard, 'modules': expected, 'tests': test_sum,
+                    'inventory_count': record['inventory_count'],
+                    'inventory_sha256': record['inventory_sha256']}
+    except (BadZipFile, OSError, KeyError, ValueError) as exc:
+        raise GitHubActionsError('CI24 shard evidence malformed: '+str(exc)) from None
+
+
 def _ci24_evaluate(client: GitHubActionsClient, slug: str, root: Path, record: dict[str, Any],
                    identity: int) -> dict[str, Any]:
     if type(identity) is not int or identity <= 0:
@@ -301,23 +374,51 @@ def _ci24_evaluate(client: GitHubActionsClient, slug: str, root: Path, record: d
         raise GitHubActionsError('CI24 artifact set does not contain exactly 24 shards and one summary')
     if not all(re.fullmatch(r'sha256:[a-fA-F0-9]{64}', str(a.get('digest') or '')) for a in catalog):
         raise GitHubActionsError('CI24 artifact missing authenticated archive SHA256')
+    # Every shard's archive is independently hashed against authenticated GitHub
+    # metadata, rebound to this exact run and attempt, and registered durably.
+    # The historical 25-metadata/1-archive receipt is preserved as historical
+    # evidence; fresh qualification demands all 25 archive bytes.
+    verified_archives = {}
+    shard_receipts = []
     summary_artifact = next(a for a in catalog if a['name'] == 'devtool-full-pytest-summary')
-    try:
-        registered = verify_download(scoped_client, slug, identity, summary_artifact['id'], root)
-    except GitHubActionsError as exc:
-        if 'no registered download' not in str(exc).lower():
-            raise
-        download_artifact(scoped_client, slug, identity, summary_artifact['id'], root)
-        registered = verify_download(scoped_client, slug, identity, summary_artifact['id'], root)
-    checkpoint('summary-archive')
-    if not registered.get('archive_verified'):
+    registered = None
+    for index, artifact in enumerate(sorted(catalog, key=lambda a: a['name']), 1):
+        try:
+            proven = verify_download(scoped_client, slug, identity, artifact['id'], root)
+        except GitHubActionsError as exc:
+            if 'no registered download' not in str(exc).lower():
+                raise
+            download_artifact(scoped_client, slug, identity, artifact['id'], root)
+            proven = verify_download(scoped_client, slug, identity, artifact['id'], root)
+        if (proven.get('archive_verified') is not True or
+            proven.get('sha256') != artifact['digest'].split(':', 1)[1].lower()):
+            raise GitHubActionsError('CI24 shard archive byte/digest verification failed')
+        verified_archives[artifact['name']] = proven['sha256']
+        if artifact['id'] == summary_artifact['id']:
+            registered = proven
+        else:
+            shard_name = artifact['name']
+            match = re.fullmatch(r'devtool-full-shard-([1-9]|1[0-9]|2[0-4])', shard_name)
+            if not match:
+                raise GitHubActionsError('Unexpected CI24 shard artifact identity')
+            shard_receipts.append(_ci24_verified_shard_receipt(Path(proven['file']),
+                                  int(match.group(1)), record['source_sha'], slug))
+        if index % 6 == 0:
+            checkpoint('artifact-bytes-'+str(index))
+    checkpoint('all-25-artifact-archives')
+    if not registered or not registered.get('archive_verified'):
         raise GitHubActionsError('CI summary archive integrity not proven')
     path = Path(registered['file'])
     with ZipFile(path) as z:
         if 'summary.json' not in z.namelist() or z.namelist().count('summary.json') != 1:
             raise GitHubActionsError('CI summary.json absent or ambiguous')
+        if z.getinfo('summary.json').file_size > 128 * 1024:
+            raise GitHubActionsError('CI24 summary exceeds bounded JSON size')
         with z.open('summary.json') as f:
-            data = json.loads(f.read(128 * 1024 + 1))
+            raw_summary = f.read(128 * 1024 + 1)
+            if len(raw_summary) > 128 * 1024:
+                raise GitHubActionsError('CI24 summary inflated beyond bounded JSON size')
+            data = json.loads(raw_summary)
     if not isinstance(data, dict) or any([
         data.get('schema_version') != 1, data.get('status') != 'PASS',
         data.get('source_sha') != record['source_sha'], data.get('expected_shards') != 24,
@@ -329,6 +430,15 @@ def _ci24_evaluate(client: GitHubActionsClient, slug: str, root: Path, record: d
         data.get('issues') != [], data.get('failed_modules') != [],
     ]):
         raise GitHubActionsError('CI summary is not a complete exact-source 24-shard PASS')
+    if len(shard_receipts) != 24:
+        raise GitHubActionsError('CI24 shard evidence inventory incomplete')
+    all_modules = [name for r in shard_receipts for name in r['modules']]
+    inventories = {(r['inventory_count'], r['inventory_sha256']) for r in shard_receipts}
+    if (len(set(all_modules)) != len(all_modules) or
+        len(inventories) != 1 or next(iter(inventories))[0] != data['total_modules'] or
+        len(all_modules) != data['total_modules'] or
+        sum(r['tests'] for r in shard_receipts) != data['tests']):
+        raise GitHubActionsError('CI24 24 shard receipts disagree with complete summary')
     # Reobserve the actual GitHub run after all local and remote artifact proofs.
     # The frozen snapshot is an optimization, NEVER an authority across runs.
     final_remote = _normalize_run(client.get_run(slug, identity), slug, identity)
@@ -336,7 +446,10 @@ def _ci24_evaluate(client: GitHubActionsClient, slug: str, root: Path, record: d
     checkpoint('final-remote')
     return {'status': 'PASS_CI24_VERIFIED', 'run_id': identity,
             'run_attempt': 1, 'jobs_verified': 25, 'shards_verified': 24,
-            'artifact_metadata_verified': 25, 'summary_archives_verified': 1,
+            'artifact_metadata_verified': 25, 'artifact_archives_verified': 25,
+            'shard_archives_verified': 24,
+            'artifact_archive_sha256': verified_archives,
+            'summary_archives_verified': 1,
             'summary_archive_sha256': registered['sha256'],
             'summary_json_sha256': hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest(),
             'tests': data['tests'], 'modules': data['total_modules'], 'complete': True}
@@ -372,13 +485,199 @@ def ci24_resume(root: Path, *, explicit_run_id: int | None = None,
                 'qualification_status': ('verified' if outcome.get('complete') else 'pending')}
 
 
+def _read_hosted_g1_archive(file: Path, *, source: str, tree: str,
+                            run_id: int) -> dict[str, Any]:
+    """Reject unbound, duplicate, oversized or forged hosted evidence claims.
+
+    Live run/job/artifact metadata is verified independently by the caller.
+    The archive's bytes are independently checked by ACTIONS-04 first.
+    """
+    try:
+        with ZipFile(file) as z:
+            items = z.infolist()
+            if (len(items) != 2 or
+                {x.filename for x in items} != {'android_g1_receipt.json', 'android_g1.log'} or
+                any(x.file_size > 4*1024*1024 or x.file_size < 1 or
+                    ((x.external_attr >> 16) & 0o170000) not in (0, 0o100000)
+                    for x in items)):
+                raise GitHubActionsError('Hosted G1 artifact inventory/size/mode invalid')
+            receipt_raw = z.read('android_g1_receipt.json')
+            log = z.read('android_g1.log')
+    except (BadZipFile, KeyError, OSError) as exc:
+        raise GitHubActionsError('Hosted G1 archive invalid: '+str(exc)) from None
+    if len(receipt_raw) > 32768:
+        raise GitHubActionsError('Hosted G1 receipt exceeds bound')
+    try:
+        receipt = json.loads(receipt_raw)
+        output = json.loads(log.split(b'\nSTDERR:\n', 1)[0])
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise GitHubActionsError('Hosted G1 receipt or execution JSON malformed') from None
+    if (not isinstance(receipt, dict) or
+        receipt.get('schema') != 'devtool.g3r.hosted-g1.v1' or
+        receipt.get('source_commit') != source or receipt.get('source_tree') != tree or
+        receipt.get('run_id') != run_id or receipt.get('run_attempt') != 1 or
+        receipt.get('job') != G3R_REMOTE_JOB or receipt.get('runner_os') != 'Linux' or
+        receipt.get('status') != 'PASS' or receipt.get('exit_code') != 0 or
+        receipt.get('formal_release_qualified') is not False or
+        receipt.get('output_sha256') != hashlib.sha256(log).hexdigest() or
+        not isinstance(output, dict) or output.get('gate') != 'ANDROID-G1' or
+        output.get('status') != 'passed' or
+        output.get('host', {}).get('termux') is not False or
+        not output.get('standalone_runtime_sealed') or
+        receipt.get('gradle_receipt_id') != output.get('gradle_receipt_id') or
+        receipt.get('artifact_sha256') != output.get('artifact_sha256')):
+        raise GitHubActionsError('Hosted G1 source/attempt/Gradle proof mismatch')
+    return {'source_commit': source, 'source_tree': tree,
+            'status': 'PASS', 'run_id': run_id, 'run_attempt': 1,
+            'receipt': receipt, 'log': log}
+
+
+def g3r_remote_start(root: Path, *, client: GitHubActionsClient | None = None,
+                     slug: str | None = None) -> dict[str, Any]:
+    head, branch = _identity(root)
+    with _lock(root, head, 'g3r-remote'):
+        path = _state_path(root, head, 'g3r-remote')
+        if path.exists() or path.is_symlink():
+            raise GitHubActionsError('Existing G3R remote dispatch; resume, NEVER dispatch twice')
+        if client is None or slug is None:
+            client, slug = _client(root)
+        plan = dispatch_workflow(client, slug, G3R_REMOTE_WORKFLOW, branch, {},
+                                 execute=False, expected_source_sha=head)
+        if (plan.get('pre_dispatch_sha') != head or type(plan.get('workflow_id')) is not int
+            or plan.get('workflow_path') != f'.github/workflows/{G3R_REMOTE_WORKFLOW}'):
+            raise GitHubActionsError('G3R remote preflight mismatch; no dispatch')
+        record = {'schema': 1, 'kind': 'g3r-remote', 'repo_root': str(root.resolve()),
+                  'source_sha': head, 'source_tree': _git(root, 'rev-parse', 'HEAD^{tree}'),
+                  'branch': branch, 'repository': slug,
+                  'workflow_id': plan['workflow_id'], 'workflow': G3R_REMOTE_WORKFLOW,
+                  'run_id': None, 'request_id': None, 'state': 'DISPATCH_OUTCOME_UNKNOWN'}
+        _save(root, head, 'g3r-remote', record)
+        try:
+            dispatched = dispatch_workflow(client, slug, G3R_REMOTE_WORKFLOW,
+                                           branch, {}, execute=True, expected_source_sha=head)
+            if (dispatched.get('pre_dispatch_sha') != head or
+                dispatched.get('workflow_id') != record['workflow_id'] or
+                dispatched.get('workflow_path') != f'.github/workflows/{G3R_REMOTE_WORKFLOW}'):
+                raise GitHubActionsError('G3R dispatch identity changed after POST')
+            record.update(state='DISPATCHED_UNOBSERVED',
+                          run_id=dispatched.get('run_id'),
+                          request_id=dispatched.get('request_id'))
+        except GitHubDispatchPreflightError as exc:
+            record['state'] = 'PREFLIGHT_REJECTED'
+            _save(root, head, 'g3r-remote', record)
+            raise GitHubActionsError('G3R pre-dispatch source drift; no POST: '+str(exc)) from None
+        except Exception as exc:
+            _save(root, head, 'g3r-remote', record)
+            raise GitHubActionsError('G3R dispatch outcome uncertain; DO NOT REDISPATCH: '+str(exc)) from None
+        _save(root, head, 'g3r-remote', record)
+        return {'source_sha': head, 'run_id': record['run_id'],
+                'request_id': record['request_id'], 'state': record['state'],
+                'remote_verified': False, 'formal_release_qualified': False}
+
+
+def _g3r_remote_evidence(root: Path, client: GitHubActionsClient,
+                         slug: str, record: dict[str, Any], rid: int) -> dict[str, Any]:
+    observed = _normalize_run(client.get_run(slug, rid), slug, rid)
+    if (observed.get('head_sha') != record['source_sha'] or
+        observed.get('head_branch') != record['branch'] or
+        observed.get('event') != 'workflow_dispatch' or
+        observed.get('workflow_id') != record['workflow_id'] or
+        observed.get('run_attempt') != 1):
+        raise GitHubActionsError('G3R remote run source/branch/workflow/attempt mismatch')
+    if observed.get('status') != 'completed':
+        return {'status': 'WAITING_REMOTE', 'complete': False, 'run_id': rid}
+    if observed.get('conclusion') != 'success':
+        raise GitHubActionsError('G3R remote run did not succeed')
+    scoped = _RunScopedClient(client, slug, rid, client.get_run(slug, rid))
+    jobs = scoped.run_attempt_jobs(slug, rid, 1)
+    hosted = [j for j in jobs if j.get('name') == G3R_REMOTE_JOB]
+    if (len(hosted) != 1 or hosted[0].get('status') != 'completed' or
+        hosted[0].get('conclusion') != 'success' or
+        hosted[0].get('run_attempt') not in (None, 1)):
+        raise GitHubActionsError('G3R hosted Gradle job not independently successful')
+    matches = [x for x in artifact_list(scoped, slug, rid)['artifacts']
+               if x.get('name') == G3R_REMOTE_ARTIFACT]
+    if len(matches) != 1 or not re.fullmatch(r'sha256:[a-fA-F0-9]{64}',
+                                            str(matches[0].get('digest') or '')):
+        raise GitHubActionsError('G3R hosted Gradle artifact missing/ambiguous/unhashed')
+    item = matches[0]
+    try:
+        proven = verify_download(scoped, slug, rid, item['id'], root)
+    except GitHubActionsError as exc:
+        if 'no registered download' not in str(exc).lower():
+            raise
+        download_artifact(scoped, slug, rid, item['id'], root)
+        proven = verify_download(scoped, slug, rid, item['id'], root)
+    if (proven.get('archive_verified') is not True or
+        proven.get('sha256') != item['digest'].split(':', 1)[1].lower()):
+        raise GitHubActionsError('Hosted G1 archive does not match authenticated digest')
+    tree = record['source_tree']
+    result = _read_hosted_g1_archive(Path(proven['file']), source=record['source_sha'],
+                                     tree=tree, run_id=rid)
+    last = _normalize_run(client.get_run(slug, rid), slug, rid)
+    _ci24_assert_same_remote_run(observed, last)
+    result['artifact_sha256'] = proven['sha256']
+    result['file'] = proven['file']
+    result['complete'] = True
+    return result
+
+
+def g3r_remote_resume(root: Path, *, explicit_run_id: int | None = None,
+                      client: GitHubActionsClient | None = None,
+                      slug: str | None = None) -> dict[str, Any]:
+    head, _ = _identity(root)
+    with _lock(root, head, 'g3r-remote'):
+        record = _load(root, head, 'g3r-remote')
+        if client is None or slug is None:
+            client, slug = _client(root)
+        if record['repository'].lower() != slug.lower():
+            raise GitHubActionsError('G3R remote repository identity changed')
+        rid = record.get('run_id')
+        if rid is not None and explicit_run_id is not None and rid != explicit_run_id:
+            raise GitHubActionsError('G3R remote run ID contradicts dispatch receipt')
+        rid = rid if rid is not None else explicit_run_id
+        if type(rid) is not int or rid <= 0:
+            raise GitHubActionsError('G3R dispatch uncorrelated; explicit run ID required; no redispatch')
+        evidence = _g3r_remote_evidence(root, client, slug, record, rid)
+        if evidence.get('complete'):
+            old = record.get('artifact_sha256')
+            if old is not None and old != evidence['artifact_sha256']:
+                raise GitHubActionsError('G3R hosted artifact changed across receipts')
+            record.update(state='PASS_HOSTED_G1_VERIFIED', run_id=rid,
+                          artifact_sha256=evidence['artifact_sha256'])
+        else:
+            record.update(state='WAITING_REMOTE', run_id=rid)
+        _save(root, head, 'g3r-remote', record)
+        return {'source_sha': head, 'run_id': rid, 'state': record['state'],
+                'remote_verified': evidence.get('complete') is True,
+                'artifact_sha256': record.get('artifact_sha256'),
+                'formal_release_qualified': False}
+
+
+def _g3r_live_evidence(root: Path) -> dict[str, Any]:
+    head, _ = _identity(root)
+    record = _load(root, head, 'g3r-remote')
+    if record.get('state') != 'PASS_HOSTED_G1_VERIFIED':
+        raise GitHubActionsError('G3R hosted Gradle gate not yet verified')
+    client, slug = _client(root)
+    evidence = _g3r_remote_evidence(root, client, slug, record, record['run_id'])
+    if not evidence.get('complete') or evidence['artifact_sha256'] != record['artifact_sha256']:
+        raise GitHubActionsError('G3R hosted Gradle gate changed since receipt')
+    return evidence
+
+
 def g3r_native(root: Path) -> dict[str, Any]:
     head, _ = _identity(root)
     with _lock(root, head, 'g3r'):
-        archive = generate_native(root, _state_dir(root)/'native', run_tests=True, native_gates=True)
+        hosted = _g3r_live_evidence(root)
+        archive = generate_native(root, _state_dir(root)/'native', run_tests=True,
+                                  native_gates=True, remote_android_g1=hosted)
         result = verify_native(archive, root, require_native=True)
-        if result['source_commit'] != head or result['status'] != 'PASS_CURRENT_SOURCE_AND_NATIVE_LANES':
-            raise GitHubActionsError('Native 13-lane verification did not pass')
+        if (result['source_commit'] != head or result['status'] != 'PASS_CURRENT_SOURCE_AND_NATIVE_LANES'
+            or result.get('hosted_g1_run_id') != hosted['run_id'] or
+            result.get('hosted_g1_receipt_sha256') != hashlib.sha256(
+                (json.dumps(hosted['receipt'], sort_keys=True, indent=2)+'\n').encode()).hexdigest()):
+            raise GitHubActionsError('Native 13-lane/hosted-source verification did not pass')
         record = {'schema':1,'kind':'g3r','repo_root':str(root.resolve()), 'source_sha':head,
                   'candidate':str(archive),'status':'PASS_G3R_VERIFIED',
                   'candidate_sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),
@@ -399,8 +698,12 @@ def g3r_verify(root: Path, *, candidate: Path | None = None) -> dict[str, Any]:
         if archive is None:
             raise GitHubActionsError('Missing G3R candidate; specify DEVTOOL_G3R_CANDIDATE or run g3r-native')
         result = verify_native(archive, root, require_native=True)
-        if result['source_commit'] != head or result['status'] != 'PASS_CURRENT_SOURCE_AND_NATIVE_LANES':
-            raise GitHubActionsError('G3R exact-current-source 13-lane verification failed')
+        hosted = _g3r_live_evidence(root)
+        if (result['source_commit'] != head or result['status'] != 'PASS_CURRENT_SOURCE_AND_NATIVE_LANES'
+            or result.get('hosted_g1_run_id') != hosted['run_id'] or
+            result.get('hosted_g1_receipt_sha256') != hashlib.sha256(
+                (json.dumps(hosted['receipt'], sort_keys=True, indent=2)+'\n').encode()).hexdigest()):
+            raise GitHubActionsError('G3R exact-current-source 13-lane/hosted verification failed')
         record = {'schema':1,'kind':'g3r','repo_root':str(root.resolve()),'source_sha':head,
                   'candidate':str(archive.resolve()),'status':'PASS_G3R_VERIFIED',
                   'candidate_sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),
@@ -414,16 +717,16 @@ def g3r_verify(root: Path, *, candidate: Path | None = None) -> dict[str, Any]:
 def qualify_status(root: Path) -> dict[str, Any]:
     head, _ = _identity(root)
     state = {'schema':1,'workflow':'SOURCE_BOUND_QUALIFICATION','source_sha':head,
-             'ci24':'NOT_VERIFIED','g3r':'NOT_VERIFIED',
+             'ci24':'NOT_VERIFIED','g3r':'NOT_VERIFIED', 'g3r_remote':'NOT_VERIFIED',
              'automated_milestone_verified':False,'formal_release_qualified':False,
              'open_real_substrate_obligations':list(G3R_REAL_SUBSTRATE_CARRY)}
-    for kind in ('ci24','g3r'):
+    for kind in ('ci24','g3r','g3r-remote'):
         try:
             receipt = _load(root, head, kind)
         except GitHubActionsError:
             continue
-        state[kind] = receipt.get('state') if kind == 'ci24' else receipt.get('status')
-        state[kind+'_last_recorded_only'] = True
+        state[kind.replace('-', '_')] = receipt.get('status') if kind == 'g3r' else receipt.get('state')
+        state[kind.replace('-', '_')+'_last_recorded_only'] = True
     state['automated_milestone_last_recorded'] = (state['ci24'] == 'PASS_CI24_VERIFIED'
                                                    and state['g3r'] == 'PASS_G3R_VERIFIED')
     return state
@@ -530,7 +833,7 @@ def qualify_seal(root: Path, *, client: GitHubActionsClient | None = None,
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('command', choices=('ci24-start','ci24-resume','g3r-native','g3r-verify','qualify-status','qualify-seal'))
+    ap.add_argument('command', choices=('ci24-start','ci24-resume','g3r-remote-start','g3r-remote-resume', 'g3r-native','g3r-verify','qualify-status','qualify-seal'))
     ap.add_argument('--repo', type=Path, default=_root())
     ap.add_argument('--run-id', type=int, default=None, help='Explicit CI run identity (never guessed)')
     ap.add_argument('--candidate',type=Path,default=None,help='G3R evidence archive')
@@ -545,6 +848,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == 'ci24-start': output = ci24_start(root)
         elif args.command == 'ci24-resume': output = ci24_resume(root, explicit_run_id=run_id)
+        elif args.command == 'g3r-remote-start': output = g3r_remote_start(root)
+        elif args.command == 'g3r-remote-resume': output = g3r_remote_resume(root, explicit_run_id=run_id)
         elif args.command == 'g3r-native': output = g3r_native(root)
         elif args.command == 'g3r-verify': output = g3r_verify(root, candidate=candidate)
         elif args.command == 'qualify-status': output = qualify_status(root)

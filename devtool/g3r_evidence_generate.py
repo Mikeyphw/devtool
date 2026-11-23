@@ -62,8 +62,11 @@ def native_termux_environment() -> bool:
 
 
 def generate(repo: Path, output_root: Path, *, run_tests: bool = False,
-             native_gates: bool = False, timeout: int = 600) -> Path:
+             native_gates: bool = False, timeout: int = 600,
+             remote_android_g1: dict | None = None) -> Path:
     root = repo.resolve(strict=True)
+    if native_gates and remote_android_g1 is None:
+        raise ValueError("ANDROID_G1_HOSTED_EVIDENCE_REQUIRED; local Gradle prohibited")
     check_clean = git(root, "status", "--porcelain=v1", "--untracked-files=all")
     if check_clean.strip():
         raise ValueError("Dirty source checkout; refusing evidence generation")
@@ -94,13 +97,41 @@ def generate(repo: Path, output_root: Path, *, run_tests: bool = False,
                                    root, timeout, out/"runs"/("semantic-"+Path(name).stem+".log"))
             print(name, checks[name]["status"], flush=True)
     if native_gates:
+        if remote_android_g1 is None:
+            raise ValueError("ANDROID_G1_HOSTED_EVIDENCE_REQUIRED; local Gradle prohibited")
+        remote = remote_android_g1
+        if (remote.get('source_commit') != head or remote.get('source_tree') != tree
+            or remote.get('status') != 'PASS' or remote.get('run_attempt') != 1
+            or type(remote.get('run_id')) is not int or remote['run_id'] <= 0
+            or not isinstance(remote.get('log'), bytes) or not remote['log'].strip()
+            or not isinstance(remote.get('receipt'), dict)):
+            raise ValueError('G3R hosted Android G1 source/attempt evidence missing')
+        remote_log = out/'runs'/'native-android_g1_gate.log'
+        remote_log.parent.mkdir(parents=True, exist_ok=True)
+        remote_log.write_bytes(remote['log'])
+        remote_receipt = remote['receipt']
+        if (remote_receipt.get('source_commit') != head
+            or remote_receipt.get('source_tree') != tree
+            or remote_receipt.get('run_id') != remote['run_id']
+            or remote_receipt.get('run_attempt') != 1
+            or remote_receipt.get('output_sha256') != sha(remote['log'])
+            or remote_receipt.get('status') != 'PASS'):
+            raise ValueError('G3R hosted Android G1 receipt conflict')
+        dump(out/'REMOTE_ANDROID_G1.json', remote_receipt)
+        checks['android_g1_gate'] = {'status': 'PASS', 'exit_code': 0,
+                                    'output_file': remote_log.name,
+                                    'output_sha256': sha(remote['log']),
+                                    'execution_host': 'github-actions-linux',
+                                    'remote_receipt_sha256': sha(json.dumps(remote_receipt,
+                                                                sort_keys=True, indent=2).encode() + b'\n')}
         if not native:
-            checks.update({name: {"status": "BLOCKED_NOT_NATIVE_TERMUX"} for name in REQUIRED_NATIVE})
+            checks.update({name: {"status": "BLOCKED_NOT_NATIVE_TERMUX"}
+                           for name in REQUIRED_NATIVE - {'android_g1_gate'}})
         else:
             overrides = [key for key in os.environ if key.startswith("DEVTOOL_ANDROID_G1_") or key.startswith("DEVTOOL_ANDROID_G2_ALLOW_TEST_HOST")]
             if overrides:
                 raise ValueError("Native qualification override present: " + ",".join(overrides))
-            for name in sorted(REQUIRED_NATIVE):
+            for name in sorted(REQUIRED_NATIVE - {'android_g1_gate'}):
                 argv = ([sys.executable,"-c","import json; from devtool.life_g3_gate import _run_fresh_lifecycle_chain; print(json.dumps(_run_fresh_lifecycle_chain(),sort_keys=True))"]
                         if name == "life_g3_fresh_lifecycle_chain" else [sys.executable,"-m","devtool."+name])
                 checks[name] = execute(argv,root,timeout,out/"runs"/("native-"+name+".log"))

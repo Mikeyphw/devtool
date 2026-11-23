@@ -56,3 +56,50 @@ jobs:
             exit 2
           fi
           python -m devtool.g3r_evidence_gate --repo "$PWD" --candidate "${candidates[0]}"
+
+  android-g1-hosted:
+    # Work is performed by GitHub's Linux runner; no Termux Gradle allowed.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android SDK tools and adb
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+      - name: Hosted Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+          cache-disabled: true
+      - name: Install source-bound Devtool
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Run the real Android G1 gate and write source/attempt receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python -B -m devtool.g3r_hosted_android --output "$RUNNER_TEMP/g3r-android-g1"
+      - name: Publish G3R hosted G1 evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: g3r-android-g1-hosted
+          path: ${{ runner.temp }}/g3r-android-g1/
+          if-no-files-found: error
+          retention-days: 14
