@@ -285,78 +285,149 @@ class AppInstallationProvider:
         return credential
 
 
-# No token may appear in Git arguments, config files, environment or origin URL.
-_ASKPASS = '''#!/usr/bin/env python3
-import os, sys
-prompt=(sys.argv[1] if len(sys.argv)>1 else '').lower()
-if 'username' in prompt:
-    os.write(1,b'x-access-token\\n')
-elif 'password' in prompt:
-    fd=int(os.environ['DEVTOOL_APP_AUTH_FD'])
-    raw=os.read(fd,4096)
-    if not raw or b'\\n' in raw or b'\\r' in raw: sys.exit(2)
-    os.write(1,raw+b'\\n')
-else:
+# An App token may only reach the exact, pinned github.com repository via an
+# isolated one-operation AskPass.  Every Git invocation here uses the same
+# sanitized configuration universe (including the *preflight* Git calls).
+_ASKPASS = r'''#!/usr/bin/env python3
+import os, re, sys
+from urllib.parse import urlsplit
+prompt = sys.argv[1] if len(sys.argv) > 1 else ''
+match = re.fullmatch(r"(Username|Password) for '([^']+)': ?", prompt)
+if not match:
+    sys.exit(2)
+kind, target = match.groups()
+try:
+    parsed = urlsplit(target)
+    repo = os.environ['DEVTOOL_APP_AUTH_REPOSITORY']
+    allowed_paths = ('', '/', '/' + repo, '/' + repo + '.git',
+                     '/' + repo + '/', '/' + repo + '.git/')
+    if (parsed.scheme != 'https' or parsed.hostname != 'github.com'
+            or parsed.port is not None or parsed.password is not None
+            or parsed.query or parsed.fragment or parsed.path not in allowed_paths):
+        sys.exit(2)
+    if kind == 'Username':
+        if parsed.username not in (None, 'x-access-token'):
+            sys.exit(2)
+        os.write(1, b'x-access-token\n')
+    elif kind == 'Password' and parsed.username in (None, 'x-access-token'):
+        fd = int(os.environ['DEVTOOL_APP_AUTH_FD'])
+        raw = os.read(fd, 4096)
+        if not raw or b'\n' in raw or b'\r' in raw:
+            sys.exit(2)
+        os.write(1, raw + b'\n')
+    else:
+        sys.exit(2)
+except (ValueError, KeyError, OSError):
     sys.exit(2)
 '''
 
 
-def _https_origin(repo: Path, slug: str) -> None:
+def _git_isolated_environment() -> dict[str, str]:
+    """Ignore untrusted GIT_* injections and user/system rewrite rules."""
+    env = {key: val for key, val in os.environ.items() if not key.startswith('GIT_')
+           and key not in ('SSH_ASKPASS', 'GCM_INTERACTIVE')}
+    env.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull,
+               GIT_CONFIG_SYSTEM=os.devnull, GIT_TERMINAL_PROMPT='0',
+               GCM_INTERACTIVE='never', GIT_TRACE='0', GIT_CURL_VERBOSE='0',
+               GIT_ALLOW_PROTOCOL='https')
+    return env
+
+
+def _config_git(repo: Path, argv: list[str]) -> subprocess.CompletedProcess[str]:
     try:
-        p=subprocess.run(['git','-C',str(repo),'remote','get-url','origin'],
-                         capture_output=True,text=True,timeout=10,check=False)
-    except (OSError,subprocess.TimeoutExpired):
-        raise GitHubAppError('APP_GIT_ORIGIN_UNAVAILABLE') from None
-    if p.returncode or not re.fullmatch(
-            r'https://github\.com/'+re.escape(slug)+r'(?:\.git)?/?',p.stdout.strip(),re.I):
-        raise GitHubAppError('APP_GIT_REQUIRES_EXACT_HTTPS_ORIGIN')
-    try:
-        extra=subprocess.run(['git','-C',str(repo),'config','--get-regexp',r'^http\..*\.extraheader$'],
-                             capture_output=True,text=True,timeout=10,check=False)
-    except (OSError,subprocess.TimeoutExpired):
+        return subprocess.run(['git', '-C', str(repo), *argv],
+                              env=_git_isolated_environment(), capture_output=True,
+                              text=True, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired):
         raise GitHubAppError('APP_GIT_CONFIG_UNVERIFIED') from None
-    if extra.returncode not in (0,1) or (extra.returncode==0 and extra.stdout.strip()):
-        raise GitHubAppError('APP_GIT_EXTRAHEADER_REFUSED')
+
+
+def _https_origin(repo: Path, slug: str) -> None:
+    """Prove both effective fetch and *push* endpoints and refuse local rewrites."""
+    slug = _repository(slug)
+    expected = re.compile(r'https://github\.com/' + re.escape(slug) +
+                          r'(?:\.git)?/?\Z', re.I)
+    for argv in (['remote', 'get-url', 'origin'],
+                 ['remote', 'get-url', '--push', 'origin']):
+        result = _config_git(repo, argv)
+        if result.returncode != 0 or not expected.fullmatch(result.stdout.strip()):
+            raise GitHubAppError('APP_GIT_REQUIRES_EXACT_HTTPS_ORIGIN_OR_PUSH')
+    # No file-local rewriting, HTTP trust overrides, includes, or credential
+    # helpers may change the destination or leak App authentication. Global/system config
+    # is deliberately excluded in both preflight and the real Git child.
+    unsafe = _config_git(repo, ['config', '--local', '--get-regexp',
+        r'^(url\.|http\.|credential\.|include\.|includeif\.)'])
+    if unsafe.returncode not in (0, 1):
+        raise GitHubAppError('APP_GIT_CONFIG_UNVERIFIED')
+    if unsafe.returncode == 0 and unsafe.stdout.strip():
+        raise GitHubAppError('APP_GIT_REWRITE_OR_CREDENTIAL_CONFIG_REFUSED')
+
+
+def _safe_branch_ref(value: str) -> bool:
+    prefix = 'refs/heads/'
+    if not value.startswith(prefix):
+        return False
+    branch = value[len(prefix):]
+    return bool(_BRANCH.fullmatch(branch) and '..' not in branch and '@{' not in branch
+                and '//' not in branch and not branch.startswith(('.', '-'))
+                and not branch.endswith(('/', '.', '.lock'))
+                and '/.' not in branch and '\\' not in branch)
+
+
+def _check_git_argv(argv: list[str], capability: str) -> None:
+    """No caller-controlled URLs, alternate remotes, flags or arbitrary refs."""
+    if not isinstance(argv, list) or not argv:
+        raise GitHubAppError('APP_GIT_COMMAND_NOT_APPROVED')
+    if argv == ['fetch', '--prune', 'origin']:
+        if capability != 'repository_read':
+            raise GitHubAppError('APP_GIT_FETCH_SCOPE_OR_ARGUMENTS_REFUSED')
+        return
+    if argv[0] == 'fetch':
+        raise GitHubAppError('APP_GIT_FETCH_SCOPE_OR_ARGUMENTS_REFUSED')
+    if (len(argv) == 4 and argv[:3] == ['ls-remote', '--exit-code', 'origin']
+            and _safe_branch_ref(argv[3])):
+        if capability not in ('repository_read', 'branch_write'):
+            raise GitHubAppError('APP_GIT_READ_SCOPE_OR_ARGUMENTS_REFUSED')
+        return
+    if (len(argv) == 4 and argv[:3] == ['push', '--porcelain', 'origin']
+            and argv[3].count(':') == 1):
+        source, destination = argv[3].split(':')
+        if source == destination and _safe_branch_ref(source) and capability == 'branch_write':
+            return
+    raise GitHubAppError('APP_GIT_SCOPE_OR_ARGUMENTS_REFUSED')
 
 
 def run_git_authenticated(repo: str | Path, argv: list[str], access: InstallationAccess,
                           *, timeout: float = 150) -> subprocess.CompletedProcess[str]:
-    """One native Git operation with an ephemeral, fd-backed AskPass token."""
+    """One exact native Git operation with an ephemeral fd-backed AskPass token."""
     repo = Path(repo).resolve()
-    _https_origin(repo,access.repository)
-    if not argv or argv[0] not in ('ls-remote','push','fetch'):
-        raise GitHubAppError('APP_GIT_COMMAND_NOT_APPROVED')
-    # Federation only needs this exact fetch form. Reject arbitrary refspecs,
-    # --upload-pack, -c, URLs, credential helpers and argument injection.
-    if argv[0] == 'fetch' and (argv != ['fetch','--prune','origin']
-                                or access.capability != 'repository_read'):
-        raise GitHubAppError('APP_GIT_FETCH_SCOPE_OR_ARGUMENTS_REFUSED')
-    if access.expires_at <= int(time.time())+120:
+    _https_origin(repo, access.repository)
+    _check_git_argv(argv, access.capability)
+    if access.expires_at <= int(time.time()) + 120:
         raise GitHubAppError('APP_TOKEN_TOO_CLOSE_TO_EXPIRY_FOR_GIT')
-    if argv[0]=='push' and access.capability!='branch_write':
-        raise GitHubAppError('APP_GIT_WRITE_PERMISSION_REQUIRED')
     with tempfile.TemporaryDirectory(prefix='devtool-app-auth-') as temp:
-        helper = Path(temp)/'askpass.py'
+        helper = Path(temp) / 'askpass.py'
         helper.write_text(_ASKPASS, encoding='utf-8')
         helper.chmod(0o700)
-        readfd,writefd=os.pipe()
+        readfd, writefd = os.pipe()
         try:
-            os.write(writefd,access.token.encode('utf-8'))
+            os.write(writefd, access.token.encode('utf-8'))
         finally:
             os.close(writefd)
-        env={k:v for k,v in os.environ.items()
-             if k not in ('GIT_ASKPASS','SSH_ASKPASS','GIT_CURL_VERBOSE')
-             and not k.startswith('GIT_CONFIG_') and not k.startswith('GIT_TRACE')}
-        env.update(GIT_ASKPASS=str(helper),GIT_TERMINAL_PROMPT='0',
-                   GCM_INTERACTIVE='never',DEVTOOL_APP_AUTH_FD=str(readfd),
-                   GIT_TRACE='0',GIT_CURL_VERBOSE='0')
-        cmd=['git','-c','credential.helper=','-c','core.hooksPath=/dev/null',
-             '-c',f'core.askPass={helper}',
-             '-C',str(repo),*argv]
+        env = _git_isolated_environment()
+        env.update(GIT_ASKPASS=str(helper), DEVTOOL_APP_AUTH_FD=str(readfd),
+                   DEVTOOL_APP_AUTH_REPOSITORY=_repository(access.repository))
+        cmd = ['git', '-c', 'credential.helper=',
+               '-c', 'credential.useHttpPath=true',
+               '-c', 'http.followRedirects=false',
+               '-c', 'core.hooksPath=/dev/null',
+               '-c', f'core.askPass={helper}',
+               '-c', 'protocol.allow=never', '-c', 'protocol.https.allow=always',
+               '-C', str(repo), *argv]
         try:
-            return subprocess.run(cmd,env=env,pass_fds=(readfd,),capture_output=True,
-                                  text=True,timeout=timeout,check=False)
-        except (OSError,subprocess.SubprocessError):
+            return subprocess.run(cmd, env=env, pass_fds=(readfd,), capture_output=True,
+                                  text=True, timeout=timeout, check=False)
+        except (OSError, subprocess.SubprocessError):
             raise GitHubAppError('APP_GIT_OPERATION_UNAVAILABLE') from None
         finally:
             os.close(readfd)

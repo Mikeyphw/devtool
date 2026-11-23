@@ -180,7 +180,7 @@ def _run_fresh_lifecycle_chain() -> dict[str, Any]:
             "provider": "private-file",
             "key_reference": "signing:key/life-g3",
             "certificate_sha256": sha256(b"life-g3-cert").hexdigest(),
-            "secret_provider": "private-file-ref",
+            "secret_provider": {"kind": "secret-provider", "reference": "life-g3"},
             "lifecycle": "durable",
         })
         delivery = delivery_projection({

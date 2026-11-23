@@ -39,6 +39,8 @@ permissions:
   artifact-metadata: write
 jobs:
   build:
+    # The owner must configure protected reviewers on devtool-android-signing.
+    environment: ${{ inputs.signing_mode == 'github' && 'devtool-android-signing' || 'devtool-android-candidates' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -84,7 +86,7 @@ jobs:
           if [[ "$DT_PROJECT" == *".."* ]]; then exit 2; fi
           test -d "$DT_PROJECT" && test ! -L "$DT_PROJECT"
           case "$DT_SIGNING_MODE" in local|github) ;; *) echo 'Unreviewed signing mode' >&2; exit 2 ;; esac
-          if [[ "$DT_BUILD_TYPE" == "release" && "$DT_SIGNING_MODE" == "github" && "${GITHUB_REF_PROTECTED:-false}" != "true" ]]; then
+          if [[ "$DT_SIGNING_MODE" == "github" && "$DT_BUILD_TYPE" != "debug" && "${GITHUB_REF_PROTECTED:-false}" != "true" ]]; then
             echo 'Hosted signing requires a protected GitHub ref' >&2; exit 2
           fi
           echo "TASK_PROJECT=$DT_PROJECT" >> "$GITHUB_ENV"
@@ -143,7 +145,71 @@ jobs:
           test -f ./gradlew && test ! -L ./gradlew
           chmod +x ./gradlew
           ./gradlew --no-daemon ":${TASK_MODULE}:${TASK_NAME}"
+      - name: Select output without hosted signing credentials
+        if: ${{ inputs.signing_mode == 'local' || inputs.build_type == 'debug' || (inputs.build_type == '' && (inputs.variant == 'debug' || endsWith(inputs.variant, 'Debug'))) }}
+        id: unsigned_package
+        shell: bash
+        env:
+          DT_SIGNING_MODE: ${{ inputs.signing_mode }}
+        run: |
+          set -euo pipefail
+          mod="${TASK_MODULE//://}"
+          root="$TASK_PROJECT/$mod/build/outputs"
+          if [[ "$TASK_VARIANT" == "$TASK_BUILD_TYPE" ]]; then
+            folder="$TASK_VARIANT"
+          else
+            suffix="${TASK_BUILD_TYPE^}"
+            flavor="${TASK_VARIANT%"$suffix"}"
+            folder="${flavor,}/$TASK_BUILD_TYPE"
+          fi
+          if [[ "$TASK_FORMAT" == "apk" ]]; then dir="$root/apk/$folder"; else dir="$root/bundle/$folder"; fi
+          test -d "$dir" && test ! -L "$dir"
+          mapfile -d '' packages < <(find "$dir" -maxdepth 1 -type f -name "*.$TASK_FORMAT" -print0)
+          if [[ "${#packages[@]}" -ne 1 || -L "${packages[0]}" ]]; then echo 'Expected one regular selected Android output' >&2; exit 2; fi
+          staging="$RUNNER_TEMP/devtool-android-output"
+          mkdir -p "$staging"
+          out="$staging/release.$TASK_FORMAT"
+          if [[ "$TASK_BUILD_TYPE" == "debug" ]]; then
+            out="$staging/debug.$TASK_FORMAT"
+            cp -- "${packages[0]}" "$out"
+          elif [[ "$DT_SIGNING_MODE" == "local" ]]; then
+            out="$staging/unsigned.$TASK_FORMAT"
+            cp -- "${packages[0]}" "$out"
+            unzip -tqq "$out" >/dev/null
+            # Explicitly refuse already signed Gradle output in the local LIFE lane.
+            if [[ "$TASK_FORMAT" == "apk" ]]; then
+              tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)"
+              test -n "$tools" && test -x "$tools/apksigner"
+              if "$tools/apksigner" verify "$out" >/dev/null 2>&1; then
+                echo 'Local candidate was unexpectedly signed by Gradle' >&2; exit 2
+              fi
+            else
+              if unzip -Z1 "$out" | grep -Eqi '^META-INF/[^/]+\.(RSA|DSA|EC)$'; then
+                echo 'Local AAB candidate already contains a signature block' >&2; exit 2
+              fi
+            fi
+          else
+            echo 'Unsigned path cannot perform hosted signing' >&2; exit 2
+          fi
+          test -s "$out" && test ! -L "$out"
+          echo "package=$out" >> "$GITHUB_OUTPUT"
+          sha256sum "$out"
+          DT_RESULT="$out" DT_VARIANT="$TASK_VARIANT" DT_FORMAT="$TASK_FORMAT" python3 - <<'PY'
+          import hashlib,json,os,pathlib
+          result=pathlib.Path(os.environ['DT_RESULT'])
+          manifest={'schema_version':1,'variant':os.environ['DT_VARIANT'],
+                    'format':os.environ['DT_FORMAT'],'apk_file':result.name,
+                    'head_sha':os.environ['GITHUB_SHA'].lower(),
+                    'run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT']),
+                    'build_type':os.environ['TASK_BUILD_TYPE'],
+                    'signing_mode':os.environ['DT_SIGNING_MODE'],
+                    'signing_state':('unsigned' if os.environ['TASK_BUILD_TYPE']!='debug' and os.environ['DT_SIGNING_MODE']=='local' else 'debug-unverified' if os.environ['TASK_BUILD_TYPE']=='debug' else 'signed'),
+                    'qualified_release':False,
+                    'sha256':hashlib.sha256(result.read_bytes()).hexdigest()}
+          (result.parent/'android-variant-manifest.json').write_text(json.dumps(manifest,sort_keys=True)+'\n')
+          PY
       - name: Select output and sign release
+        if: ${{ inputs.signing_mode == 'github' && inputs.build_type != 'debug' && (inputs.build_type != '' || inputs.variant == 'release' || endsWith(inputs.variant, 'Release')) }}
         id: package
         shell: bash
         env:
@@ -154,6 +220,9 @@ jobs:
           DT_KEY_PASSWORD: ${{ secrets.DEVTOOL_RELEASE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          if [[ "$DT_SIGNING_MODE" != "github" || "$TASK_BUILD_TYPE" == "debug" || "${GITHUB_REF_PROTECTED:-false}" != "true" ]]; then
+            echo 'Hosted release signing requires explicit github mode, release build type and protected ref' >&2; exit 2
+          fi
           mod="${TASK_MODULE//://}"
           root="$TASK_PROJECT/$mod/build/outputs"
           if [[ "$TASK_VARIANT" == "$TASK_BUILD_TYPE" ]]; then

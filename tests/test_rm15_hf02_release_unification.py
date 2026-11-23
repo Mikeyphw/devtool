@@ -151,7 +151,7 @@ def test_custom_build_type_unsigned_output_selection_and_provenance(tmp_path):
     with zipfile.ZipFile(selected/'app-free-eu-staging-unsigned.apk','w') as z:
         z.writestr('AndroidManifest.xml',b'fixture')
     env.update(TASK_VARIANT='freeEuStaging',TASK_BUILD_TYPE='staging')
-    out=_run(_script('Select output and sign release'),cwd=repo,env=env)
+    out=_run(_script('Select output without hosted signing credentials'),cwd=repo,env=env)
     assert out.returncode==0,(out.stdout,out.stderr)
     emitted=temp/'devtool-android-output/unsigned.apk'
     manifest=json.loads((temp/'devtool-android-output/android-variant-manifest.json').read_text())

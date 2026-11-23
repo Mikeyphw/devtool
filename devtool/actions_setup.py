@@ -19,6 +19,7 @@ from urllib.parse import quote
 from .github_actions import GitHubActionsClient, GitHubActionsError, _slug
 from .actions_release import release_policy, _WORKFLOW, _SHA64
 from .actions_android import android_discover
+from .ga00_environment import SIGNING_ENVIRONMENT
 
 SECRETS = ('DEVTOOL_RELEASE_KEYSTORE_B64', 'DEVTOOL_RELEASE_STORE_PASSWORD',
            'DEVTOOL_RELEASE_KEY_ALIAS', 'DEVTOOL_RELEASE_KEY_PASSWORD')
@@ -58,6 +59,20 @@ def _secrets(slug: str) -> set[str]:
     return {entry['name'] for entry in obj if isinstance(entry, dict) and isinstance(entry.get('name'), str)}
 
 
+def _environment_secrets(slug: str) -> set[str]:
+    """Environment secrets, NOT repository-wide Actions secrets."""
+    from .ga00_environment import SIGNING_ENVIRONMENT
+    try:
+        obj = json.loads(_gh(['secret', 'list', '--repo', slug, '--app', 'actions',
+                              '--env', SIGNING_ENVIRONMENT, '--json', 'name']))
+    except (TypeError, ValueError):
+        raise GitHubActionsError('GitHub signing-environment secret inventory malformed') from None
+    if not isinstance(obj, list) or any(not isinstance(i, dict) or
+            not isinstance(i.get('name'), str) for i in obj):
+        raise GitHubActionsError('GitHub signing-environment secret inventory malformed')
+    return {i['name'] for i in obj}
+
+
 def _protected(client: GitHubActionsClient, slug: str, branch: str) -> bool:
     obj = client._get('/repos/' + slug + '/branches/' + quote(branch, safe=''))
     if type(obj.get('protected')) is not bool:
@@ -66,14 +81,8 @@ def _protected(client: GitHubActionsClient, slug: str, branch: str) -> bool:
 
 
 def _ruleset(slug: str, branch: str) -> None:
-    # A dedicated additive ruleset; never PUT/replace existing branch protection.
-    # No bypass actors, no force-push or deletion. GitHub enforces GITHUB_REF_PROTECTED.
-    obj = {'name': 'Devtool release safeguard: ' + branch,
-           'target': 'branch', 'enforcement': 'active',
-           'conditions': {'ref_name': {'include': ['refs/heads/' + branch], 'exclude': []}},
-           'rules': [{'type': 'deletion'}, {'type': 'non_fast_forward'}]}
-    _gh(['api', '--method', 'POST', 'repos/' + slug + '/rulesets', '--input', '-'],
-        input_text=json.dumps(obj), timeout=45)
+    """No mutation through ACTIONS-09. Owner approval is a separate workflow."""
+    raise GitHubActionsError('GA00_GOVERNANCE_OWNER_APPROVAL_REQUIRED: use ga00_governance_approval preview/approve separately')
 
 
 def _source(root: Path) -> str:
@@ -272,7 +281,10 @@ def release_readiness(client: GitHubActionsClient, slug: str, root: Path, *, ref
     # The returned full path is still checked below as a separate identity gate.
     workflow = client.workflow(slug, Path(_WORKFLOW).name)
     protected = _protected(client, slug, branch)
-    installed_secrets = _secrets(slug)
+    from .ga00_environment import SIGNING_ENVIRONMENT, inspect_environment
+    environment = inspect_environment(client, slug)
+    existing_repository_secrets = sorted(set(SECRETS) & _secrets(slug))
+    installed_secrets = _environment_secrets(slug)
     missing = [name for name in SECRETS if name not in installed_secrets]
     policy_path = _policy_target(root, policy_file)
     policy = None
@@ -301,20 +313,28 @@ def release_readiness(client: GitHubActionsClient, slug: str, root: Path, *, ref
     except GitHubActionsError as exc:
         signer_problem = str(exc)
     gates = {'workflow_active': workflow.get('state') == 'active' and workflow.get('path') == _WORKFLOW,
-             'branch_protected': protected, 'signing_secrets_present': not missing,
+             'branch_protected': protected, 'signing_environment_protected': environment['verified'],
+             'signing_secrets_repository_scope_clear': not existing_repository_secrets,
+             'signing_secrets_present': not missing,
              'policy_current': not policy_problem and bool(policy),
              'signing_identity_configured': not signer_problem,
              'source_match': source_ok}
     return {'phase': 'ACTIONS-09', 'repository': slug, 'ref': 'refs/heads/' + branch,
             'source_sha': sha, 'local_source_sha': source_sha or None,
             'policy_file': str(policy_path), 'secret_names_missing': missing,
+            'signing_environment': environment,
+            'repository_level_signing_secret_names': existing_repository_secrets,
             'signing_identity_id': selected_signer or None, 'signing_identity_problem': signer_problem,
             'gates': gates, 'ready': all(gates.values()), 'qualified_release': False,
             'scope': 'preflight only; not a release qualification',
+            'secret_assurance': ('metadata_present_value_unverified' if not missing else 'not_configured'),
+            'secret_values_verified': False,
             'next_actions': [msg for condition, msg in (
                 (not gates['source_match'], 'Push your intended source commit before setup'),
-                (not gates['branch_protected'], 'Protect the branch (setup --yes can create an additive ruleset)'),
-                (bool(missing), 'Provision workflow secrets from the existing Devtool signing identity with setup --yes'),
+                (not gates['branch_protected'], 'Protect branch independently through owner-approved governance; setup never creates rulesets'),
+                (not gates['signing_environment_protected'], 'Configure signing environment with required independent reviewers, protected branches and admin bypass disabled'),
+                (not gates['signing_secrets_repository_scope_clear'], 'Remove repository-level signing secrets through separate owner-reviewed migration; setup never deletes them'),
+                (bool(missing), 'Provision environment-only secrets from the Devtool signing identity using setup --yes'),
                 (bool(signer_problem), signer_problem),
                 (bool(policy_problem), policy_problem),
                 (not gates['workflow_active'], 'Enable the pinned Android workflow')) if condition]}
@@ -334,12 +354,18 @@ def release_setup(client: GitHubActionsClient, slug: str, root: Path, *, ref: st
                                'application_id': application_id or '(auto-discover)',
                                'format': fmt, 'minimum_version_code': minimum_version_code}
     if not execute:
-        plan['note'] = 'Read-only. Add --yes to protect ref, upload secrets and create private policy.'
+        plan['note'] = 'Read-only. Branch governance and signing environment MUST be approved separately. --yes uploads only environment-scoped secrets and creates private policy.'
         return plan
     if fmt not in ('apk', 'aab') or type(minimum_version_code) is not int or minimum_version_code < 1:
         raise GitHubActionsError('Release format/version code are invalid')
     if not plan['gates']['source_match'] or not plan['gates']['workflow_active']:
         raise GitHubActionsError('Remote source and active workflow must match before setup')
+    if not plan['gates']['branch_protected']:
+        raise GitHubActionsError('GA00_GOVERNANCE_OWNER_APPROVAL_REQUIRED: branch must already be protected')
+    if not plan['gates']['signing_environment_protected']:
+        raise GitHubActionsError('GA00_SIGNING_ENVIRONMENT_NOT_PROTECTED: cannot provision or sign')
+    if not plan['gates']['signing_secrets_repository_scope_clear']:
+        raise GitHubActionsError('GA00_REPOSITORY_SIGNING_SECRET_LEAKAGE: migrate/remove through independent owner approval')
     policy_target = _policy_target(root, path)
     if policy_target.exists():
         # First validate the independent trust anchor before touching secrets.
@@ -360,33 +386,66 @@ def release_setup(client: GitHubActionsClient, slug: str, root: Path, *, ref: st
         if existing != document:
             raise GitHubActionsError('Existing private policy differs; refusing remote mutation')
     observed = set(SECRETS) - set(plan['secret_names_missing'])
+    # Check for an unresolved previous secret intent *before* even attempting
+    # a separate ruleset mutation. Full locking is reacquired at upload time.
+    from .ga00_secret_journal import opened_journal, SecretJournalRefusal
+    try:
+        with opened_journal(policy_target) as early_journal:
+            if early_journal.unresolved():
+                raise GitHubActionsError('Secret upload has an unresolved prior intent; reconcile before any remote setup mutation')
+    except SecretJournalRefusal as exc:
+        raise GitHubActionsError(str(exc)) from None
     if observed and observed != set(SECRETS) and not rotate_secrets:
         raise GitHubActionsError('Partial GitHub release secrets exist; refusing mixed signer material. Review them and use --rotate-secrets --yes only if intentionally replacing all four')
-    # Protect before provisioning secrets. Creating a new ruleset is additive, not replacement.
-    if not plan['gates']['branch_protected']:
-        _ruleset(slug, branch)
-        if not _protected(client, slug, branch):
-            raise GitHubActionsError('Branch ruleset submitted but branch is not yet protected; no secrets uploaded')
+    # GA-00: governance approval and environment protection must PRECEDE setup.
+    # Never perform an incidental ruleset POST from ACTIONS-09.
     # Secrets travel to gh via stdin only (never process arguments, stdout or logs).
     # The four names exactly match the pinned checked-in Android workflow.
     payloads = (base64.b64encode(item.read_bytes()).decode('ascii'),
                 resolved_secrets['DEVTOOL_ANDROID_SIGNING_STORE_PASSWORD'], profile.alias,
                 resolved_secrets['DEVTOOL_ANDROID_SIGNING_KEY_PASSWORD'])
+    from .ga00_secret_journal import opened_journal, journal_path, SecretJournalRefusal
     uploaded = []
-    if rotate_secrets or not observed:
-        for name, value in zip(SECRETS, payloads):
-            _gh(['secret', 'set', name, '--repo', slug, '--app', 'actions'], input_text=value)
-            uploaded.append(name)
-    # Existing complete sets are never overwritten by a generic --yes.
-    # Name presence cannot attest their cryptographic correctness.
-    if _secrets(slug).issuperset(SECRETS) is False:
-        raise GitHubActionsError('GitHub did not confirm all secret names; private policy was not written')
+    # A single locked, fsynced intent journal covers every secret, including
+    # interrupted or ambiguous responses. Never replay an unresolved write.
+    try:
+        with opened_journal(policy_target) as journal:
+            if journal.unresolved():
+                raise GitHubActionsError('Secret upload has an unresolved prior intent; inspect the private journal and reconcile GitHub metadata and signer before retrying')
+            if rotate_secrets or not observed:
+                operation_id = journal.new_operation()
+                for name, value in zip(SECRETS, payloads):
+                    fields = dict(operation_id=operation_id, name=name, repository=slug,
+                                  source_sha=document['source_sha'], signer_sha256=signer)
+                    journal.record(event='INTENT', **fields)
+                    _gh(['secret', 'set', name, '--repo', slug, '--app', 'actions',
+                         '--env', SIGNING_ENVIRONMENT], input_text=value)
+                    journal.record(event='ACK', **fields)
+                    uploaded.append(name)
+                # A successful CLI return isn't a read-back of the encrypted
+                # secret value. This check proves only remote metadata presence.
+                confirmed = _environment_secrets(slug)
+                if not confirmed.issuperset(SECRETS):
+                    raise GitHubActionsError('Secret metadata is incomplete after upload; manual reconciliation required')
+                for name in SECRETS:
+                    journal.record(event='METADATA_PRESENT', operation_id=operation_id,
+                                   name=name, repository=slug,
+                                   source_sha=document['source_sha'], signer_sha256=signer)
+            elif not _environment_secrets(slug).issuperset(SECRETS):
+                raise GitHubActionsError('GitHub did not confirm all secret names; private policy was not written')
+    except SecretJournalRefusal as exc:
+        raise GitHubActionsError(str(exc)) from None
     created = _write_policy(root, policy_target, document)
     return {'phase': 'ACTIONS-09', 'mode': 'apply', 'repository': slug,
             'ref': document['ref'], 'source_sha': document['source_sha'],
             'policy_file': str(policy_target), 'policy_created': created,
             'signer_sha256': signer, 'signing_identity_id': profile.identity_id,
             'application_id': app, 'secret_names_updated': uploaded,
-            'existing_secret_values_unverified': bool(observed) and not uploaded,
+            'secret_scope': 'environment:' + SIGNING_ENVIRONMENT,
+            'environment_protection_verified_before_write': True,
+            'existing_secret_values_unverified': True,
+            'secret_assurance': 'metadata_present_value_unverified',
+            'secret_values_verified': False,
+            'secret_journal': str(journal_path(policy_target)),
             'branch_protected': True, 'ready': True, 'qualified_release': False,
             'scope': 'configuration only; a real attested signed release remains mandatory'}

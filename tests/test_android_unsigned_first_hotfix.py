@@ -103,7 +103,8 @@ def test_workflow_bash_syntax_and_secret_free_release_task(tmp_path):
     assert 'default: local' in text and 'options: [local, github]' in text
     assert "inputs.signing_mode == 'local'" in text
     for step in ('Validate requested Gradle task','Build Android release output without GitHub signing secrets',
-                 'Build Android signed release output','Select output and sign release'):
+                 'Build Android signed release output','Select output without hosted signing credentials',
+                 'Select output and sign release'):
         code=_script(step)
         assert subprocess.run(['bash','-n','-c',code],capture_output=True).returncode==0,step
     task=_script('Build Android release output without GitHub signing secrets')
@@ -138,7 +139,7 @@ def _candidate_harness(tmp_path,mode='local',*,already_signed=False):
 
 def test_real_shell_local_unsigned_candidate_requires_no_secrets(tmp_path):
     repo,env,temp=_candidate_harness(tmp_path)
-    out=_run(_script('Select output and sign release'),cwd=repo,env=env)
+    out=_run(_script('Select output without hosted signing credentials'),cwd=repo,env=env)
     assert out.returncode==0,(out.stdout,out.stderr)
     manifest=json.loads((temp/'devtool-android-output/android-variant-manifest.json').read_text())
     assert manifest['signing_state']=='unsigned' and manifest['signing_mode']=='local'
@@ -149,13 +150,14 @@ def test_real_shell_local_unsigned_candidate_requires_no_secrets(tmp_path):
 
 def test_local_unsigned_workflow_refuses_pre_signed_gradle_output(tmp_path):
     repo,env,temp=_candidate_harness(tmp_path,already_signed=True)
-    out=_run(_script('Select output and sign release'),cwd=repo,env=env)
+    out=_run(_script('Select output without hosted signing credentials'),cwd=repo,env=env)
     assert out.returncode!=0 and 'unexpectedly signed' in out.stderr
     assert not (temp/'devtool-android-output/android-variant-manifest.json').exists()
 
 
 def test_explicit_github_signing_requires_existing_secrets(tmp_path):
     repo,env,temp=_candidate_harness(tmp_path,mode='github')
+    env['GITHUB_REF_PROTECTED']='true'
     out=_run(_script('Select output and sign release'),cwd=repo,env=env)
     assert out.returncode!=0 and 'Explicit GitHub signing requires' in out.stderr
     assert not (temp/'devtool-android-output/android-variant-manifest.json').exists()
@@ -196,6 +198,7 @@ def test_untracked_reviewed_profile_cannot_override_gradle(tmp_path):
 def test_explicit_hosted_signing_still_uses_16k_and_reports_nonqualified(tmp_path):
     import base64
     repo,env,temp=_candidate_harness(tmp_path,mode='github')
+    env['GITHUB_REF_PROTECTED']='true'
     sdk=tmp_path/'sdk/build-tools/35.0.0'
     align=sdk/'zipalign'
     align.write_text('''#!/bin/sh

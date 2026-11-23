@@ -10,6 +10,7 @@ it produces deterministic plans/evidence that existing executors can consume.
 from dataclasses import asdict, dataclass
 import hashlib
 import json
+import re
 from typing import Any, Iterable, Mapping, Sequence
 
 
@@ -65,6 +66,75 @@ def delivery_projection(plan: Mapping[str, Any]) -> LifecycleProjection:
     }, ("inspect", "qualification", "apply" if executable else "remediate"))
 
 
+
+# Only opaque, typed references may cross LIFE boundaries. Names here identify
+# a configured provider, not a path, command, token, or secret value.
+_SECRET_REF_TYPES = {
+    'fd': re.compile(r'[0-9]{1,6}\Z'),
+    'local': re.compile(r'[A-Z_][A-Z0-9_]{0,127}\Z'),
+    'keyring': re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z'),
+    'secret-provider': re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z'),
+}
+
+
+def canonical_secret_reference(value: str | Mapping[str, Any] | None) -> str:
+    if value is None or value == '':
+        return ''
+    if isinstance(value, Mapping):
+        if set(value) != {'kind', 'reference'}:
+            raise ValueError('secret reference fields are not canonical')
+        kind, ident = value['kind'], value['reference']
+        if not isinstance(kind, str) or not isinstance(ident, str):
+            raise ValueError('secret reference type and identity must be strings')
+        value = kind + ':' + ident
+    if not isinstance(value, str) or ':' not in value:
+        raise ValueError('secret provider reference must be typed')
+    kind, ident = value.split(':', 1)
+    matcher = _SECRET_REF_TYPES.get(kind)
+    if matcher is None or not matcher.fullmatch(ident):
+        raise ValueError('secret provider reference is not a safe opaque identity')
+    return value
+
+
+
+_SECRET_VALUE = re.compile(
+    r'(?i)(?:\b(?:password|passphrase|token|private[_-]?key|authorization|api[_-]?key|secret)\s*[:=]\s*\S+'
+    r'|\bgh[psuo]_[A-Za-z0-9_]{12,}\b|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+    r'|https?://[^/\s:@]+:[^/\s@]+@)'
+)
+
+
+def _refuse_embedded_secret_material(value: Any) -> None:
+    """Fail closed before hashing/serializing an untrusted LIFE envelope."""
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError('lifecycle evidence contains non-string keys')
+            lowered = key.casefold()
+            if lowered == 'secret_provider':
+                canonical_secret_reference(item)
+                continue
+            if lowered == 'secret_provider_ref':
+                canonical_secret_reference(item)
+                continue
+            if any(word in lowered for word in (
+                    'password', 'passphrase', 'private_key', 'private-key', 'token',
+                    'authorization', 'api_key', 'api-key')) and item not in (None, '', False):
+                raise ValueError('lifecycle evidence contains a sensitive field')
+            _refuse_embedded_secret_material(item)
+    elif isinstance(value, (tuple, list)):
+        for item in value:
+            _refuse_embedded_secret_material(item)
+    elif isinstance(value, str):
+        if _SECRET_VALUE.search(value) or '\x00' in value or any(
+                x in value for x in ('\r', '\n')):
+            raise ValueError('lifecycle evidence contains secret-like content')
+    elif value is None or type(value) in (bool, int, float):
+        return
+    else:
+        raise ValueError('lifecycle evidence contains an unsupported value type')
+
+
 def signing_projection(identity: Mapping[str, Any]) -> LifecycleProjection:
     forbidden = {"password", "passphrase", "private_key", "token", "secret"}
     for key, value in identity.items():
@@ -75,6 +145,10 @@ def signing_projection(identity: Mapping[str, Any]) -> LifecycleProjection:
     if not iid:
         raise ValueError("signing identity is required")
     provider = identity.get("secret_provider")
+    _refuse_embedded_secret_material(identity)
+    if provider is not None:
+        # Preserve legacy public object shape while rejecting unbounded values.
+        canonical_secret_reference(provider)
     return LifecycleProjection("signing", iid, "ready" if identity.get("key_reference") else "incomplete", {
         "provider": identity.get("provider", ""), "key_reference": identity.get("key_reference", ""),
         "certificate_sha256": identity.get("certificate_sha256", ""),
@@ -111,8 +185,8 @@ def remote_lifecycle_envelope(*, repository_identity: str, operation: str, proje
     """Transport identity/references only; never secret bytes or flattened repo identity."""
     if not repository_identity.strip():
         raise ValueError("repository identity is required")
-    if any(token in secret_provider_ref.lower() for token in ("password=", "token=", "private-key=")):
-        raise ValueError("secret material cannot be transported in lifecycle envelope")
+    secret_provider_ref = canonical_secret_reference(secret_provider_ref)
+    _refuse_embedded_secret_material(projection.as_dict())
     payload = {
         "schema_version": 1, "repository_identity": repository_identity,
         "operation": operation, "projection": projection.as_dict(),
