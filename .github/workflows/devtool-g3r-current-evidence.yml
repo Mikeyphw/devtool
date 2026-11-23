@@ -96,6 +96,14 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           python -B -m devtool.g3r_hosted_android --output "$RUNNER_TEMP/g3r-android-g1"
+      - name: Publish sanitized hosted G1 failure diagnosis
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: g3r-android-g1-failure
+          path: ${{ runner.temp }}/g3r-android-g1/android_g1_failure.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Publish G3R hosted G1 evidence
         uses: actions/upload-artifact@v7
         with:

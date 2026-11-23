@@ -13,8 +13,33 @@ import subprocess
 import sys
 
 
+def _record_public_failure(output: Path, *, source: str, run_id: int,
+                           attempt: int, returncode: int, stderr: bytes) -> None:
+    """Persist no raw stderr, credentials or logs in the public failure artifact."""
+    code = ('HOST_AUTHORITY_REFUSED'
+            if b'authoritative process proof requires native Termux' in stderr
+               or b'requires native Termux or source-verified GitHub-hosted G1' in stderr
+            else 'GRADLE_PRODUCER_FAILED'
+            if b'canonical Android-G1 Gradle producer failed' in stderr
+            else 'RUNTIME_SEAL_FAILED'
+            if b'staged Android runtime diverged' in stderr
+            else 'G1_CHILD_FAILED')
+    receipt = {
+        'schema': 'devtool.g3r.hosted-g1-failure.v1',
+        'source_commit': source, 'run_id': run_id, 'run_attempt': attempt,
+        'status': 'FAIL', 'child_returncode': returncode,
+        'reason_code': code, 'formal_release_qualified': False,
+    }
+    (output / 'android_g1_failure.json').write_text(
+        json.dumps(receipt, sort_keys=True, indent=2) + '\n', encoding='utf-8')
+
+
 def produce(output: Path) -> dict:
     env = os.environ
+    if any(key in env for key in ('DEVTOOL_ANDROID_G1_ALLOW_TEST_HOST',
+       'DEVTOOL_ANDROID_G1_GRADLE', 'DEVTOOL_ANDROID_G1_JAVA',
+       'DEVTOOL_ANDROID_G1_ADB', 'DEVTOOL_ANDROID_G2_ALLOW_TEST_HOST')):
+        raise RuntimeError('HOSTED_ANDROID_G1_TEST_OVERRIDE_FORBIDDEN')
     if (env.get('GITHUB_ACTIONS') != 'true' or env.get('RUNNER_OS') != 'Linux'
         or env.get('GITHUB_EVENT_NAME') != 'workflow_dispatch'
         or env.get('GITHUB_JOB') != 'android-g1-hosted'
@@ -44,7 +69,9 @@ def produce(output: Path) -> dict:
     log = process.stdout + b'\nSTDERR:\n' + process.stderr
     (output / 'android_g1.log').write_bytes(log)
     if process.returncode != 0 or not process.stdout.strip():
-        raise RuntimeError(f'HOSTED_ANDROID_G1_FAILED rc={process.returncode}')
+        _record_public_failure(output, source=head, run_id=run_id, attempt=attempt,
+                               returncode=process.returncode, stderr=process.stderr)
+        raise RuntimeError(f'HOSTED_ANDROID_G1_FAILED rc={process.returncode}; see bounded failure receipt')
     report = json.loads(process.stdout)
     if (not isinstance(report, dict) or report.get('gate') != 'ANDROID-G1'
         or report.get('status') != 'passed' or not report.get('gradle_receipt_id')
