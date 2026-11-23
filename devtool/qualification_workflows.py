@@ -51,15 +51,36 @@ def _root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def _state_dirs(root: Path) -> tuple[Path, ...]:
+    """Canonical first; retain legacy CI24/G3R receipts without moving them.
+
+    A matching receipt in both locations is ambiguous, not a new dispatch
+    opportunity. Invalid relative XDG paths never become cwd-relative state.
+    """
+    from .xdg import state_roots
+    suffix = hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:20]
+    return tuple(base / 'qualification-workflows' / suffix for base in state_roots())
+
+
 def _state_dir(root: Path) -> Path:
-    basis = Path(os.environ.get('XDG_STATE_HOME') or Path.home()/'.local/state')
-    return basis/'devtool'/'qualification-workflows'/hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:20]
+    return _state_dirs(root)[0]
 
 
 def _state_path(root: Path, sha: str, kind: str) -> Path:
     if not SHA.fullmatch(sha) or kind not in ('ci24', 'g3r'):
         raise GitHubActionsError('Invalid qualification record identity')
-    return _state_dir(root)/f'{sha}-{kind}.json'
+    candidates = [parent / f'{sha}-{kind}.json' for parent in _state_dirs(root)]
+    existing = [path for path in candidates if path.exists() or path.is_symlink()]
+    if len(existing) > 1:
+        raise GitHubActionsError('Conflicting canonical and legacy qualification receipts; no new dispatch')
+    if existing:
+        receipt = existing[0]
+        if (receipt.is_symlink() or receipt.parent.is_symlink()
+            or not receipt.is_file() or (os.name == 'posix'
+                                    and receipt.parent.stat().st_mode & 0o077)):
+            raise GitHubActionsError('Unsafe existing qualification receipt; no new dispatch')
+        return receipt
+    return candidates[0]
 
 
 def _load(root: Path, head: str, kind: str) -> dict[str, Any]:
@@ -83,8 +104,19 @@ def _save(root: Path, sha: str, kind: str, data: dict[str, Any]) -> None:
 
 @contextmanager
 def _lock(root: Path, head: str, kind: str) -> Iterator[None]:
-    parent = _state_dir(root)
+    parents = _state_dirs(root)
+    parent = parents[0]
+    if parent.is_symlink():
+        raise GitHubActionsError('Qualification state root is a symlink')
     parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if os.name == 'posix' and parent.stat().st_mode & 0o077:
+        raise GitHubActionsError('Qualification state directory is not private')
+    # Do not claim a new exclusive operation when an older runtime's lock
+    # still exists under the pre-unification state root.
+    for old in parents[1:]:
+        previous = old/f'{head}-{kind}.lock'
+        if previous.exists() or previous.is_symlink():
+            raise GitHubActionsError('Legacy qualification operation active or interrupted; inspect before resume')
     lock = parent/f'{head}-{kind}.lock'
     try:
         lock.mkdir(mode=0o700)

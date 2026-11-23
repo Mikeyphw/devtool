@@ -138,8 +138,31 @@ def _validated_inputs(definitions: dict[str, Any], values: dict[str, str]) -> di
 
 
 def _state_root() -> Path:
-    home = Path(os.environ.get("XDG_STATE_HOME") or str(Path.home()/".local/state"))
-    return home / "devtool" / "actions" / "dispatches"
+    from .xdg import state_dir
+    return state_dir() / "actions" / "dispatches"
+
+
+def _state_roots() -> tuple[Path, ...]:
+    from .xdg import state_roots
+    return tuple(root / "actions" / "dispatches" for root in state_roots())
+
+
+def _request_root(request_id: str, *, state_root: Path | None = None) -> Path:
+    if state_root is not None:
+        return Path(state_root)
+    if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+        raise GitHubActionsError("Invalid dispatch request ID")
+    found = []
+    for root in _state_roots():
+        target = root / (request_id + ".json")
+        if target.exists() or target.is_symlink():
+            if (root.is_symlink() or not root.is_dir() or
+                    (os.name == "posix" and root.stat().st_mode & 0o077)):
+                raise GitHubActionsError("Dispatch state directory is not private")
+            found.append(root)
+    if len(found) > 1:
+        raise GitHubActionsError("Conflicting dispatch receipts across state roots")
+    return found[0] if found else _state_root()
 
 
 def _durable_record(path: Path, obj: Mapping[str, Any]) -> None:
@@ -188,7 +211,7 @@ def dispatch_resume_decision(request_id: str, *, state_root: Path | None = None)
     from .actions_runs import _read_dispatch_receipt, run_id
     if not isinstance(request_id,str) or not re.fullmatch(r'[a-f0-9]{32}',request_id):
         raise GitHubActionsError('Dispatch request ID must be a 32-character hexadecimal identifier')
-    folder = state_root if state_root is not None else _state_root()
+    folder = _request_root(request_id, state_root=state_root)
     if folder.is_symlink() or (folder.exists() and not folder.is_dir()):
         raise GitHubActionsError('Dispatch journal root is unsafe')
     location=folder/(request_id+'.json')
@@ -352,12 +375,14 @@ def dispatch_workflow(client: GitHubActionsClient, slug: str, workflow_id: str, 
     digest=_inputs_digest(inputs)
     folder=state_root if state_root is not None else _state_root()
     def _existing() -> dict[str,Any] | None:
-        matches=_existing_dispatches(folder,summary,digest)
+        roots = (folder,) if state_root is not None else _state_roots()
+        matches = [(match, candidate) for candidate in roots
+                   for match in _existing_dispatches(candidate, summary, digest)]
         if not matches:return None
-        if len(matches)!=1 or matches[0]['ambiguous_inputs']:
+        if len(matches)!=1 or matches[0][0]['ambiguous_inputs']:
             raise GitHubActionsError('Matching uncertain or legacy dispatch exists; inspect exact receipt, no second POST')
-        receipt=matches[0]
-        decision=dispatch_resume_decision(receipt['request_id'],state_root=folder)
+        receipt, receipt_root = matches[0]
+        decision=dispatch_resume_decision(receipt['request_id'],state_root=receipt_root)
         return {'phase':'RM-16','dispatched':False,'resume_existing':True,
                 'request_id':receipt['request_id'],'state':receipt['state'],
                 'run_id':decision['run_id'],'safe_to_redispatch':False,

@@ -133,3 +133,24 @@ def adopt_after_apply(repo: str | Path, overlay: str | Path,
 
 
 __all__ = ["NativeContinuityError", "adopt_after_apply", "reconcile_committed", "is_committed_v3"]
+
+
+def classify_native_commit_phase(results: Sequence[Any]) -> str:
+    """Report whether automatic M3 adoption is warranted, without changing state.
+
+    A failure before any commit result is not a *postcommit* adoption issue.
+    A nonzero commit result is uncertain because the git effect may already
+    have occurred; do not retry it without native history reconciliation.
+    """
+    commits = [r for r in results if getattr(r, 'name', '') == 'git-commit'
+               and not getattr(r, 'skipped', False)]
+    if any(getattr(r, 'returncode', 1) != 0 for r in commits):
+        return 'COMMIT_UNCERTAIN_REQUIRES_HISTORY'
+    if len(commits) > 1:
+        return 'COMMIT_AMBIGUOUS_REQUIRES_HISTORY'
+    if len(commits) == 1:
+        return 'COMMITTED_ADOPTION_REQUIRED'
+    if any(getattr(r, 'returncode', 1) != 0 and not getattr(r, 'skipped', False)
+           for r in results):
+        return 'PRECOMMIT_VALIDATION_FAILED'
+    return 'NO_QUALIFIED_COMMIT_RESULT'

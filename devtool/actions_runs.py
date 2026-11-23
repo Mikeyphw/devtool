@@ -19,7 +19,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request
 
-from .actions_dispatch import _durable_record, _state_root
+from .actions_dispatch import _durable_record, _state_root, _request_root
 from .github_actions import GitHubActionsClient, GitHubActionsError, GitHubDispatchOutcomeUnknown, _slug
 
 _ID = re.compile(r"[1-9][0-9]{0,18}\Z")
@@ -39,7 +39,7 @@ def run_id(value: object) -> int:
 def _read_dispatch_receipt(request_id: str, root: Path | None = None) -> tuple[Path, dict[str, Any]]:
     if not _REQUEST.fullmatch(request_id):
         raise GitHubActionsError("Dispatch request ID must be a 32-character hexadecimal identifier")
-    folder = root if root is not None else _state_root()
+    folder = _request_root(request_id, state_root=root)
     path = folder / f"{request_id}.json"
     if path.is_symlink() or not path.is_file() or path.stat().st_size > 256 * 1024:
         raise GitHubActionsError("Matching local dispatch receipt not found")
