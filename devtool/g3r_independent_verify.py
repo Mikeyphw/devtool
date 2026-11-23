@@ -141,7 +141,38 @@ def verify(evidence: Path, repo: Path) -> dict[str, Any]:
         if run["status"] == "PASS":
             check(type(run.get("exit_code")) is int and run["exit_code"] == 0, "false-success lane receipt")
         validate_lane_log(evidence, key, run, seen_lane_logs)
-    return {"verification": "PASS_CURRENT_SOURCE_CANDIDATE_ONLY", "source_commit": commit,
+    # The Android-G1 lane is no longer executable on native Termux. Its
+    # canonical provenance is an exact-source GitHub Actions hosted receipt.
+    hosted = checks.get('android_g1_gate')
+    hosted_digest = None
+    hosted_run_id = None
+    if hosted is not None:
+        check(isinstance(hosted, dict) and hosted.get('execution_host') == 'github-actions-linux',
+              'G3R Android G1 is not a verified hosted lane')
+        receipt_bytes = confined(evidence, 'REMOTE_ANDROID_G1.json').read_bytes()
+        hosted_receipt = json.loads(receipt_bytes)
+        check(isinstance(hosted_receipt, dict)
+              and hosted_receipt.get('schema') == 'devtool.g3r.hosted-g1.v1'
+              and hosted_receipt.get('source_commit') == commit
+              and hosted_receipt.get('source_tree') == tree
+              and type(hosted_receipt.get('run_id')) is int and hosted_receipt['run_id'] > 0
+              and hosted_receipt.get('run_attempt') == 1
+              and hosted_receipt.get('status') == 'PASS'
+              and hosted_receipt.get('exit_code') == 0
+              and hosted_receipt.get('formal_release_qualified') is False
+              and hosted_receipt.get('job') == 'android-g1-hosted'
+              and hosted_receipt.get('runner_os') == 'Linux'
+              and hosted_receipt.get('output_sha256') == hosted.get('output_sha256')
+              and hosted.get('remote_receipt_sha256') == sha(receipt_bytes)
+              and hosted_receipt.get('gradle_receipt_id')
+              and isinstance(hosted_receipt.get('artifact_sha256'), str)
+              and len(hosted_receipt['artifact_sha256']) == 64,
+              'G3R hosted Android G1 receipt mismatch')
+        hosted_digest = sha(receipt_bytes)
+        hosted_run_id = hosted_receipt['run_id']
+    return {"hosted_g1_receipt_sha256": hosted_digest,
+            "hosted_g1_run_id": hosted_run_id,
+            "verification": "PASS_CURRENT_SOURCE_CANDIDATE_ONLY", "source_commit": commit,
             "source_tree": tree, "source_files": len(paths), "source_root_sha256": root_digest,
             "historical_artifacts_retired": len(RETIRED), "real_substrate_obligations_open": list(G3R_REAL_SUBSTRATE_CARRY),
             "release_qualified": False}

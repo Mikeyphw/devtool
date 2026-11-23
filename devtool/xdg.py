@@ -11,7 +11,7 @@ def _env_path(
     env: Mapping[str, str] | None = None,
     custom: bool = False,
 ) -> Path | None:
-    values = env or os.environ
+    values = os.environ if env is None else env
     raw = str(values.get(name, "") or "").strip()
     if not raw:
         return None
@@ -31,40 +31,57 @@ def override_root(env: Mapping[str, str] | None = None) -> Path | None:
 
 
 def _home(env: Mapping[str, str] | None = None) -> Path:
-    values = env or os.environ
+    values = os.environ if env is None else env
     raw = str(values.get("HOME", "") or "").strip()
     path = Path(raw).expanduser() if raw else Path.home()
     return path.resolve(strict=False) if path.is_absolute() else Path.home().resolve(strict=False)
 
 
 def state_home(env: Mapping[str, str] | None = None) -> Path:
-    values = env or os.environ
+    values = os.environ if env is None else env
     return _env_path("XDG_STATE_HOME", env=values) or (_home(values) / ".local" / "state")
 
 
 def data_home(env: Mapping[str, str] | None = None) -> Path:
-    values = env or os.environ
+    values = os.environ if env is None else env
     return _env_path("XDG_DATA_HOME", env=values) or (_home(values) / ".local" / "share")
 
 
 def cache_home(env: Mapping[str, str] | None = None) -> Path:
-    values = env or os.environ
+    values = os.environ if env is None else env
     return _env_path("XDG_CACHE_HOME", env=values) or (_home(values) / ".cache")
 
 
 def state_dir(env: Mapping[str, str] | None = None) -> Path:
-    values = env or os.environ
+    values = os.environ if env is None else env
     override = override_root(values)
     return override if override is not None else state_home(values) / "devtool"
 
 
 def data_dir(env: Mapping[str, str] | None = None) -> Path:
-    values = env or os.environ
+    values = os.environ if env is None else env
     override = override_root(values)
     return override if override is not None else data_home(values) / "devtool"
 
 
 def cache_dir(env: Mapping[str, str] | None = None) -> Path:
-    values = env or os.environ
+    values = os.environ if env is None else env
     override = override_root(values)
     return override if override is not None else cache_home(values) / "devtool"
+
+
+def legacy_state_dir(env: Mapping[str, str] | None = None) -> Path:
+    """The pre-unification state root, for bounded journal discovery only.
+
+    Never resolve a relative XDG_STATE_HOME against cwd: historical sessions
+    under a relative path require an explicit owner-supplied path.
+    """
+    values = os.environ if env is None else env
+    return state_home(values) / "devtool"
+
+
+def state_roots(env: Mapping[str, str] | None = None) -> tuple[Path, ...]:
+    """Canonical-first candidate roots; this function never migrates data."""
+    current = state_dir(env)
+    older = legacy_state_dir(env)
+    return (current,) if current == older else (current, older)
