@@ -123,12 +123,17 @@ def evaluate(candidate: Path, repo: Path = ROOT, *, require_native: bool = True)
                                and v.get("exit_code") == 0 and isinstance(v.get("output_file"), str)
                                and isinstance(v.get("output_sha256"), str))
         native = runtime.get("native_termux") is True and runtime.get("host_os") == "Android"
+        if require_native:
+            _require(checks.get('android_g1_gate', {}).get('execution_host') == 'github-actions-linux',
+                     'Hosted Android G1 is required; no local Gradle substitution')
         complete = present == REQUIRED_LANES and successful == REQUIRED_LANES
         if require_native:
             _require(native, "Evidence was not executed on native Termux")
             _require(complete, f"Native/semantic lanes incomplete: {sorted(REQUIRED_LANES - successful)}")
         return {
             "schema_version": 3, "gate": "G3R-CURRENT-SOURCE-EVIDENCE",
+            "hosted_g1_receipt_sha256": independent['hosted_g1_receipt_sha256'],
+            "hosted_g1_run_id": independent['hosted_g1_run_id'],
             "status": "PASS_CURRENT_SOURCE_AND_NATIVE_LANES" if native and complete else "PASS_CURRENT_SOURCE_ONLY",
             "source_commit": independent["source_commit"], "source_tree": independent["source_tree"],
             "source_files": independent["source_files"],

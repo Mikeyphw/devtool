@@ -353,6 +353,21 @@ def _read_marker(repo: str | Path, family: str) -> dict[str, Any] | None:
         or doc.get("source") not in [str(x) for x in legacy_family_dirs(repo, family)]
         or not re.fullmatch(r"[a-f0-9]{64}", str(doc.get("source_digest") or ""))):
         raise StorageLayoutError(f"Invalid migration marker: {path}")
+    if doc.get("reconciled_sources") is not None:
+        records = doc["reconciled_sources"]
+        expected = {str(x) for x in legacy_family_dirs(repo, family)}
+        if (family != "run-v3" or not isinstance(records, list) or len(records) != 2
+                or {str(row.get("path")) for row in records if isinstance(row, dict)} != expected
+                or any(not isinstance(row, dict) or
+                       not re.fullmatch(r"[a-f0-9]{64}", str(row.get("digest", "")))
+                       for row in records)
+                or not re.fullmatch(r"[a-f0-9]{64}", str(doc.get("catalog_sha256", "")))
+                or not doc.get("originals_preserved") is True):
+            raise StorageLayoutError("Invalid dual-catalog reconciliation marker")
+        catalog_path = target / "catalog.json"
+        if (catalog_path.is_symlink() or not catalog_path.is_file()
+                or _sha256_file(catalog_path) != doc["catalog_sha256"]):
+            raise StorageLayoutError("Reconciled canonical catalog missing or changed")
     if not target.is_dir() or target.is_symlink():
         raise StorageLayoutError("Migration marker points to missing or unsafe destination")
     return doc
@@ -628,6 +643,187 @@ def _fingerprint_dir(path: Path) -> tuple[str, int, int]:
     return h.hexdigest(), count, size
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _reconciled_catalog(repo: Path) -> tuple[list[dict[str, Any]], bytes, dict[str, int]]:
+    """Read both complete RUN-V3 authorities without changing any live state.
+
+    A duplicate key in any table is deliberately a collision, even if the
+    values match. There is no implicit winner and no status reclassification.
+    """
+    from .run_store import RunCatalog
+
+    roots = legacy_family_dirs(repo, "run-v3")
+    if len(roots) != 2 or not all(_has_payload(p) for p in roots):
+        raise StorageLayoutError("Exactly two populated legacy RUN catalogs required")
+    records = []
+    merged: dict[str, dict[str, Any]] = {}
+    tables = ("runs", "attachments", "streams", "events", "references", "relations")
+    for path in roots:
+        _check_root(path)
+        # No parent symlink can change a previously attested authority.
+        boundary = repo if path.is_relative_to(repo) else state_dir()
+        if not path.is_relative_to(boundary):
+            raise StorageLayoutError("RUN legacy root outside trusted authorities")
+        current = boundary
+        for component in path.relative_to(boundary).parts:
+            current = current / component
+            if current.is_symlink():
+                raise StorageLayoutError("RUN legacy ancestor symlink refused")
+        index = path / "catalog.json"
+        if index.is_symlink() or not index.is_file() or index.stat().st_size > 32 * 1024 * 1024:
+            raise StorageLayoutError("Missing, linked or oversized legacy RUN catalog")
+        fingerprint, count, size = _fingerprint_dir(path)
+        catalog = RunCatalog.open(path, create=False)
+        # Preserve all metadata and original attachment/stream path locators.
+        document = catalog.to_dict(include_private_paths=True)
+        if json.loads(index.read_text(encoding="utf-8")) != document:
+            raise StorageLayoutError("Legacy RUN catalog has unsupported or lossy fields")
+        if document.get("schema_version") != 1:
+            raise StorageLayoutError("Unexpected legacy RUN catalog schema")
+        # An abandoned or unknown native run is *not* proof of a terminal
+        # transaction. Historical validation outcomes are never inferred.
+        terminal = {"succeeded", "success", "completed", "failed", "error",
+                    "cancelled", "canceled", "aborted", "blocked", "skipped",
+                    "ok", "done", "finished"}
+        if any(not isinstance(row, dict) or
+               str(row.get("status") or "").lower() not in terminal
+               for row in document["runs"].values()):
+            raise StorageLayoutError("RUN contains active or unknown statuses; resolve owners first")
+        for table in tables:
+            rows = document.get(table)
+            if not isinstance(rows, dict):
+                raise StorageLayoutError("Invalid RUN table: " + table)
+            target = merged.setdefault(table, {})
+            if set(rows) & set(target):
+                raise StorageLayoutError("Colliding RUN catalog entries in " + table)
+            target.update(rows)
+        # Require byte-preserved evidence, not merely matching catalog row counts.
+        if _fingerprint_dir(path) != (fingerprint, count, size):
+            raise StorageLayoutError("RUN source drift during reconciliation preview")
+        records.append({"path": str(path), "digest": fingerprint,
+                        "files": count, "bytes": size})
+    document = {"schema_version": 1, **merged}
+    raw = (json.dumps(document, sort_keys=True, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    return records, raw, {t: len(merged[t]) for t in tables}
+
+
+def reconcile_run_catalog_plan(repo: str | Path) -> dict[str, Any]:
+    """Pure read-only evidence for resolving two disjoint legacy authorities."""
+    root = _repo(repo)
+    blockers = _read_only_activity_blockers(root)
+    if (root / ".devtool").is_symlink():
+        blockers.append("unsafe-local-storage")
+    target = external_family_dir(root, "run-v3")
+    marker = _read_marker(root, "run-v3")
+    if marker is not None:
+        blockers.append("run-catalog-already-migrated")
+    if target.exists() and target.is_symlink():
+        blockers.append("unsafe-canonical-run-root")
+    records: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
+    output_sha = ""
+    pending_recovery = False
+    try:
+        records, raw, counts = _reconciled_catalog(root)
+        output_sha = hashlib.sha256(raw).hexdigest()
+        if _has_payload(target):
+            # A crash after atomic publication but before the marker can be
+            # recovered only from an EXACT expected one-file output.
+            contents = list(target.iterdir())
+            pending_recovery = (len(contents) == 1 and
+                                contents[0].name == "catalog.json" and
+                                contents[0].is_file() and
+                                not contents[0].is_symlink() and
+                                _sha256_file(contents[0]) == output_sha)
+            if not pending_recovery:
+                blockers.append("canonical-run-root-already-populated")
+    except (StorageLayoutError, ValueError, OSError, KeyError, TypeError) as exc:
+        blockers.append("reconciliation-source-refused:" + str(exc))
+    return {"schema": _SCHEMA, "operation": "reconcile-runs-plan",
+            "repository": str(root), "source_catalogs": records,
+            "output_catalog_sha256": output_sha, "merged_counts": counts,
+            "publication_recovery_pending": pending_recovery,
+            "blockers": sorted(set(blockers)), "ready": not blockers,
+            "originals_preserved": True, "mutates": False,
+            "confirmation_required": True}
+
+
+def reconcile_run_catalogs(repo: str | Path, *, confirmed: bool = False,
+                           expected_digests: tuple[str, ...] = ()) -> dict[str, Any]:
+    """Publish a *new* XDG catalog only when both old catalogs are quiescent.
+
+    All original catalogs, attachments, streams and historical receipts remain
+    untouched. Original paths in descriptors retain their historical meaning.
+    The marker switches future *registered* writers to the new authority.
+    A live or unknown native owner must be resolved externally, never guessed.
+    """
+    if not confirmed:
+        raise StorageLayoutError("Dual RUN reconciliation requires --yes")
+    root = _repo(repo)
+    with _migration_lock(root):
+        plan = reconcile_run_catalog_plan(root)
+        if plan["blockers"]:
+            raise StorageLayoutError("RUN reconciliation blocked: " + "; ".join(plan["blockers"]))
+        records, payload, counts = _reconciled_catalog(root)
+        observed = tuple(x["digest"] for x in records)
+        if len(expected_digests) != len(observed) or tuple(expected_digests) != observed:
+            raise StorageLayoutError("RUN reconciliation source digests require explicit exact match")
+        if hashlib.sha256(payload).hexdigest() != plan["output_catalog_sha256"]:
+            raise StorageLayoutError("RUN plan changed before publication")
+        target = external_family_dir(root, "run-v3")
+        # Only an exact byte-identical interrupted publication can resume.
+        # Otherwise no existing destination data can be overwritten.
+        published = bool(plan["publication_recovery_pending"])
+        if _has_payload(target) and not published:
+            raise StorageLayoutError("RUN destination now populated; no overwrite")
+        from .run_store import RunCatalog
+        # Validate merged model before publishing. This must not create state.
+        with tempfile.TemporaryDirectory(prefix=".run-reconcile-", dir=target.parent) as stage:
+            stage_dir = Path(stage)
+            index = stage_dir / "catalog.json"
+            with index.open("wb") as stream:
+                os.fchmod(stream.fileno(), 0o600)
+                stream.write(payload); stream.flush(); os.fsync(stream.fileno())
+            assert RunCatalog.open(stage_dir, create=False).to_dict(include_private_paths=True) == json.loads(payload)
+            if any(_fingerprint_dir(Path(x["path"]))[0] != x["digest"] for x in records):
+                raise StorageLayoutError("RUN source changed before publication")
+            if _read_only_activity_blockers(root):
+                raise StorageLayoutError("Native activity resumed before RUN publication")
+            # Stage and destination share a filesystem: publication is atomic.
+            if not published:
+                if target.exists():
+                    if next(target.iterdir(), None) is not None:
+                        raise StorageLayoutError("RUN destination occupied during publication")
+                    target.rmdir()
+                os.replace(stage_dir, target)
+                folder_fd = os.open(target.parent, os.O_RDONLY)
+                try: os.fsync(folder_fd)
+                finally: os.close(folder_fd)
+            elif target.is_symlink() or _sha256_file(target / "catalog.json") != hashlib.sha256(payload).hexdigest():
+                raise StorageLayoutError("RUN interrupted publication changed; marker withheld")
+        if any(_fingerprint_dir(Path(x["path"]))[0] != x["digest"] for x in records):
+            raise StorageLayoutError("RUN source drift after publication; marker withheld")
+        doc = {"schema": _SCHEMA, "family": "run-v3",
+               "source": records[0]["path"], "source_digest": records[0]["digest"],
+               "reconciled_sources": records, "destination": str(target),
+               "catalog_sha256": hashlib.sha256(payload).hexdigest(),
+               "merged_counts": counts, "originals_preserved": True}
+        _atomic_json(_marker(root, "run-v3"), doc)
+        if run_catalog_dir(root) != target:
+            raise StorageLayoutError("RUN canonical cutover was not established")
+        return {"schema": _SCHEMA, "state": "RECONCILED", "repository": str(root),
+                "destination": str(target), "source_catalogs": records,
+                "catalog_sha256": doc["catalog_sha256"], "merged_counts": counts,
+                "originals_preserved": True, "mutates": True}
+
+
 def _atomic_json(path: Path, document: dict[str, Any]) -> None:
     ensure_private_storage_dir(path.parent)
     if path.is_symlink():
@@ -833,12 +1029,15 @@ def _migrate_storage_locked(root: Path) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Devtool repository storage audit and explicit safe migration")
-    p.add_argument("operation",choices=("audit","plan","ignore","migrate"),nargs="?",default="audit")
+    p.add_argument("operation",choices=("audit","plan","ignore","migrate","reconcile-runs-plan","reconcile-runs"),nargs="?",default="audit")
     p.add_argument("--repo",default=".")
     p.add_argument("--yes",action="store_true",help="Explicitly approve verified non-destructive migration")
+    p.add_argument("--expect-run-digest",action="append",default=[],help="Expected full source fingerprint, in plan order; repeat for both legacy catalogs")
     args = p.parse_args(argv)
     try:
-        out = (migrate_storage(args.repo,confirmed=args.yes) if args.operation=="migrate" else
+        out = (reconcile_run_catalogs(args.repo, confirmed=args.yes, expected_digests=tuple(args.expect_run_digest)) if args.operation=="reconcile-runs" else
+               reconcile_run_catalog_plan(args.repo) if args.operation=="reconcile-runs-plan" else
+               migrate_storage(args.repo,confirmed=args.yes) if args.operation=="migrate" else
                migration_plan(args.repo) if args.operation=="plan" else storage_inventory(args.repo))
         if args.operation == "ignore":
             out = {"repository":out["repository"],

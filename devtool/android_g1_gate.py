@@ -9,9 +9,11 @@ USB, TCP, emulator and root-loopback; the host's real ADB binary is still probed
 separately.  The Gradle producer process is the host's real Gradle executable.
 """
 
+from contextlib import redirect_stdout
 from hashlib import sha256
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -47,11 +49,44 @@ def _is_termux() -> bool:
     return prefix.startswith("/data/data/com.termux/") or "/com.termux/" in sys.executable
 
 
+def _verified_github_hosted_g1() -> bool:
+    """Admit real Gradle only inside the exact hosted G1 job and source.
+
+    Environment claims are execution guards, NOT independent remote evidence.
+    Qualification still verifies GitHub run/attempt and artifact bytes.
+    """
+    env = os.environ
+    if not (env.get("GITHUB_ACTIONS") == "true"
+        and env.get("RUNNER_OS") == "Linux"
+        and env.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+        and env.get("GITHUB_JOB") == "android-g1-hosted"
+        and env.get("GITHUB_REPOSITORY") == "Mikeyphw/devtool"
+        and bool(env.get("GITHUB_WORKSPACE"))
+        and env.get("GITHUB_RUN_ATTEMPT") == "1"
+        and re.fullmatch(r"[0-9a-f]{40}", env.get("GITHUB_SHA", ""))
+        and str(env.get("GITHUB_RUN_ID", "")).isdigit()
+        and int(env.get("GITHUB_RUN_ID", "0")) > 0):
+        return False
+    try:
+        root = Path(__file__).resolve().parents[1]
+        if Path(env.get("GITHUB_WORKSPACE", "")).resolve(strict=True) != root:
+            return False
+        head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, timeout=15, check=False)
+        clean = subprocess.run(["git", "-C", str(root), "status", "--porcelain=v1",
+                                "--untracked-files=all"], capture_output=True,
+                               text=True, timeout=15, check=False)
+        return (head.returncode == 0 and head.stdout.strip() == env["GITHUB_SHA"]
+                and clean.returncode == 0 and not clean.stdout.strip())
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
 def _tool(name: str) -> str:
     allow_test = os.environ.get("DEVTOOL_ANDROID_G1_ALLOW_TEST_HOST") == "1"
     override = str(os.environ.get(f"DEVTOOL_ANDROID_G1_{name.upper()}") or "").strip()
-    if not _is_termux() and not allow_test:
-        raise AndroidG1Error("ANDROID-G1 authoritative process proof requires native Termux")
+    if not _is_termux() and not allow_test and not _verified_github_hosted_g1():
+        raise AndroidG1Error("ANDROID-G1 requires native Termux or source-verified GitHub-hosted G1")
     if override:
         if not allow_test:
             raise AndroidG1Error(f"DEVTOOL_ANDROID_G1_{name.upper()} is test-only and forbidden for authoritative validation")
@@ -283,7 +318,11 @@ def run_gate() -> dict[str, Any]:
 
 def main() -> int:
     try:
-        print(json.dumps(run_gate(), indent=2, sort_keys=True))
+        # Execution/progress is human output, never part of the machine report.
+        # The hosted G1 verifier requires stdout to contain ONE JSON object.
+        with redirect_stdout(sys.stderr):
+            result = run_gate()
+        print(json.dumps(result, indent=2, sort_keys=True))
         return 0
     except Exception as exc:
         print(f"ANDROID-G1 failed: {exc}", file=sys.stderr)
