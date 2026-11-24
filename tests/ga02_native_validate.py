@@ -14,6 +14,9 @@ sys.path.insert(0,str(ROOT))
 import pytest
 TESTS=(
     'tests/test_ga02_installation_relationships.py',
+    'tests/test_ga02_federation_source_guards.py',
+    'tests/test_ga02_live_registry.py',
+    'tests/test_ga02_validator_inventory.py',
     'tests/test_ga01_scoped_auth.py',
     'tests/test_github_app_m4.py',
     'tests/test_federation_app_auth.py',
