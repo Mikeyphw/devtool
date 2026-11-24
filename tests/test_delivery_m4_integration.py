@@ -2,6 +2,9 @@
 from __future__ import annotations
 from types import SimpleNamespace
 import subprocess
+import tempfile
+from pathlib import Path
+from contextlib import contextmanager
 import unittest
 from unittest.mock import patch
 
@@ -30,50 +33,102 @@ class NativeM4DeliveryTests(unittest.TestCase):
         parsed=parser.parse_args(['delivery','session','pr','--id',SESSION])
         self.assertEqual(parsed.auth,'auto')
 
+    @contextmanager
+    def _push_source(self, *, workflow=False):
+        # Exercise the production Git preflight against a real isolated source
+        # rather than bypassing it with a nonexistent /safe/worktree.
+        with tempfile.TemporaryDirectory(prefix='m4-push-source-') as temp:
+            root=Path(temp)
+            def git(*args):
+                return subprocess.run(['git','-C',str(root),*args],check=True,
+                    capture_output=True,text=True).stdout.strip()
+            git('init','-q')
+            (root/'README.md').write_text('base\n')
+            git('add','.')
+            git('-c','user.name=Fixture','-c','user.email=fixture@example.test','commit','-qm','base')
+            old=git('rev-parse','HEAD')
+            path=root/('.github/workflows/check.yml' if workflow else 'data.txt')
+            path.parent.mkdir(parents=True,exist_ok=True)
+            path.write_text('name: check\n' if workflow else 'data\n')
+            git('add','.')
+            git('-c','user.name=Fixture','-c','user.email=fixture@example.test','commit','-qm','change')
+            yield {**BOUND,'repo_root':str(root),'head_sha':git('rev-parse','HEAD')},old
+
+    def _approved_push(self, *, workflow, existing):
+        with self._push_source(workflow=workflow) as (bound,old):
+            source=bound['head_sha']; expected_write='branch_write_workflows' if workflow else 'branch_write'
+            issued=[]; calls=[]; chronology=[]
+            class Provider:
+                def issue(self,slug,capability):
+                    issued.append((slug,capability)); chronology.append('issue:'+capability)
+                    return SimpleNamespace(repository=slug,capability=capability,
+                        public_receipt=lambda: {'mode':'app','repository':slug,'capability':capability})
+            def one_git(root,argv,access,*,timeout):
+                self.assertEqual(root,bound['repo_root'])
+                calls.append((list(argv),access.capability)); chronology.append('git:'+argv[0])
+                if argv[0]=='push':
+                    self.assertEqual(access.capability,expected_write)
+                    self.assertEqual(argv,['push','--porcelain','origin',f'refs/heads/{BRANCH}:refs/heads/{BRANCH}'])
+                    return subprocess.CompletedProcess(argv,0,stdout='',stderr='')
+                self.assertEqual(argv,['ls-remote','--exit-code','origin',f'refs/heads/{BRANCH}'])
+                remote=source if len(calls)==4 else old if existing else None
+                return subprocess.CompletedProcess(argv,0 if remote else 2,
+                    stdout=f'{remote}\trefs/heads/{BRANCH}\n' if remote else '',stderr='')
+            def journal(*a,**kw):
+                chronology.append('intent')
+                return {'new':True,'intent_id':'a'*32}
+            def diagnostic(*a,**kw): chronology.append('diagnostic')
+            def confirmation(*a,**kw): chronology.append('confirm')
+            with (patch.object(delivery_github,'_checked',return_value=bound),
+                  patch('devtool.github_app.AppInstallationProvider.from_environment',return_value=Provider()),
+                  patch('devtool.github_app.run_git_authenticated',side_effect=one_git),
+                  patch.object(delivery_github,'record_intent',side_effect=journal) as intent,
+                  patch.object(delivery_github,'record_push_diagnostic',side_effect=diagnostic) as diag,
+                  patch.object(delivery_github,'confirm_intent',side_effect=confirmation) as confirmed):
+                result=delivery_github.push(SESSION,yes=True,auth='app')
+            self.assertEqual(result['state'],'PUSH_VERIFIED')
+            self.assertEqual(result['head_sha'],source)
+            self.assertIs(result['workflow_change_permission_required'],workflow)
+            self.assertEqual(result['credential']['capability'],expected_write)
+            self.assertEqual(issued,[('Mikeyphw/devtool','repository_read'),('Mikeyphw/devtool',expected_write)])
+            self.assertEqual([(a[0],cap) for a,cap in calls],[('ls-remote','repository_read'),('ls-remote',expected_write),('push',expected_write),('ls-remote',expected_write)])
+            self.assertEqual(chronology,['issue:repository_read','git:ls-remote','issue:'+expected_write,'git:ls-remote','intent','git:push','diagnostic','git:ls-remote','confirm'])
+            self.assertEqual(intent.call_count,1)
+            diag.assert_called_once_with(SESSION,'a'*32,'GIT_EXIT_ZERO',0,state_root=None)
+            confirmed.assert_called_once_with(SESSION,'push',f'Mikeyphw/devtool:refs/heads/{BRANCH}:{source}',{'head_sha':source},state_root=None)
+
     def test_app_push_runs_native_journal_once_and_reverifies_head(self):
-        class Access:
-            repository='Mikeyphw/devtool'
-            def public_receipt(self):
-                return {'mode':'app','repository':self.repository,'capability':'branch_write'}
-        class Provider:
-            def issue(self,slug,capability):
-                assert slug=='Mikeyphw/devtool'
-                assert capability=='branch_write'
-                return Access()
-        sequence=[2,0,0]  # verified absent remote, Git push, matching remote
-        calls=[]
-        def one_git(root, argv, access, *, timeout):
-            calls.append(argv)
-            status=sequence.pop(0)
-            return subprocess.CompletedProcess(argv,status,
-                stdout=(SHA+'\trefs/heads/'+BRANCH+'\n') if len(calls)==3 else '',stderr='')
-        with (patch.object(delivery_github,'_checked',return_value=BOUND),
-              patch('devtool.github_app.AppInstallationProvider.from_environment',return_value=Provider()),
-              patch('devtool.github_app.run_git_authenticated',side_effect=one_git),
-              patch.object(delivery_github,'record_intent',return_value={'new':True}) as intent,
-              patch.object(delivery_github,'confirm_intent') as confirmed):
-            result=delivery_github.push(SESSION,yes=True,auth='app')
-        self.assertEqual(result['state'],'PUSH_VERIFIED')
-        self.assertEqual(result['credential']['capability'],'branch_write')
-        self.assertEqual([row[0] for row in calls],['ls-remote','push','ls-remote'])
-        self.assertEqual(sum('--force' in row for row in calls),0)
-        self.assertEqual(intent.call_count,1)
-        self.assertEqual(confirmed.call_count,1)
+        for workflow in (False,True):
+            for existing in (False,True):
+                with self.subTest(workflow=workflow,existing=existing):
+                    self._approved_push(workflow=workflow,existing=existing)
 
     def test_unapproved_app_push_cannot_write_or_journal_intent(self):
-        class Access:
-            def public_receipt(self): return {'mode':'app'}
-        class Provider:
-            def issue(self,repo,capability): return Access()
-        with (patch.object(delivery_github,'_checked',return_value=BOUND),
-              patch('devtool.github_app.AppInstallationProvider.from_environment',return_value=Provider()),
-              patch('devtool.github_app.run_git_authenticated',return_value=
-                    subprocess.CompletedProcess([],2,stdout='',stderr='')) as git,
-              patch.object(delivery_github,'record_intent') as intent):
-            result=delivery_github.push(SESSION,yes=False,auth='app')
-        self.assertEqual(result['state'],'PUSH_REQUIRES_APPROVAL')
-        self.assertEqual(git.call_count,1)
-        intent.assert_not_called()
+        for workflow in (False,True):
+            with self.subTest(workflow=workflow), self._push_source(workflow=workflow) as (bound,old):
+                issued=[]; calls=[]
+                class Provider:
+                    def issue(self,repo,capability):
+                        issued.append((repo,capability))
+                        if capability!='repository_read': raise AssertionError('write credential issued without approval')
+                        return SimpleNamespace(repository=repo,capability=capability)
+                def probe(root,argv,credential,*,timeout):
+                    calls.append(argv)
+                    self.assertEqual(credential.capability,'repository_read')
+                    self.assertEqual(argv[0],'ls-remote')
+                    return subprocess.CompletedProcess(argv,2,stdout='',stderr='')
+                with (patch.object(delivery_github,'_checked',return_value=bound),
+                      patch('devtool.github_app.AppInstallationProvider.from_environment',return_value=Provider()),
+                      patch('devtool.github_app.run_git_authenticated',side_effect=probe),
+                      patch.object(delivery_github,'record_intent') as intent,
+                      patch.object(delivery_github,'record_push_diagnostic') as diagnostic,
+                      patch.object(delivery_github,'confirm_intent') as confirm):
+                    result=delivery_github.push(SESSION,yes=False,auth='app')
+                self.assertEqual(result['state'],'PUSH_REQUIRES_APPROVAL')
+                self.assertEqual(issued,[('Mikeyphw/devtool','repository_read')])
+                self.assertEqual(len(calls),2)
+                self.assertIs(result['workflow_write_scope_required'],workflow)
+                intent.assert_not_called(); diagnostic.assert_not_called(); confirm.assert_not_called()
 
     def test_app_pr_scopes_upstream_and_head_installations_separately(self):
         item={**BOUND,'repository':'Mikeyphw/fork','head_repository':'Mikeyphw/fork',

@@ -341,12 +341,18 @@ _VSTEST_SUMMARY_RE = re.compile(
     r"Total tests:\s*(\d+).*?Passed:\s*(\d+).*?Failed:\s*(\d+).*?Skipped:\s*(\d+)",
     re.IGNORECASE | re.DOTALL,
 )
+# Only complete test-run terminal summaries qualify as numerical evidence.
+# A contract description like "PASS UI-05 failed hook route" is not a pytest run.
 _PYTEST_SUMMARY_RE = re.compile(
-    r"(?:(?P<failed>\d+)\s+failed(?:,\s*)?)?"
-    r"(?:(?P<passed>\d+)\s+passed(?:,\s*)?)?"
-    r"(?:(?P<skipped>\d+)\s+skipped)?",
-    re.IGNORECASE,
+    r"^\s*(?:=+\s*)?(?P<counts>\d+\s+(?:passed|failed|skipped|errors?|xfailed|xpassed|deselected|warnings?)"
+    r"(?:,\s*\d+\s+(?:passed|failed|skipped|errors?|xfailed|xpassed|deselected|warnings?))*)"
+    r"(?:\s+in\s+\d+(?:\.\d+)?s)?\s*(?:=+\s*)?$",
+    re.IGNORECASE | re.MULTILINE,
 )
+_PYTEST_COUNT_RE = re.compile(r"(\d+)\s+(passed|failed|skipped|errors?)\b", re.IGNORECASE)
+_UNITTEST_RUN_RE = re.compile(r"^Ran\s+(\d+)\s+tests?\s+in\s+\S+\s*$", re.MULTILINE)
+_UNITTEST_VERDICT_RE = re.compile(r"^\s*(OK(?:\s*\([^\n]*\))?|FAILED\s*\([^\n]*\))\s*$", re.MULTILINE)
+_TERMINAL_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 _COMMIT_PATTERNS = (
     re.compile(r"^\[[^\]\n]*?\s([0-9a-f]{7,40})\]\s", re.IGNORECASE | re.MULTILINE),
     re.compile(r"^\[detached HEAD\s+([0-9a-f]{7,40})\]\s", re.IGNORECASE | re.MULTILINE),
@@ -433,6 +439,7 @@ def _extract_test_totals(results: list[OperationResult]) -> tuple[int, int, int,
     output = "\n".join(result.output or "" for result in results if "test" in result.name.lower())
     if not output:
         output = "\n".join(result.output or "" for result in results)
+    output = _TERMINAL_ANSI_RE.sub("", output)
 
     dotnet = list(_DOTNET_TEST_SUMMARY_RE.finditer(output))
     if dotnet:
@@ -450,21 +457,48 @@ def _extract_test_totals(results: list[OperationResult]) -> tuple[int, int, int,
         skipped = sum(int(match.group(4)) for match in vstest)
         return passed, failed, skipped, total
 
-    # A validation gate may execute several pytest commands.  Treat each pytest
-    # terminal summary as an independent test run and aggregate them; using only
-    # the first match under-reports multi-command gates such as TEST-G1/G2.
-    pytest_matches = [
-        match
-        for match in _PYTEST_SUMMARY_RE.finditer(output)
-        if any(match.group(name) for name in ("failed", "passed", "skipped"))
-    ]
-    if pytest_matches:
-        failed = sum(_safe_int(match.group("failed")) for match in pytest_matches)
-        passed = sum(_safe_int(match.group("passed")) for match in pytest_matches)
-        skipped = sum(_safe_int(match.group("skipped")) for match in pytest_matches)
+    # Parse complete pytest *terminal lines*, not substrings inside test names.
+    pytest_lines = list(_PYTEST_SUMMARY_RE.finditer(output))
+    if pytest_lines:
+        passed = failed = skipped = 0
+        for line in pytest_lines:
+            counts = _PYTEST_COUNT_RE.findall(line.group('counts'))
+            for raw, kind in counts:
+                if kind.lower() == 'passed':
+                    passed += int(raw)
+                elif kind.lower() == 'skipped':
+                    skipped += int(raw)
+                else:
+                    failed += int(raw)
         return passed, failed, skipped, passed + failed + skipped
-    return None
 
+    # Python unittest prints a paired Ran N tests / OK or FAILED footer. The
+    # result line must occur before the next run footer, never in arbitrary logs.
+    runs = list(_UNITTEST_RUN_RE.finditer(output))
+    if runs:
+        total = passed = failed = skipped = 0
+        for i, match in enumerate(runs):
+            tail = output[match.end():runs[i+1].start() if i+1 < len(runs) else len(output)]
+            verdict = _UNITTEST_VERDICT_RE.search(tail)
+            if verdict is None or verdict.start() > 2000:
+                # Partial stream: don't present incomplete counts as success.
+                return None
+            n = int(match.group(1))
+            line = verdict.group(1)
+            metrics = {key: int(value) for key, value in
+                       re.findall(r"(failures|errors|skipped)=(\d+)", line)}
+            bad = metrics.get('failures', 0) + metrics.get('errors', 0)
+            nskip = metrics.get('skipped', 0)
+            if bad + nskip > n:
+                return None
+            if line.startswith('OK') and bad:
+                return None
+            total += n
+            failed += bad
+            skipped += nskip
+            passed += n - bad - nskip
+        return passed, failed, skipped, total
+    return None
 
 def _extract_go_package_totals(results: list[OperationResult]) -> tuple[int, int, int, int, int] | None:
     package_sets = []

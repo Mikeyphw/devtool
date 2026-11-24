@@ -2961,6 +2961,11 @@ def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentPars
     exclusive_tasks = _exclusive_validation_task_values(args)
     if exclusive_tasks and bool(getattr(args, "static_validate", False)):
         parser.error("--task defines an executable native-task plan and cannot be combined with --static-validate.")
+    if bool(getattr(args, "static_validate", False)) and (
+        getattr(args, "validate", False) or getattr(args, "validate_only", False)
+        or getattr(args, "defer_validate", False) or getattr(args, "no_validate", False)
+    ):
+        parser.error("--static-validate is an exclusive one-script validation mode.")
     if args.command in {"validate", "v"}:
         scope = str(getattr(args, "validate_scope", "") or "")
         if scope and scope not in {"overlay", "overlays"}:
@@ -2992,8 +2997,13 @@ def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentPars
         parser.error("--no-commit cannot be combined with --commit.")
     if getattr(args, "no_rollback_on_failure", False) and getattr(args, "rollback_on_failure", False):
         parser.error("--rollback-on-failure cannot be combined with --no-rollback-on-failure.")
-    if (args.skip_restore or args.skip_build or args.skip_test) and not (args.validate or args.validate_only or deferred):
-        parser.error("--skip-restore, --skip-build, and --skip-test require --validate, --validate-only, or --defer-validate.")
+    # Schema-3 manifest defaults can set all three skip flags during an
+    # explicitly requested --static-validate. Rejecting them would prevent the
+    # one required source validator from executing at all (DT-34).
+    if (args.skip_restore or args.skip_build or args.skip_test) and not (
+        args.validate or args.validate_only or deferred or bool(getattr(args, "static_validate", False))
+    ):
+        parser.error("--skip-restore, --skip-build, and --skip-test require a validation mode.")
     if exclusive_tasks and not (args.validate or args.validate_only or deferred):
         parser.error("--task on apply requires --validate, --validate-only, or --defer-validate.")
     if args.validate_only and args.validate:
