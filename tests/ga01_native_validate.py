@@ -12,6 +12,11 @@ sys.path.insert(0,str(ROOT))
 import pytest
 
 TESTS=(
+    'tests/test_dt_hotfix_cli.py',
+    'tests/test_dt_hotfix_m6.py',
+    'tests/test_dt_hotfix_push_scope.py',
+    'tests/test_qualification_workflows.py',
+    'tests/test_native_delivery_contract_v3.py',
     'tests/test_ga01_scoped_auth.py',
     'tests/test_ga01_managed_pr_writes.py',
     'tests/test_github_app_m4.py',
