@@ -35,6 +35,7 @@ _PERMISSIONS = {
     'pr_maintain': {'pull_requests': 'write', 'contents': 'read'},
     'status_write': {'statuses': 'write', 'contents': 'read'},
     'branch_write': {'contents': 'write'},
+    'branch_write_workflows': {'contents': 'write', 'workflows': 'write'},
     'checks_read': {'actions': 'read', 'checks': 'read', 'contents': 'read'},
     'actions_dispatch': {'actions': 'write', 'contents': 'read'},
 }
@@ -386,13 +387,13 @@ def _check_git_argv(argv: list[str], capability: str) -> None:
         raise GitHubAppError('APP_GIT_FETCH_SCOPE_OR_ARGUMENTS_REFUSED')
     if (len(argv) == 4 and argv[:3] == ['ls-remote', '--exit-code', 'origin']
             and _safe_branch_ref(argv[3])):
-        if capability not in ('repository_read', 'branch_write'):
+        if capability not in ('repository_read', 'branch_write', 'branch_write_workflows'):
             raise GitHubAppError('APP_GIT_READ_SCOPE_OR_ARGUMENTS_REFUSED')
         return
     if (len(argv) == 4 and argv[:3] == ['push', '--porcelain', 'origin']
             and argv[3].count(':') == 1):
         source, destination = argv[3].split(':')
-        if source == destination and _safe_branch_ref(source) and capability == 'branch_write':
+        if source == destination and _safe_branch_ref(source) and capability in ('branch_write', 'branch_write_workflows'):
             return
     raise GitHubAppError('APP_GIT_SCOPE_OR_ARGUMENTS_REFUSED')
 

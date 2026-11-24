@@ -113,6 +113,25 @@ def run_delivery_command(args: Any) -> int:
                             log_client=GitHubActionsClient(token)
                         return fetch_selected_run_logs(log_client,repo_name,run)
                     rich_monitor.log_fetcher=_fetch_logs
+                # Once-only M7 GET/read probe. Never promote a CI verdict from
+                # credential metadata; failure only affects the evidence pane.
+                credential_health = None
+                if rich_monitor.enabled and str(getattr(args, 'auth', 'auto')) == 'app':
+                    try:
+                        from .m7_credentials import inspect_app
+                        health = inspect_app(repo_name, probe=True)
+                        credential_health = {
+                            'auth_mode': 'app',
+                            'installation_id': health.get('installation_id'),
+                            'repository_coverage': health.get('repository_selection'),
+                           'status': health.get('status'),
+                            'reason': health.get('reason'),
+                            'identity_verified': health.get('identity_verified') is True,
+                            'effective_read_verified': health.get('effective_read_verified') is True,
+                        }
+                    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+                        credential_health = {'auth_mode': 'app', 'status': 'UNVERIFIED',
+                                             'reason': 'M7_DIAGNOSTIC_UNAVAILABLE'}
                 def progress(s:dict[str,Any])->None:
                     if rich_monitor.enabled:
                         # Reuse identities from the *already read* native
@@ -124,8 +143,15 @@ def run_delivery_command(args: Any) -> int:
                                                   ('session_id','id')):
                             if display not in view and bound.get(canonical) is not None:
                                 view[display]=bound[canonical]
-                        if isinstance(bound.get('credential_health'),dict):
-                            view.setdefault('credential_health',bound['credential_health'])
+                        # S6's validated session journal is the only authority
+                        # for *historical* events; don't fabricate live events.
+                        stream = bound.get('event_stream')
+                        if isinstance(stream, dict) and stream.get('source_sha') == bound.get('head_sha'):
+                            events = stream.get('events')
+                            if isinstance(events, list) and len(events) <= 160:
+                                view.setdefault('events', events)
+                        if isinstance(credential_health, dict):
+                            view.setdefault('credential_health', credential_health)
                         rich_monitor.observe(view)
                         return
                     if bool(getattr(args,'json',False) or getattr(args,'_devtool_json',False)):
