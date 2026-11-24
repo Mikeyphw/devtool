@@ -293,6 +293,8 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
     for row in (provided[-80:] if focus=='events' else provided[-(2 if width<60 else 4):]):
         stamp = _facts(row,'timestamp','observed_at','at')
         line = _facts(row,'message','name','phase','type','kind')
+        if row.get('historical') is True:
+            line = 'saved: ' + str(line or 'event')
         events.append(_row(safe(stamp) if stamp else 'time unrecorded',safe(line)))
     if kind=='ci' and state=='CHECKS_FAILED':
         diagnosis = source.get('diagnosis') if isinstance(source.get('diagnosis'),Mapping) else {}
@@ -342,6 +344,7 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
     if credential:
         # Only explicitly supplied *public* fields from existing M4 diagnostics.
         for key in ('auth_mode','app_name','installation_id','repository_coverage',
+                    'status','reason','identity_verified','effective_read_verified',
                     'required_capability','granted_capability','expiry_state','permission_drift',
                     'fork_access','base_access','authenticated','authorized_for_operation',
                     'remote_verified','required_ci_qualified'):

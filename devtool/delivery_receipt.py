@@ -18,6 +18,8 @@ _LIFECYCLE = {
     "session_started": "source",
     "mutation_intent": "remote-intent",
     "mutation_confirmed": "remote-reconciliation",
+    "push_negative_reconciliation": "remote-reconciliation",
+    "push_attempt_result": "remote-attempt",
     "pr_observed": "pull-request",
     "ci_observed": "ci",
 }
@@ -68,6 +70,10 @@ def build_stream(record: Mapping[str, Any]) -> dict[str, Any]:
         if kind in ("mutation_intent", "mutation_confirmed"):
             row["operation"] = _label(e.get("operation"), 32)
             row["state"] = "unresolved" if kind == "mutation_intent" else "confirmed"
+        elif kind == "push_negative_reconciliation":
+            row["state"] = "not-applied-at-observation"
+        elif kind == "push_attempt_result":
+            row["state"] = _label(e.get("classification"), 50)
         elif kind == "ci_observed":
             row["state"] = _label(e.get("state"), 50)
         elif kind == "pr_observed":
@@ -148,9 +154,9 @@ def build_receipt(status: Mapping[str, Any]) -> dict[str, Any]:
                                     and ci.get("checks_qualified") is True)
     source_matching = status.get("source_binding") == "matching"
     unresolved = [i.get("operation") for i in status.get("intents", [])
-                  if i.get("state") != "confirmed"]
+                  if i.get("state") not in ("confirmed", "reconciled_no_remote_change")]
     resumable = status.get("resumable") is True and source_matching and not unresolved
-    if unresolved or not source_matching:
+    if unresolved or not source_matching or status.get('resumable') is not True:
         next_action = "Reconcile source drift and uncertain intents; do not retry mutations"
     elif verified_at_last_observation:
         next_action = "Review independent release gates; no automatic merge or publish"
