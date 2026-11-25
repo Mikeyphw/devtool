@@ -21,3 +21,5 @@ jobs:
         run: python -B -m pytest -q tests/test_launcher_contract_v3.py tests/test_launcher_runtime_compat.py tests/test_g0c3_launcher_compatibility.py
       - name: Generated parser and surfaces parity
         run: python -m devtool core surfaces --check share/core-generated
+      - name: Complete human and agent guide parity
+        run: python -B tools/generate_complete_feature_guides.py --check

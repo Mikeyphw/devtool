@@ -1,9 +1,9 @@
 # Devtool — One integrated execution roadmap
 
-**Roadmap:** `DEVTOOL-UNIFIED/1.0` · **Planning revision:** `1.5` · **As of:** 2026-11-25 UTC  
-**Repository:** `Mikeyphw/devtool` · **Main:** `9afd3368e19eb6f18f180a765de596e00463a8fb`  
-**Status:** **W2 CANDIDATE / GIT ADOPTION PENDING**. It supersedes the **execution ordering and presentation** of the v1.1 Library design, **not** its original 24 overlay IDs, promise inventory, acceptance history, or Git commits.  
-**Authoritative committed roadmap:** `docs/DEVTOOL_NATIVE_OVERLAY_DELIVERY_V3_ROADMAP.md` on `main` (historical milestone statuses may be stale). This candidate document is not yet present on verified `main`; adopt only through PR #49.  
+**Roadmap:** `DEVTOOL-UNIFIED/1.0` · **Planning revision:** `1.6` · **As of:** 2026-11-25 UTC  
+**Repository:** `Mikeyphw/devtool` · **Verified base main:** `fecbe4696e4b32f07b6fca35ebe5646733d74df8`  
+**Status:** **W2 MERGED / CI24 REPAIR ACCEPTANCE PENDING**. It supersedes the **execution ordering and presentation** of the v1.1 Library design, **not** its original 24 overlay IDs, promise inventory, acceptance history, or Git commits.  
+**Authoritative committed roadmap:** `docs/DEVTOOL_NATIVE_OVERLAY_DELIVERY_V3_ROADMAP.md` on `main` (historical milestone statuses may be stale). Revision 1.5 was adopted through merged PR #49. Revision 1.6 records the independently observed merge and the forward-only guide correction; it does not qualify the correction itself.  
 **User operating contract:** `AGENT-OPERATIONS-DEVTOOL` v1.25, SHA-256 `850a858e863bb2715da7f9e09bd26ede3d7f81231f7da05db3b381b6cfb7df76` (read in full and byte-verified).  
 **Canonical bug ledger:** `/Devtool/DEVTOOL_BUG_LEDGER_cg.md`, SHA-256 `397af7992d5e23d2afd4f5f0f8c918ce1f7d6acd1ee7eecc1fa438c0bcae18c3` (read in full; historical dispositions require current-source retriage).  
 **Prior Library revision:** `DEVTOOL_UNIFIED_FINAL_ROADMAP_20261123_cg(1).md`, revision 1.1, SHA-256 `88ffd2c8636df386c15931f944da9429cac11379152a855e01a3c2043f6dfcaa`; this revision retains their complete promise wording and IDs in Appendix A.
@@ -47,7 +47,7 @@ From Termux/Ubuntu, a user selects an actual repository and checkout, sees a tru
 
 ## 2. Source reality and progress — verified 2026-11-25
 
-13/24 original overlay labels are merged: M0–M8 and GA-00–GA-03. This is merged-source coverage, not full independent acceptance. GA-03 PR #51 merge `9afd3368e19eb6f18f180a765de596e00463a8fb`, tree `b15c5435662ddfaf87e0f957a8b691679deda4dd`; W1 source `a86456137c83622679a85c43f4e65d747b51c88c`, required CI 6/6, CI24 24/24 (run 45634363584 attempt 1), Q01 live sandbox checks separately qualified. GA-01 PR #46 and GA-02 PR #48 were merged; historical receipt coverage remains source-bound. Remaining original acceptance counts INCONCLUSIVE. B0 PR #49 is open; this revision is a candidate until its independent merge is verified. No protected signing/release/device acceptance is implied.
+13/24 original overlay labels are merged: M0–M8 and GA-00–GA-03. This is merged-source coverage, not full independent acceptance. GA-03 PR #51 merge `9afd3368e19eb6f18f180a765de596e00463a8fb`, tree `b15c5435662ddfaf87e0f957a8b691679deda4dd`; W1 source `a86456137c83622679a85c43f4e65d747b51c88c`, required CI 6/6, CI24 24/24 (run 45634363584 attempt 1), Q01 live sandbox checks separately qualified. GA-01 PR #46 and GA-02 PR #48 were merged; historical receipt coverage remains source-bound. Remaining original acceptance counts INCONCLUSIVE. B0 PR #49 merged at `fecbe4696e4b32f07b6fca35ebe5646733d74df8`, tree `7b5f87068e061dd81d972592fbf68b20f83fe542`. W2 source `4652ae83f4c1db8ebdd739ed2f0f2050648e98ba` passed the six required workflows but failed CI24 run 45672206599 attempt 1 (23/24 shards successful; shard 6 guide-parity test failed; aggregation failed). Preserve the merged native session and PR history. A forward correction of both generated feature guides and the early native/hosted guide gate must qualify on its own exact source before W2 acceptance. No protected signing/release/device acceptance is implied.
 
 ## 3. Integrated delivery batches — new order, **no new overlays**
 

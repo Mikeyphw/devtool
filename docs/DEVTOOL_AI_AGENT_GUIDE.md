@@ -2246,6 +2246,9 @@ Find or explicitly create one source-bound draft PR
 | `--auth AUTH` | GitHub authentication source Choices: auto, env, gh, none, app |
 | `--yes` | Explicitly approve remote mutation |
 | `--json` | Machine-readable output |
+| `--recover-intent RECOVER_INTENT` | Exact original uncertain PR creation intent ID; authorize only one successor |
+| `--prior-process-finished` | Acknowledge the original PR creation process has exited |
+| `--acknowledge-original-request` | Acknowledge exact original title/body when legacy intent lacks request digest |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -6007,6 +6010,7 @@ Guided preview or --yes release provisioning
 | `--signing-identity SIGNING_IDENTITY` | Existing Devtool signing identity |
 | `--signing-target SIGNING_TARGET` | Target with release signing profile |
 | `--rotate-secrets` | Explicitly replace existing GitHub signing secrets from the Devtool signer |
+| `--approval-profile APPROVAL_PROFILE` | Explicit signing approval policy; defaults to private policy or multi-reviewer Choices: multi-reviewer, single-owner |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
@@ -6023,6 +6027,7 @@ Check protected ref, signing secret names and private policy
 | `--policy POLICY` | Private external release policy path (default ~/.config/devtool/release-policy.json) |
 | `--signing-identity SIGNING_IDENTITY` | Accepted by this command. |
 | `--signing-target SIGNING_TARGET` | Accepted by this command. |
+| `--approval-profile APPROVAL_PROFILE` | Explicit signing approval policy; defaults to private policy or multi-reviewer Choices: multi-reviewer, single-owner |
 
 Agent note: machine-friendly controls on this command include `--json`.
 
