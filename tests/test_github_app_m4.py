@@ -80,6 +80,28 @@ class AppM4Tests(unittest.TestCase):
         self.assertNotIn('ghs_FAKE_TOKEN',repr(access))
         self.assertNotIn('ghs_FAKE_TOKEN',repr(access.public_receipt()))
 
+    def test_scoped_token_cannot_grant_excess_permission(self):
+        for extra in ({'contents':'write'}, {'actions':'write'}, {'metadata':'write'},
+                      {'pull_requests':'read'}, {'contents':True}):
+            class Excess(HTTP):
+                def request(self, method, path, credential, payload=None):
+                    result=super().request(method,path,credential,payload)
+                    if method=='POST':result['permissions']={**result['permissions'],**extra}
+                    return result
+            http=Excess()
+            with self.subTest(extra=extra), self.assertRaisesRegex(app.GitHubAppError,'REPOSITORY_OR_PERMISSION_UNVERIFIED'):
+                self.provider(http).issue('Mikeyphw/devtool','repository_read')
+            self.assertEqual(len(http.calls),3)  # Never use the rejected token.
+
+    def test_implicit_metadata_read_is_allowed(self):
+        class Metadata(HTTP):
+            def request(self, method, path, credential, payload=None):
+                result=super().request(method,path,credential,payload)
+                if method=='POST':result['permissions']={**result['permissions'],'metadata':'read'}
+                return result
+        self.assertEqual(self.provider(Metadata()).issue('Mikeyphw/devtool','repository_read').permissions,
+                         {'contents':'read','metadata':'read'})
+
     def test_cached_only_until_safe_refresh_margin(self):
         http=HTTP()
         clock=[int(time.time())]

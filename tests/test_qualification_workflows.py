@@ -474,3 +474,23 @@ def test_ci24_failed_receipt_write_preserves_original_native_exception(tmp_path,
     with pytest.raises(GitHubActionsError,match='24-shard run failed'):
         q.ci24_resume(root,client=api,slug=SLUG)
     assert 'CI24_OBSERVATION_FAILURE_RECEIPT_WRITE_FAILED' in capsys.readouterr().err
+
+
+def test_ci24_gateway_exhaustion_preserves_dispatch_and_verification(tmp_path,monkeypatch):
+    from devtool.github_actions import GitHubGatewayReadUnavailable
+    root=fixture_source(tmp_path,monkeypatch)
+    api,_,requests=start(root,monkeypatch)
+    api.remote_status='in_progress'; api.remote_conclusion=None
+    q.ci24_resume(root,client=api,slug=SLUG)
+    prior=q._load(root,SHA,'ci24')
+    original=api.get_run
+    def unavailable(*a,**kw):raise GitHubGatewayReadUnavailable(503)
+    monkeypatch.setattr(api,'get_run',unavailable)
+    with pytest.raises(GitHubGatewayReadUnavailable):q.ci24_resume(root,client=api,slug=SLUG)
+    observed=q._load(root,SHA,'ci24')
+    assert observed['last_observation']['error_code']=='CI24_PROVIDER_GATEWAY_UNAVAILABLE'
+    for key in ('state','verification','run_id','source_sha'):
+        assert observed[key]==prior[key]
+    monkeypatch.setattr(api,'get_run',original)
+    again=q.ci24_resume(root,client=api,slug=SLUG)
+    assert again['state']=='WAITING_REMOTE' and requests==[1]

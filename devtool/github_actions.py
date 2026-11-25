@@ -28,6 +28,40 @@ class GitHubActionsError(RuntimeError):
     """Actionable errors with no token or response-body disclosure."""
 
 
+_TRANSIENT_GATEWAY_CODES = frozenset({502, 503, 504})
+_GATEWAY_RETRY_DELAYS = (0.25, 0.5)
+
+
+class GitHubGatewayReadUnavailable(GitHubActionsError):
+    """Read-only retry budget exhausted; never evidence of absence or success."""
+    def __init__(self, status: int):
+        self.status = status
+        self.attempts = len(_GATEWAY_RETRY_DELAYS) + 1
+        super().__init__(f"GitHub API HTTP {status} (read-only retry budget exhausted after {self.attempts} attempts)")
+
+
+def retry_gateway_read(request: Request, operation: Callable[[], Any], *,
+                       retry_other: Callable[[BaseException], bool] | None = None) -> Any:
+    """At most three attempts of the identical GET; never replay a write.
+
+    urllib raises HTTPError for non-200 responses. The callback may also
+    explicitly raise HTTPError for a non-200 response from another opener.
+    Each attempt keeps the existing per-request timeout and origin guards.
+    """
+    for attempt in range(len(_GATEWAY_RETRY_DELAYS) + 1):
+        try:
+            return operation()
+        except (HTTPError, URLError, TimeoutError, OSError) as exc:
+            gateway = isinstance(exc, HTTPError) and exc.code in _TRANSIENT_GATEWAY_CODES
+            if request.get_method() != 'GET' or attempt == len(_GATEWAY_RETRY_DELAYS):
+                raise
+            if not gateway and not (attempt == 0 and retry_other is not None and retry_other(exc)):
+                raise
+            if isinstance(exc, HTTPError):
+                exc.close()
+            time.sleep(_GATEWAY_RETRY_DELAYS[attempt] if gateway else 0.1)
+
+
 class GitHubDispatchOutcomeUnknown(GitHubActionsError):
     """A dispatch POST might have succeeded; callers must not auto-retry."""
 
@@ -184,15 +218,21 @@ class GitHubActionsClient:
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
         req = Request(path, headers=headers, method="GET")
-        try:
+        def read_once():
             with self._opener.open(req, timeout=self.timeout) as response:
                 status = int(response.status)
+                if status in _TRANSIENT_GATEWAY_CODES:
+                    raise HTTPError(req.full_url, status, 'gateway unavailable', {}, None)
                 if status != 200:
                     raise GitHubActionsError(f"GitHub API returned HTTP {status}")
-                data = response.read(_MAX_BODY_BYTES + 1)
-                response_headers = dict(response.headers.items())
+                return response.read(_MAX_BODY_BYTES + 1), dict(response.headers.items())
+        try:
+            data, response_headers = retry_gateway_read(req, read_once)
         except HTTPError as exc:
             status = int(exc.code)
+            if status in _TRANSIENT_GATEWAY_CODES:
+                exc.close()
+                raise GitHubGatewayReadUnavailable(status) from None
             try:
                 remaining = str(exc.headers.get("X-RateLimit-Remaining", ""))
             except Exception:

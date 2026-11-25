@@ -27,7 +27,7 @@ from .actions_artifacts import artifact_list, download_artifact, verify_download
 from .g3r_evidence_gate import evaluate as verify_native
 from .final_seal import final_seal_report, FINAL_SEAL_SCHEMA_VERSION
 from .g3r_evidence_generate import generate as generate_native
-from .github_actions import GitHubActionsClient, GitHubActionsError, resolve_repository, resolve_token
+from .github_actions import GitHubActionsClient, GitHubActionsError, GitHubGatewayReadUnavailable, resolve_repository, resolve_token
 from .remed_r04b_fixed_point import G3R_REAL_SUBSTRATE_CARRY
 
 WORKFLOW = 'devtool-full-repository-pytest.yml'
@@ -458,6 +458,8 @@ def _ci24_evaluate(client: GitHubActionsClient, slug: str, root: Path, record: d
 
 def _ci24_failure_code(exc: BaseException) -> str:
     """Bounded actionable classification; never persist provider text or secrets."""
+    if isinstance(exc, GitHubGatewayReadUnavailable):
+        return 'CI24_PROVIDER_GATEWAY_UNAVAILABLE'
     message = str(exc)
     failed = re.fullmatch(r'GitHub 24-shard run failed: (failure|cancelled|timed_out|action_required|neutral|skipped|stale|startup_failure)', message)
     if failed:

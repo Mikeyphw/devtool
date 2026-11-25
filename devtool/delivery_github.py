@@ -25,7 +25,7 @@ from .delivery_session import (
     record_pr_observation, resume, status,
 )
 from .github_actions import (
-    API_ORIGIN, API_VERSION, GitHubActionsClient, GitHubActionsError,
+    API_ORIGIN, API_VERSION, GitHubActionsClient, GitHubActionsError, GitHubGatewayReadUnavailable,
     _slug, resolve_token,
 )
 
@@ -517,6 +517,8 @@ def pr(session_id: str, *, yes: bool = False, title: str = '',
 def _pr_merge_sha(client: GitHubActionsClient, slug: str, number: int) -> str | None:
     try:
         ref = client._get(f'/repos/{slug}/git/ref/pull/{number}/merge')
+    except GitHubGatewayReadUnavailable:
+        raise  # exhausted read budget is not proof that a merge ref is absent
     except GitHubActionsError:
         return None
     sha = (ref.get('object') or {}).get('sha')
@@ -631,7 +633,8 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
         raise DeliverySessionError('Saved PR provenance is stale')
     registrar = None
     expectations: dict[str, str] = {}
-    def provider_unavailable(phase: str, poll: int) -> dict[str, Any]:
+    snapshots = []
+    def provider_unavailable(phase: str, poll: int, exc=None) -> dict[str, Any]:
         summary = {'state':'REGISTRATION_PROVIDER_UNAVAILABLE',
                    'checks_qualified':False, 'exact_run_evidence':None,
                    'source_sha':item['head_sha'], 'required':list(required),
@@ -643,13 +646,22 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
                                    'unattributed_run_count':0},
                    'branch_rules':None, 'branch_rules_issue':None,
                    'release_qualified':False}
+        if isinstance(exc, GitHubGatewayReadUnavailable):
+            summary['registration']['gateway_http_status'] = exc.status
+            summary['registration']['read_attempts'] = exc.attempts
         from .delivery_ci_diagnostics import diagnose_snapshot
         summary['diagnosis'] = diagnose_snapshot(summary, slug=item['repository'], client=None)
         record_ci_observation(session_id, summary, state_root=state_root)
+        snapshots.append({'poll':poll,'state':'REGISTRATION_PROVIDER_UNAVAILABLE', 'run_count':0})
         if progress:
             progress(summary)
-        return {**summary, 'history':[{'poll':poll,
-            'state':'REGISTRATION_PROVIDER_UNAVAILABLE', 'run_count':0}]}
+        return {**summary, 'history':list(snapshots)}
+
+    def wait_next(poll):
+        if poll + 1 < checks:
+            sleep(registrar.next_delay(interval, poll, session_id) if strict_registration else interval)
+            return True
+        return False
     if strict_registration:
         if not required or workflow_ids is None or not required_event:
             raise DeliverySessionError('Strict CI registrar requires explicit policy IDs and event')
@@ -658,8 +670,8 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
         # before a run can be selected. An API outage is never CI success.
         try:
             expectations = registrar.workflow_expectations(client, item, workflow_ids, required_event)
-        except GitHubActionsError:
-            return provider_unavailable('workflow-definitions', 0)
+        except GitHubActionsError as exc:
+            return provider_unavailable('workflow-definitions', 0, exc)
 
     def live_provenance() -> tuple[str | None, tuple[str | None, str | None] | None]:
         # Check remote source on EVERY observation before trusting PR times.
@@ -681,11 +693,16 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
             raise DeliverySessionError('Invalid provider PR update timestamp')
         return _pr_merge_sha(client, item['repository'], pr_info['number']), (created, updated)
 
-    snapshots = []
     for i in range(checks):
         if policy_guard is not None:
             policy_guard()
-        merge_sha, verified_pr_times = live_provenance()
+        try:
+            merge_sha, verified_pr_times = live_provenance()
+        except GitHubGatewayReadUnavailable as exc:
+            summary = provider_unavailable('source-provenance', i+1, exc)
+            if wait_next(i):
+                continue
+            return summary
         registration: dict[str, Any] | None = None
         if strict_registration:
             window = registrar.registration_window(
@@ -695,8 +712,11 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
             try:
                 raw = registrar.collect_runs(client, item['repository'],
                                              window=window, event=required_event)
-            except GitHubActionsError:
-                return provider_unavailable('workflow-run-pages', i+1)
+            except GitHubActionsError as exc:
+                summary = provider_unavailable('workflow-run-pages', i+1, exc)
+                if isinstance(exc, GitHubGatewayReadUnavailable) and wait_next(i):
+                    continue
+                return summary
             def registration_match(row: dict[str, Any], source: Mapping[str, Any],
                                    pr: Mapping[str, Any] | None, merge: str | None) -> dict[str, Any] | None:
                 # Exact run GET must corroborate the creation-window evidence,
@@ -740,7 +760,13 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
             ambiguous = registration['ambiguous']
             mismatched_ids = []
         else:
-            raw = client.runs(item['repository'], limit=100)
+            try:
+                raw = client.runs(item['repository'], limit=100)
+            except GitHubGatewayReadUnavailable as exc:
+                summary = provider_unavailable('workflow-run-pages', i+1, exc)
+                if wait_next(i):
+                    continue
+                return summary
             seen: dict[str,dict[str,Any]] = {}
             ambiguous = []
             for candidate in raw:
@@ -815,7 +841,13 @@ def observe_ci(session_id: str, *, required: tuple[str,...] = (),
             # Detect a policy/head/merge ref change while all remote calls were in flight.
             if policy_guard is not None:
                 policy_guard()
-            current_merge, current_pr_times = live_provenance()
+            try:
+                current_merge, current_pr_times = live_provenance()
+            except GitHubGatewayReadUnavailable as exc:
+                summary = provider_unavailable('final-source-provenance', i+1, exc)
+                if wait_next(i):
+                    continue
+                return summary
             if current_merge != merge_sha:
                 raise DeliverySessionError('PR merge identity changed during CI poll; qualification blocked')
             # GitHub updates PR updated_at for comments, labels and other

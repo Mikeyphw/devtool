@@ -19,7 +19,7 @@ from urllib.parse import urlsplit, quote
 from urllib.request import Request
 
 from .delivery_session import DeliverySessionError
-from .github_actions import API_ORIGIN, API_VERSION, GitHubActionsClient, GitHubActionsError, _slug
+from .github_actions import API_ORIGIN, API_VERSION, GitHubActionsClient, GitHubActionsError, GitHubGatewayReadUnavailable, _TRANSIENT_GATEWAY_CODES, retry_gateway_read, _slug
 
 _MAX_BYTES = 2 * 1024 * 1024
 # Allow exact, read-only effective branch-rule reads.  Branch slashes must be URL-encoded as %2F; never relax method/slug/origin checks.
@@ -28,6 +28,8 @@ _ALLOWED = re.compile(r'/repos/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/(?:pulls(?:\?.*
 
 def classify_provider_error(exc: BaseException) -> str:
     """Fail-closed classification; unknown 404 is never proof of absence."""
+    if isinstance(exc, GitHubGatewayReadUnavailable):
+        return 'provider_unavailable'
     if isinstance(exc, DeliverySessionError):
         # request_json emits these sanitized, typed failure messages. Only
         # their exact known prefix is reused; arbitrary provider prose stays
@@ -69,6 +71,8 @@ def provider_transport_diagnostic(exc: BaseException) -> str:
     A network failure, including an ambiguous 404, never proves absence or
     authorizes a write. URLError.reason is inspected by type only.
     """
+    if isinstance(exc, GitHubGatewayReadUnavailable):
+        return 'HTTP_SERVER_ERROR'
     if isinstance(exc, HTTPError):
         code = exc.code
         if code == 403 and classify_provider_error(exc) == 'provider_unavailable':
@@ -132,23 +136,27 @@ def request_json(client: GitHubActionsClient, method: str, path: str,
             raise DeliverySessionError('Invalid GitHub mutation request payload')
         headers['Content-Type'] = 'application/json'
     req = Request(API_ORIGIN + path, headers=headers, data=raw_request, method=method)
-    # Only GET requests may be retried, and only once for a transient
-    # provider/rate-limit error. Never replay an uncertain POST.
-    for attempt in range(2 if method == 'GET' else 1):
-        try:
-            with client._opener.open(req, timeout=client.timeout) as response:
-                if int(response.status) != (201 if method == 'POST' else 200):
-                    raise DeliverySessionError('Unexpected GitHub API status')
-                raw = response.read(_MAX_BYTES + 1)
-            break
-        except (HTTPError, URLError, TimeoutError, OSError) as exc:
-            reason = classify_provider_error(exc)
-            if method == 'GET' and attempt == 0 and reason == 'provider_unavailable':
-                time.sleep(0.1)
-                continue
-            suffix = ' — outcome uncertain; do not retry' if method == 'POST' else ''
-            diagnostic = provider_transport_diagnostic(exc)
-            raise DeliverySessionError(f'GitHub {method} {reason} [{diagnostic}]{suffix}') from None
+    def read_once():
+        with client._opener.open(req, timeout=client.timeout) as response:
+            status = int(response.status)
+            if method == 'GET' and status in _TRANSIENT_GATEWAY_CODES:
+                raise HTTPError(req.full_url, status, 'gateway unavailable', {}, None)
+            if status != (201 if method == 'POST' else 200):
+                raise DeliverySessionError('Unexpected GitHub API status')
+            return response.read(_MAX_BYTES + 1)
+    # One shared budget; retain the earlier single retry for a first
+    # non-gateway transport failure without restarting the gateway budget.
+    # A POST is attempted exactly once, even for a gateway failure.
+    try:
+        raw = retry_gateway_read(req, read_once, retry_other=lambda exc:
+                                 classify_provider_error(exc) == 'provider_unavailable')
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        reason = classify_provider_error(exc)
+        suffix = ' — outcome uncertain; do not retry' if method == 'POST' else ''
+        diagnostic = provider_transport_diagnostic(exc)
+        if isinstance(exc, HTTPError):
+            exc.close()
+        raise DeliverySessionError(f'GitHub {method} {reason} [{diagnostic}]{suffix}') from None
     if len(raw) > _MAX_BYTES:
         raise DeliverySessionError('GitHub API response exceeds the size limit')
     try:

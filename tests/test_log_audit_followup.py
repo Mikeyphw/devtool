@@ -37,7 +37,7 @@ def test_redaction_does_not_treat_diagnostic_identifier_substrings_as_secrets() 
     assert "secret-value" not in logstore.redact_sensitive_text("AUTH_TOKEN: secret-value\n")
 
 
-def test_log_identifier_uses_resolved_duplicate_download_variant(tmp_path: Path) -> None:
+def test_log_identifier_uses_explicit_archive_not_newer_sibling(tmp_path: Path) -> None:
     base = tmp_path / "overlay_v2.zip"
     duplicate = tmp_path / "overlay_v2-1.zip"
     base.write_bytes(b"old")
@@ -45,7 +45,7 @@ def test_log_identifier_uses_resolved_duplicate_download_variant(tmp_path: Path)
     os.utime(base, (10, 10))
     os.utime(duplicate, (20, 20))
     args = argparse.Namespace(command="apply-overlay", artifact=str(base))
-    assert cli._log_identifier_for_args(args) == duplicate.name
+    assert cli._log_identifier_for_args(args) == base.name
 
 
 def test_run_log_start_is_nonempty_and_records_resolved_artifact(tmp_path: Path) -> None:

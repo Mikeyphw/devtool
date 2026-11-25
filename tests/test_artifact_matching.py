@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import shutil
 import time
 import unittest
 from pathlib import Path
@@ -17,7 +19,7 @@ class ArtifactMatchingTests(unittest.TestCase):
             zf.writestr(payload_name, payload_text)
         return path
 
-    def test_resolve_prefers_highest_numeric_suffix(self) -> None:
+    def test_resolve_preserves_exact_named_archive_despite_newer_siblings(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             plain = self._zip(root / "s3oc_debug_full_system_overlay.zip", payload_text="plain")
@@ -29,7 +31,7 @@ class ArtifactMatchingTests(unittest.TestCase):
             os.utime(low, (older + 1, older + 1))
             os.utime(high, (newer, newer))
 
-            self.assertEqual(resolve_artifact_path(plain), high.resolve())
+            self.assertEqual(resolve_artifact_path(plain), plain.resolve())
 
     def test_resolve_prefers_unsuffixed_when_it_is_newer_than_highest_suffix(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -43,16 +45,58 @@ class ArtifactMatchingTests(unittest.TestCase):
 
             self.assertEqual(resolve_artifact_path(plain), plain.resolve())
 
-    def test_resolve_accepts_all_duplicate_suffix_forms(self) -> None:
+    def test_missing_name_uses_pinned_legacy_suffix(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            requested = root / "s3oc_debug_full_system_overlay.zip"
-            self._zip(root / "s3oc_debug_full_system_overlay(1).zip")
-            self._zip(root / "s3oc_debug_full_system_overlay_2.zip")
-            self._zip(root / "s3oc_debug_full_system_overlay3.zip")
-            high = self._zip(root / "s3oc_debug_full_system_overlay-4.zip")
+            requested = root / "artifact.zip"
+            self._zip(root / "artifact(1).zip", payload_text="one")
+            self._zip(root / "artifact_2.zip", payload_text="two")
+            self._zip(root / "artifact3.zip", payload_text="three")
+            chosen = self._zip(root / "artifact-4.zip", payload_text="four")
+            digest = hashlib.sha256(chosen.read_bytes()).hexdigest()
+            self.assertEqual(resolve_artifact_path(requested, expected_sha256=digest), chosen)
+            self.assertEqual(resolve_artifact_path(requested), root / "artifact(1).zip")
+            with self.assertRaisesRegex(ValueError, "matches the expected SHA-256"):
+                resolve_artifact_path(requested, expected_sha256="a" * 64)
 
-            self.assertEqual(resolve_artifact_path(requested), high.resolve())
+    def test_stage_siblings_never_substitute_for_exact_or_missing_stage(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = self._zip(root / "stage-01.zip", payload_text="one")
+            fourth = self._zip(root / "stage-04.zip", payload_text="four")
+            digest = hashlib.sha256(fourth.read_bytes()).hexdigest()
+            self.assertEqual(resolve_artifact_path(first), first)
+            with self.assertRaisesRegex(ValueError, "exact artifact SHA-256 mismatch"):
+                resolve_artifact_path(first, expected_sha256=digest)
+            first.unlink()
+            self.assertEqual(resolve_artifact_path(first), first)
+            with self.assertRaises(FileNotFoundError):
+                resolve_artifact_path(first, expected_sha256=digest)
+            self.assertEqual(resolve_artifact_path(fourth), fourth)
+
+    def test_ambiguous_android_downloads_require_explicit_choice(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wanted = root / "artifact.zip"
+            first = self._zip(root / "artifact(1).zip", payload_text="one")
+            second = self._zip(root / "artifact(2).zip", payload_text="two")
+            with self.assertRaisesRegex(ValueError, "ambiguous"):
+                resolve_artifact_path(wanted)
+            digest = hashlib.sha256(second.read_bytes()).hexdigest()
+            self.assertEqual(resolve_artifact_path(wanted, expected_sha256=digest), second)
+            shutil.copyfile(first, second)
+            self.assertEqual(resolve_artifact_path(wanted), first)
+
+    def test_symlinked_duplicates_are_never_selected(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = self._zip(root / "separate.zip")
+            wanted = root / "artifact.zip"
+            alias = root / "artifact(1).zip"
+            alias.symlink_to(source)
+            self.assertEqual(resolve_artifact_path(wanted), wanted)
+            with self.assertRaisesRegex(ValueError, "symlinks"):
+                resolve_artifact_path(alias)
 
     def test_cleanup_paths_include_entire_duplicate_family_and_sidecars(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -94,12 +138,12 @@ class ArtifactMatchingTests(unittest.TestCase):
             rc = main(["--repo", str(root), "--yes", "apply-overlay", str(requested)])
 
             self.assertEqual(rc, 0)
-            self.assertEqual((root / "chosen.txt").read_text(encoding="utf-8"), "two")
+            self.assertEqual((root / "chosen.txt").read_text(encoding="utf-8"), "plain")
             # RMP-C02: selection of one variant does not authorize deletion
             # of other downloads (which can have unrelated contents).
-            self.assertTrue(requested.exists())
+            self.assertFalse(requested.exists())
             self.assertTrue(unused.exists())
-            self.assertFalse(chosen.exists())
+            self.assertTrue(chosen.exists())
             self.assertTrue((root / "artifact.zip.devtool.json").exists())
             self.assertTrue((root / "artifact_1.zip.devtool.json").exists())
             self.assertTrue((root / "artifact-2.zip.devtool.json").exists())
