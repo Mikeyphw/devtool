@@ -231,3 +231,16 @@ def test_m0_native_gradle_task_is_executable_but_never_implicitly_invoked():
                                    'task': 'testDebugUnitTest', 'required': True}
     assert _has_required_inline_validation_tests(d)
     assert normalize_delivery_contract(d)['status'] == 'declared-not-executed'
+
+
+def test_schema3_delete_postimage_is_explicit_null():
+    d=valid(); path='devtool/old.py'
+    d['inventory']['entries'][1]={'path':path,'action':'delete','source_sha256':SHA256_A}
+    d['expected_post_sha256'][path]=None
+    assert normalize_delivery_contract(d)['status']=='declared-not-executed'
+    del d['expected_post_sha256'][path]
+    with pytest.raises(NativeDeliveryContractError,match='expected_post_sha256'):
+        normalize_delivery_contract(d)
+    d['expected_post_sha256'][path]=SHA256_B
+    with pytest.raises(NativeDeliveryContractError,match='expected_post_sha256'):
+        normalize_delivery_contract(d)

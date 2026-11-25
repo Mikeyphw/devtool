@@ -7,7 +7,10 @@ approved the exact operation.
 """
 from __future__ import annotations
 
+import errno
 import json
+import socket
+import ssl
 import re
 import time
 from typing import Any, Mapping
@@ -59,6 +62,55 @@ def classify_provider_error(exc: BaseException) -> str:
     return 'unknown'
 
 
+def provider_transport_diagnostic(exc: BaseException) -> str:
+    """Return a fixed, non-secret transport code; never stringify provider errors.
+
+    Keep the public capability classification separate from diagnostic detail.
+    A network failure, including an ambiguous 404, never proves absence or
+    authorizes a write. URLError.reason is inspected by type only.
+    """
+    if isinstance(exc, HTTPError):
+        code = exc.code
+        if code == 403 and classify_provider_error(exc) == 'provider_unavailable':
+            return 'HTTP_RATE_LIMIT'
+        if code == 429:
+            return 'HTTP_RATE_LIMIT'
+        if code == 401:
+            return 'HTTP_AUTHENTICATION'
+        if code == 403:
+            return 'HTTP_PERMISSION'
+        if code == 404:
+            return 'HTTP_RESOURCE_UNVERIFIED'
+        if code == 422:
+            return 'HTTP_UNPROCESSABLE'
+        if isinstance(code, int) and 500 <= code <= 599:
+            return 'HTTP_SERVER_ERROR'
+        if isinstance(code, int) and 300 <= code <= 399:
+            return 'HTTP_REDIRECT_REFUSED'
+        return 'HTTP_OTHER'
+    if isinstance(exc, URLError):
+        exc = exc.reason
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        return 'TLS_CERTIFICATE_FAILURE'
+    if isinstance(exc, ssl.SSLError):
+        return 'TLS_FAILURE'
+    if isinstance(exc, socket.gaierror):
+        return 'DNS_FAILURE'
+    if isinstance(exc, TimeoutError):
+        return 'TIMEOUT'
+    if isinstance(exc, ConnectionRefusedError):
+        return 'CONNECTION_REFUSED'
+    if isinstance(exc, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+        return 'CONNECTION_INTERRUPTED'
+    if isinstance(exc, OSError):
+        if exc.errno == errno.ETIMEDOUT:
+            return 'TIMEOUT'
+        if exc.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH, errno.ENETDOWN):
+            return 'NETWORK_UNREACHABLE'
+        return 'OS_TRANSPORT_FAILURE'
+    return 'TRANSPORT_UNCLASSIFIED'
+
+
 def request_json(client: GitHubActionsClient, method: str, path: str,
                  payload: Mapping[str, Any] | None = None) -> Any:
     """Shared Actions opener/token; no redirects, cross-repository paths or leaks."""
@@ -95,7 +147,8 @@ def request_json(client: GitHubActionsClient, method: str, path: str,
                 time.sleep(0.1)
                 continue
             suffix = ' — outcome uncertain; do not retry' if method == 'POST' else ''
-            raise DeliverySessionError(f'GitHub {method} {reason}{suffix}') from None
+            diagnostic = provider_transport_diagnostic(exc)
+            raise DeliverySessionError(f'GitHub {method} {reason} [{diagnostic}]{suffix}') from None
     if len(raw) > _MAX_BYTES:
         raise DeliverySessionError('GitHub API response exceeds the size limit')
     try:

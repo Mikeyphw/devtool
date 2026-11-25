@@ -74,6 +74,10 @@ def build_stream(record: Mapping[str, Any]) -> dict[str, Any]:
             row["state"] = "not-applied-at-observation"
         elif kind == "push_attempt_result":
             row["state"] = _label(e.get("classification"), 50)
+            if type(e.get("exit_code")) is int and -128 <= e["exit_code"] <= 255:
+                row["git_exit"] = e["exit_code"]
+            if re.fullmatch(r"[a-f0-9]{32}", str(e.get("intent_id") or "")):
+                row["intent_id"] = e["intent_id"]
         elif kind == "ci_observed":
             row["state"] = _label(e.get("state"), 50)
         elif kind == "pr_observed":

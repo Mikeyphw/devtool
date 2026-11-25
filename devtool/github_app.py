@@ -41,7 +41,9 @@ _PERMISSIONS = {
     'status_write': {'statuses': 'write', 'contents': 'read'},
     'branch_write': {'contents': 'write'},
     'branch_write_workflows': {'contents': 'write', 'workflows': 'write'},
+    'checks_write': {'checks': 'write', 'contents': 'read'},
     'checks_read': {'actions': 'read', 'checks': 'read', 'contents': 'read'},
+    'checks_evidence': {'actions': 'read', 'checks': 'read', 'contents': 'read', 'pull_requests': 'read'},
     'actions_dispatch': {'actions': 'write', 'contents': 'read'},
 }
 
@@ -333,6 +335,16 @@ except (ValueError, KeyError, OSError):
 '''
 
 
+def _askpass_source() -> str:
+    """Use the actual executing interpreter; no /usr/bin/env assumption."""
+    interpreter = os.path.realpath(sys.executable)
+    if (not os.path.isabs(interpreter) or not os.path.isfile(interpreter)
+            or not os.access(interpreter, os.X_OK) or any(c.isspace() for c in interpreter)
+            or len(os.fsencode(interpreter)) > 120):
+        raise GitHubAppError('APP_ASKPASS_INTERPRETER_UNAVAILABLE')
+    return '#!' + interpreter + '\n' + _ASKPASS.split('\n', 1)[1]
+
+
 def _git_isolated_environment() -> dict[str, str]:
     """Ignore untrusted GIT_* injections and user/system rewrite rules."""
     env = {key: val for key, val in os.environ.items() if not key.startswith('GIT_')
@@ -400,6 +412,19 @@ def _check_git_argv(argv: list[str], capability: str) -> None:
         if capability not in ('repository_read', 'branch_write', 'branch_write_workflows'):
             raise GitHubAppError('APP_GIT_READ_SCOPE_OR_ARGUMENTS_REFUSED')
         return
+    # Precisely scoped create-only comparison, never an existing-ref overwrite.
+    # Allow the corresponding nonmutating dry-run only for this exact argv.
+    if len(argv)==6 and argv[:3]==['push','--porcelain','--dry-run']:
+        preview=[*argv[:2],*argv[3:]]
+        if preview[2].startswith('--force-with-lease='):
+            _check_git_argv(preview,capability);return
+    if (len(argv) == 5 and argv[:2] == ['push', '--porcelain']
+            and argv[3] == 'origin' and argv[4].count(':') == 1):
+        source, destination = argv[4].split(':')
+        if (source == destination and _safe_branch_ref(source)
+                and argv[2] == f'--force-with-lease={destination}:'
+                and capability in ('branch_write', 'branch_write_workflows')):
+            return
     if (len(argv) == 4 and argv[:3] == ['push', '--porcelain', 'origin']
             and argv[3].count(':') == 1):
         source, destination = argv[3].split(':')
@@ -418,7 +443,7 @@ def run_git_authenticated(repo: str | Path, argv: list[str], access: Installatio
         raise GitHubAppError('APP_TOKEN_TOO_CLOSE_TO_EXPIRY_FOR_GIT')
     with tempfile.TemporaryDirectory(prefix='devtool-app-auth-') as temp:
         helper = Path(temp) / 'askpass.py'
-        helper.write_text(_ASKPASS, encoding='utf-8')
+        helper.write_text(_askpass_source(), encoding='utf-8')
         helper.chmod(0o700)
         readfd, writefd = os.pipe()
         try:
