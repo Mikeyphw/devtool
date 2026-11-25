@@ -62,7 +62,10 @@ def run_delivery_command(args: Any) -> int:
                 payload = pr(identity,yes=bool(getattr(args,'yes',False)),
                              title=str(getattr(args,'title','') or ''),
                              body=str(getattr(args,'body','') or ''),
-                             auth=str(getattr(args,'auth','auto') or 'auto'))
+                             auth=str(getattr(args,'auth','auto') or 'auto'),
+                             recovery_intent_id=str(getattr(args,'recover_intent','') or ''),
+                             prior_process_finished=bool(getattr(args,'prior_process_finished',False)),
+                             acknowledge_original_request=bool(getattr(args,'acknowledge_original_request',False)))
             else:
                 from .delivery_ci_policy import (load_policy, check_requested,
                                                  assert_observation)
@@ -205,6 +208,9 @@ def run_delivery_command(args: Any) -> int:
             print('Release qualification: NOT PERFORMED',flush=True)
             return 0 if (payload.get('state') == 'REQUIRED_CHECKS_PASSED' and
                          payload.get('checks_qualified') is True) else (1 if payload.get('state') == 'CHECKS_FAILED' else 2)
+        if payload.get('state')=='PR_RECONCILIATION_REQUIRED':
+            print('Original intent: '+str(payload.get('intent_id')),flush=True)
+            print('No PR write replayed; explicit bounded successor only after exact all-state inventory reconciliation.',flush=True)
         if payload.get('url'):
             print('PR: '+payload['url'],flush=True)
         for run in payload.get('runs',[]):
@@ -266,7 +272,7 @@ def run_delivery_command(args: Any) -> int:
         # An observed-only or unrecognized state is never a CI success.
         if payload['state']!='REQUIRED_CHECKS_PASSED' or payload.get('checks_qualified') is not True:
             return 2
-    if operation in ('push','pr') and payload['state'].endswith('REQUIRES_APPROVAL'):
+    if operation in ('push','pr') and (payload['state'].endswith('REQUIRES_APPROVAL') or payload['state']=='PR_RECONCILIATION_REQUIRED'):
         return 2
     return 0
 

@@ -143,7 +143,8 @@ class NativeM4DeliveryTests(unittest.TestCase):
         with (patch.object(delivery_github,'_checked',return_value=item),
               patch('devtool.github_app.make_app_client',side_effect=factory),
               patch.object(delivery_github,'_remote_head',side_effect=remote),
-              patch.object(delivery_github,'pull_requests',return_value=[])):
+              patch.object(delivery_github,'pull_requests',return_value=[]),
+              patch.object(delivery_github,'pr_intent_status',return_value=None)):
             result=delivery_github.pr(SESSION,yes=False,auth='app')
         self.assertEqual(result['state'],'PR_REQUIRES_APPROVAL')
         self.assertIn(('Other/upstream','pr_create','base'),calls)

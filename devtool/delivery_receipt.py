@@ -19,6 +19,7 @@ _LIFECYCLE = {
     "mutation_intent": "remote-intent",
     "mutation_confirmed": "remote-reconciliation",
     "push_negative_reconciliation": "remote-reconciliation",
+    "pr_negative_reconciliation": "remote-reconciliation",
     "push_attempt_result": "remote-attempt",
     "pr_observed": "pull-request",
     "ci_observed": "ci",
@@ -70,7 +71,7 @@ def build_stream(record: Mapping[str, Any]) -> dict[str, Any]:
         if kind in ("mutation_intent", "mutation_confirmed"):
             row["operation"] = _label(e.get("operation"), 32)
             row["state"] = "unresolved" if kind == "mutation_intent" else "confirmed"
-        elif kind == "push_negative_reconciliation":
+        elif kind in ("push_negative_reconciliation", "pr_negative_reconciliation"):
             row["state"] = "not-applied-at-observation"
         elif kind == "push_attempt_result":
             row["state"] = _label(e.get("classification"), 50)

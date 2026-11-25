@@ -63,8 +63,13 @@ def release_policy(root: Path, filename: str) -> dict[str, Any]:
         obj = json.loads(contents)
     except (ValueError, UnicodeError):
         raise GitHubActionsError('Release trust policy JSON is invalid') from None
-    if not isinstance(obj, dict) or set(obj) != _POLICY_FIELDS or type(obj.get('schema')) is not int or obj['schema'] != 1:
+    if not isinstance(obj,dict) or type(obj.get('schema')) is not int or obj['schema'] not in (1,2):
         raise GitHubActionsError('Release trust policy fields/schema are invalid')
+    if obj['schema']==1:
+        if set(obj)!=_POLICY_FIELDS: raise GitHubActionsError('Release trust policy fields/schema are invalid')
+    else:
+        if set(obj)!=_POLICY_FIELDS|{'approval_profile','owner_reviewer_id'} or obj.get('approval_profile')!='single-owner' or type(obj.get('owner_reviewer_id')) is not int or obj['owner_reviewer_id']<1:
+            raise GitHubActionsError('Single-owner release trust policy fields/schema are invalid')
     if not isinstance(obj['repository'], str):
         raise GitHubActionsError('Release repository identity is invalid')
     obj['repository'] = _slug(obj['repository'])
@@ -129,6 +134,11 @@ def release_verify(client: GitHubActionsClient, slug: str, root: Path, *, run_id
     slug = _slug(slug)
     if slug.lower() != policy['repository'].lower():
         raise GitHubActionsError('Release policy repository differs from GitHub origin')
+    if policy['schema']==2:
+        from .ga00_environment import inspect_environment
+        profile=inspect_environment(client,slug,approval_profile=policy['approval_profile'],expected_owner_id=policy['owner_reviewer_id'])
+        if not profile['verified']:
+            raise GitHubActionsError('Single-owner protected signing policy no longer verified')
     remote = _normalize_run(client.get_run(slug, run_id), slug, run_id)
     if (not remote['completed'] or remote['conclusion'] != 'success' or
             remote.get('event') != 'workflow_dispatch'):

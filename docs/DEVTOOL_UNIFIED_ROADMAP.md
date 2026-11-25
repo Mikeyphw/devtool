@@ -1,14 +1,32 @@
 # Devtool — One integrated execution roadmap
 
-**Roadmap:** `DEVTOOL-UNIFIED/1.0` · **Planning revision:** `1.2` · **As of:** 2026-11-24 UTC  
-**Repository:** `Mikeyphw/devtool` · **Main:** `05e120d185ce8e81287b591bac6a221054abe94e`  
-**Status:** **LIBRARY PLANNING CANDIDATE / NOT NATIVE-ADOPTED**. It supersedes the **execution ordering and presentation** of the v1.1 Library design, **not** its original 24 overlay IDs, promise inventory, acceptance history, or Git commits.  
-**Authoritative committed roadmap:** `docs/DEVTOOL_NATIVE_OVERLAY_DELIVERY_V3_ROADMAP.md` on `main` (historical milestone statuses may be stale). `docs/DEVTOOL_UNIFIED_ROADMAP.md` is **not present** on the verified `main` tree.  
-**User operating contract:** `AGENT-OPERATIONS-DEVTOOL` v1.15, SHA-256 `cb3963ba70dd90001d04b07eb11c12cb6f29fad3d9de5fb19dda3952e1596100` (read in full and byte-verified).  
+**Roadmap:** `DEVTOOL-UNIFIED/1.0` · **Planning revision:** `1.5` · **As of:** 2026-11-25 UTC  
+**Repository:** `Mikeyphw/devtool` · **Main:** `9afd3368e19eb6f18f180a765de596e00463a8fb`  
+**Status:** **W2 CANDIDATE / GIT ADOPTION PENDING**. It supersedes the **execution ordering and presentation** of the v1.1 Library design, **not** its original 24 overlay IDs, promise inventory, acceptance history, or Git commits.  
+**Authoritative committed roadmap:** `docs/DEVTOOL_NATIVE_OVERLAY_DELIVERY_V3_ROADMAP.md` on `main` (historical milestone statuses may be stale). This candidate document is not yet present on verified `main`; adopt only through PR #49.  
+**User operating contract:** `AGENT-OPERATIONS-DEVTOOL` v1.25, SHA-256 `850a858e863bb2715da7f9e09bd26ede3d7f81231f7da05db3b381b6cfb7df76` (read in full and byte-verified).  
 **Canonical bug ledger:** `/Devtool/DEVTOOL_BUG_LEDGER_cg.md`, SHA-256 `397af7992d5e23d2afd4f5f0f8c918ce1f7d6acd1ee7eecc1fa438c0bcae18c3` (read in full; historical dispositions require current-source retriage).  
 **Prior Library revision:** `DEVTOOL_UNIFIED_FINAL_ROADMAP_20261123_cg(1).md`, revision 1.1, SHA-256 `88ffd2c8636df386c15931f944da9429cac11379152a855e01a3c2043f6dfcaa`; this revision retains their complete promise wording and IDs in Appendix A.
 
 > **Core change:** Do not deliver 'core', then 'GitHub App', then 'Rich UI' as three independent products. Each **vertical bundle** must expose one coherent user task through **one Devtool native engine**, **one operation-scoped App/credential boundary**, and **one shared Rich/operator interface** (with plain/JSON and optional Textual parity). This is sequencing and ownership reform, **not** permission to merge incomplete overlays or substitute UI mocks for production integration.
+
+## Current execution waves and gates (supersedes historical queue)
+
+| Wave | Work package | Dependencies | Mandatory exit evidence |
+|---|---|---|---|
+| W0 | Establish closure register and safe recovery | None | Exact authority/roadmap/repo/policy/installed operator hashes; full per-promise register; source/runtime/session/intent inventory; no unexpected changes |
+| W1 | GA-03 / B3 production continuation and four core fixes | W0; applicable GA-00 operation gates | Existing session adoption, no replay; exact hosted GA-03 coverage, six required workflows, CI24, disposable App Checks readback; native transaction history; approved merge and main readback |
+| W2 | B0 forward reconciliation and authoritative roadmap adoption | W0; integrate final W1 main | Preserve PR #49 and existing work, forward-only branch integration by approved native path, up-to-date registry/docs/schemas; native continuity tests, required CI and CI24; approved merge |
+| W3 | B0/B1/B2 foundational acceptance (M0–M5, M7, GA-00/01/02; DT-RH01-F01) | W0; W1/W2 for final integrated source | Reuse exact historical receipts; run missing source, actual Termux and disposable App adverse tests; all relevant atomic promises qualified; recorded scope exceptions |
+| W4 | M6 + RICH-U01/U02 combined remediation (RICH-U-C01) | W2; safe native/UI boundary established | Single Live/input owner, 35 M6 + 19 slice obligations, actual PTY/Termux, no-copy/exit/log behavior, docs/CLI parity, current-source required CI/CI24 |
+| W5 | B4 safe fork lifecycle (GA-05) | W1–W3; shared host available | Actual disposable fork/upstream pair, source and owner locks, approved PR and CI, conflict/replay/denial negatives |
+| W6 | B5 federation and shared libraries (M9 + GA-06) | W5; registry and native continuity | Provider plus two independent consumers, individual source/CI receipts and aggregate partial-failure handling; consumer compatibility |
+| W7 | B6 trusted event continuation (M8 + GA-04) | W3; GA-03 evidence service | Genuine signed hosted callback, durable inbox/intent handling, offline recovery, no replay and no unapproved mutations |
+| W8 | B7 protected operations (GA-07/08/09, GA-00 signing) | W3, W6, W7; owner policy | Scoped PAT equivalence before cutover; protected disposable signer proof, typed secret intents; deployment gate or approved equally strict fallback |
+| W9 | B8 intelligence, ledger enforcement and adoption (GA-10/11, M5/M6) | W4–W8 | Canonical parser/help/schema/completions; native ledger gate; installed operator/CLI/JSON/Textual parity; actionable source-bound PR intelligence |
+| W10 | Historical consumer/substrate reconciliation and final release | Starts read-only at W0; final gate after W9 | All still-applicable NEXT, G3R, FS03, consumer, device, distribution and security gates evidenced; independent release authority; signed artifacts and final source-bound closure receipt |
+
+W1 accepted and merged. W2 adds exact PR #49 forward integration, single-owner signing approval profile, truthful session creation stage vs delivery state, and bounded PR negative reconciliation (DT-20261125-03). W3–W10 remain gated by their own evidence. GA-00 protected environment configuration and live signing remain separately pending.
 
 ## 1. The product we are actually building
 
@@ -27,27 +45,9 @@ From Termux/Ubuntu, a user selects an actual repository and checkout, sees a tru
 - **Safety:** no local Gradle directly or indirectly, no force/rebase/reset/auto-merge, no implicit App installation/secret/ruleset/PAT revocation, no simulated proof, no automatic clipboard use, no secrets in argv/logs/receipt.
 - **TTY:** foreground Devtool/`gh` with original stdout/stderr, exit code, Rich colors and signal handling; one `Live` and keyboard owner, restored terminal on all exits, plain/JSON/Textual available.
 
-## 2. Source reality and progress — two independent dimensions
+## 2. Source reality and progress — verified 2026-11-25
 
-This is a remote/source and existing-receipt reconciliation, **not a new Termux run**:
-
-| Track | Exact current evidence | Implementation verdict | Independent acceptance |
-|---|---|---|---|
-| Native M0–M8 | Nine milestone labels have merged-source history on `main` | Source exists; per-promise re-audit incomplete | Historical full acceptance unproven in this inspection |
-| GA-00 | Merged via PR #45 into current `main` | Source exists; original 17 promises not completely reaudited | Security/App/signing/CI24 gates still require receipts |
-| GA-01 | [Draft PR #46](https://github.com/Mikeyphw/devtool/pull/46), HEAD `f4290fb1cf34fd830608418870d200dd3be25bd5` | Scoped App client, managed M8 PR PATCH/PUT adapters and adversarial tests **present** | 6/6 required hosted workflows + GA source step observed PASS; native current CI24 and live hostile App qualification **NOT ATTESTED** |
-| GA-02 | [Draft PR #48](https://github.com/Mikeyphw/devtool/pull/48), HEAD `b6e6550e0d8e42f4d0009d56a81dcbdb35dc9d0f` | Installation/fork relationships, live registry, user/local catalog, scoped token read qualification and tests **present** | Native apply COMMITTED and push VERIFIED; 6/6 required hosted + GA source steps observed PASS; native PR receipt, CI24 and live grants **PENDING** |
-| M9 | FRX/federation source foundations exist | PARTIAL; real provider/consumer path incomplete | End-to-end multi-repository outcome not attested |
-| RICH-U01/U02 | Historical Rich WIP and M6 merged source | WIP present historically; current worktree and live integration unverified | Real Termux/PTY/input/CI acceptance pending |
-| GA-03–GA-11 | Original contracts retained | Mostly PLANNED | Not accepted in this audit |
-
-**Strict progress dashboard:** `24` stable overlay identities; `10/24` have confirmed merged-source milestone labels (M0–M8 + GA-00; **not** necessarily source-complete); `2/24` additional open PR candidates (GA-01/GA-02). Independently demonstrated `SOURCE_COMPLETE` count **INCONCLUSIVE/24**, percentage **N/A**; independently `ACCEPTED` count **INCONCLUSIVE/24**, percentage **N/A**. This revision certifies **zero new** overlay acceptances. Retained past receipts may qualify individual gates when reattached to their exact source.
-
-**GA-02 preserved native identity:** source commit `b6e6550e0d8e42f4d0009d56a81dcbdb35dc9d0f`, native session `686c8049aa36465aaf41caa0dce833a1`, transaction `20261123T235925Z-01678df641fd`, history `a9eae8952c4d14dc882101799334eda3`; original upstream pin `44f48e367be20cbc9ec39f96d6112a6351c18124` is an ancestor of current main `05e120d…` by 13 commits, no behind/divergence; one confirmed push intent and zero unresolved intents. Existing draft PR #48 points to the exact HEAD and `main`. The native session remains `PLANNED` at the PR-observation axis even though native apply/push succeeded—do **not** reapply it.
-
-**GA-02 specific validation debt:** `tests/ga02_native_validate.py` on PR #48 does not explicitly include `tests/test_ga02_live_registry.py` or `tests/test_ga02_federation_source_guards.py`. Source tests exist, and the previous 140-test native receipt may include them, but that inventory needs source-bound proof. Extend the focused native validator and update test receipts without disabling negative tests or forcing a new source commit to preserve old CI evidence.
-
-**Release and device qualification:** NOT PERFORMED here; protected signing/release/Android device gates remain separate.
+13/24 original overlay labels are merged: M0–M8 and GA-00–GA-03. This is merged-source coverage, not full independent acceptance. GA-03 PR #51 merge `9afd3368e19eb6f18f180a765de596e00463a8fb`, tree `b15c5435662ddfaf87e0f957a8b691679deda4dd`; W1 source `a86456137c83622679a85c43f4e65d747b51c88c`, required CI 6/6, CI24 24/24 (run 45634363584 attempt 1), Q01 live sandbox checks separately qualified. GA-01 PR #46 and GA-02 PR #48 were merged; historical receipt coverage remains source-bound. Remaining original acceptance counts INCONCLUSIVE. B0 PR #49 is open; this revision is a candidate until its independent merge is verified. No protected signing/release/device acceptance is implied.
 
 ## 3. Integrated delivery batches — new order, **no new overlays**
 
@@ -125,9 +125,9 @@ Read-only discovery, Rich presentation and negative-test implementation may run 
 | `M8` | Event-driven continuation and bot-owned PR maintenance | B3/B6 | MERGED_SOURCE | Real signed ingress and crash recovery |
 | `M9` | Cross-repository federation and dependency delivery | B2/B5 | PARTIAL | Read-only graph then two real consumer integrations |
 | `GA-00` | Security and evidence baseline (release blocker) | B0/B1/B7 | MERGED_SOURCE | 17-promise/security/CI24/signing acceptance debt |
-| `GA-01` | One capability-aware App authentication transport | B0/B1 | OPEN PR #46 | PATCH/PUT source present; live App hostile tests + CI24 |
-| `GA-02` | Installation, fork and relationship registry | B0/B2 | OPEN PR #48 | Native session recovery, live account/install tests + CI24 |
-| `GA-03` | App-native Checks and PR evidence | B3 | PLANNED | Real independent source-bound App Check Runs |
+| `GA-01` | One capability-aware App authentication transport | B0/B1 | MERGED_SOURCE | PATCH/PUT source present; live App hostile tests + CI24 |
+| `GA-02` | Installation, fork and relationship registry | B0/B2 | MERGED_SOURCE | Native session recovery, live account/install tests + CI24 |
+| `GA-03` | App-native Checks and PR evidence | B3 | MERGED_SOURCE | W1 production CI24 and Q01 sandbox verified; other shared gates separate |
 | `GA-04` | Webhooks, queued actions and installations | B6 | PLANNED | Hosted signed callback + durable queue |
 | `GA-05` | Fork lifecycle and upstream contributions | B4 | PLANNED | Disposable fork, protected denied cases |
 | `GA-06` | Shared-library propagation and cross-repository compatibility | B5 | PLANNED | Provider + two consumers and independent CI |
@@ -169,7 +169,7 @@ Use `PLANNED|READY|PARTIAL|SOURCE_COMPLETE` separately from `NOT_RUN|NATIVE_VALI
 | `GOV-SIGN` | Signing and LIFE scope not qualified by this plan | Protected signing, release, deployment and secrets mutation | GA-08/09 + GA-00 actual signer/environment approval |
 | `GOV-DEVICE` | This plan did not execute on Termux/device | Default Rich cutover and claimed Android release/device acceptance | PTY/device real captures and native receipts |
 
-## 6. Immediate execution queue (focus: close GA-01 and GA-02)
+## 6. Historical 2026-11-24 execution queue (superseded by current waves below)
 
 1. **B0 native continuity FIRST:** inspect original GA-02 session `686c...` and GA-01's actual session before any change; reject stale/dirty target, reconcile old pin `44f48e...` → current main `05e120...` through a tested integrity-protected **native** journal update retaining old pin/audit event. Observe existing PR #48 without new PR POST. Include tests for unrelated/diverged main, source drift, unresolved intents, duplicate PR, unknown API outcome and retained prior push proof. Carry applicable DT-12/13/14/15/17/18 and current open ledger defects into the actual eligible integrated repair batch after source retriage.
 2. **GA-01 B1 closure:** don't reimplement already-present PR PATCH/PUT; inspect all callers and GA-00 security 17 promises; run full source tests and disposable actual App scope/forbidden-operation campaign. Qualify PR #46 through its own native existing-session PR and required CI/CI24 receipts; do not call successful hosted source tests sufficient.

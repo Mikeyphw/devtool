@@ -21,7 +21,7 @@ from urllib.request import Request
 
 from .delivery_session import (
     DeliverySessionError, confirm_intent, record_ci_observation, record_intent,
-    recover_push_intent, record_push_diagnostic,
+    recover_push_intent, record_push_diagnostic, pr_intent_status, recover_pr_intent, _digest, _utc,
     record_pr_observation, resume, status,
 )
 from .github_actions import (
@@ -302,14 +302,16 @@ def _github_request(client: GitHubActionsClient, method: str, path: str,
 
 
 def pull_requests(client: GitHubActionsClient, slug: str, head: str,
-                  base: str, *, head_repository: str | None = None) -> list[dict[str, Any]]:
+                  base: str, *, head_repository: str | None = None, inventory_state: str = "open") -> list[dict[str, Any]]:
     slug = _slug(slug)
     if not _REF.fullmatch(head) or not _REF.fullmatch(base):
         raise DeliverySessionError('Unsafe PR branch identity')
     owner = _slug(head_repository or slug).split('/', 1)[0]
     # Do not filter by base: wrong-base PRs must remain visible to the
     # collision guard instead of disappearing from the provider result.
-    query = urlencode({'state': 'open', 'head': f'{owner}:{head}',
+    if inventory_state not in ('open','all'):
+        raise DeliverySessionError('Invalid PR inventory scope')
+    query = urlencode({'state': inventory_state, 'head': f'{owner}:{head}',
                        'per_page': '100'})
     results: list[dict[str, Any]] = []
     numbers: set[int] = set()
@@ -379,7 +381,8 @@ def _remote_head(client: GitHubActionsClient, slug: str, branch: str) -> str:
 
 def pr(session_id: str, *, yes: bool = False, title: str = '',
        body: str = '', auth: str = 'auto', state_root: Path | None = None,
-       client: GitHubActionsClient | None = None) -> dict[str, Any]:
+       client: GitHubActionsClient | None = None, recovery_intent_id: str = '',
+       prior_process_finished: bool = False, acknowledge_original_request: bool = False) -> dict[str, Any]:
     item = _checked(session_id, state_root=state_root)
     slug, head, base, sha = (item[x] for x in ('repository','head','base','head_sha'))
     base_repo = _slug(item.get('base_repository') or slug)
@@ -428,6 +431,17 @@ def pr(session_id: str, *, yes: bool = False, title: str = '',
                        {'head_sha': sha, 'pr_number': observed['number']},
                        state_root=state_root, optional=True)
         return {'state': 'PR_VERIFIED', 'created_now': False, **observed}
+    pending=pr_intent_status(session_id,key,state_root=state_root)
+    if pending and not recovery_intent_id:
+        if yes:
+            raise DeliverySessionError('Previous PR creation outcome unresolved or historically confirmed; reconcile, do not retry')
+        return {'state':'PR_RECONCILIATION_REQUIRED','created_now':False,'head_sha':sha,
+                'intent_id':pending['id'],'attempt':pending['attempt'],'request_sha256':pending['request_sha256'],
+                'successor_permitted':pending['attempt']==1 and pending['state']=='unresolved' and pinned_base is not None}
+    if recovery_intent_id and (not yes or not prior_process_finished or not pending or pending['id']!=recovery_intent_id or pending['attempt']!=1 or pending['state']!='unresolved' or pinned_base is None):
+        raise DeliverySessionError('PR recovery requires explicit approval, original unresolved intent, exact pinned base and completed prior process; no third attempt')
+    if (prior_process_finished or acknowledge_original_request) and not recovery_intent_id:
+        raise DeliverySessionError('Recovery acknowledgement requires original PR intent ID')
     if yes and base_repo.casefold() != head_repo.casefold() and pinned_base is None:
         raise DeliverySessionError('Fork PR creation requires pinned upstream base SHA')
     if not yes:
@@ -444,13 +458,40 @@ def pr(session_id: str, *, yes: bool = False, title: str = '',
         raise DeliverySessionError('PR title must be one line and at most 160 characters')
     if len(body) > 16000:
         raise DeliverySessionError('PR body too large')
-    intent = record_intent(session_id, 'pr_create', key, approved=True, state_root=state_root)
-    if not intent['new']:
-        raise DeliverySessionError('Previous PR creation outcome unresolved; reconcile, do not retry')
     payload = {'head': head if base_repo.casefold() == head_repo.casefold() else
                f"{head_repo.split('/',1)[0]}:{head}", 'base': base,
                'title': title or f'Delivery: {head}', 'body': body,
                'draft': True}
+    request_digest=_digest({'repository':base_repo,'head_repository':head_repo,'head_sha':sha,'base_sha':pinned_base,'payload':payload})
+    if recovery_intent_id:
+        if pending['request_sha256'] not in (None,request_digest) or (pending['request_sha256'] is None and not acknowledge_original_request):
+            raise DeliverySessionError('PR recovery original request digest/legacy acknowledgement mismatch')
+        observations=[]
+        for i in range(3):
+            if i: time.sleep(1.01)
+            before=_remote_head(head_client,head_repo,head);before_base=_remote_head(client,base_repo,base)
+            all_rows=pull_requests(client,base_repo,head,base,head_repository=head_repo,inventory_state='all')
+            after=_remote_head(head_client,head_repo,head);after_base=_remote_head(client,base_repo,base)
+            if before!=sha or after!=sha or before_base!=pinned_base or after_base!=pinned_base:
+                raise DeliverySessionError('PR recovery source or pinned base changed; no POST')
+            if all_rows:
+                # A newly visible matching open PR is positive reconciliation;
+                # historical/competing/ambiguous rows never authorize a successor.
+                matches=[_pr_match(x,base_repo,head,base,sha,head_repository=head_repo,base_sha=pinned_base) for x in all_rows]
+                if len(all_rows)==1 and matches[0] is not None:
+                    verified=matches[0]
+                    confirm_intent(session_id,'pr_create',key,{'head_sha':sha,'pr_number':verified['number']},state_root=state_root)
+                    record_pr_observation(session_id,verified,state_root=state_root)
+                    return {'state':'PR_VERIFIED','created_now':False,**verified}
+                raise DeliverySessionError('PR recovery inventory contains historical or competing PR; no successor')
+            observations.append({'source_before':before,'source_after':after,'base_before':before_base,'base_after':after_base,
+                                 'all_state_pr_count':0,'observed_at':_utc()})
+        intent=recover_pr_intent(session_id,key,recovery_intent_id,approved=True,prior_process_finished=True,
+            acknowledge_original_request=acknowledge_original_request,request_sha256=request_digest,observations=observations,state_root=state_root)
+    else:
+        intent=record_intent(session_id,'pr_create',key,approved=True,state_root=state_root,request_sha256=request_digest)
+    if not intent['new']:
+        raise DeliverySessionError('Previous PR creation outcome unresolved; reconcile, do not retry')
     response = _github_request(client, 'POST', f'/repos/{base_repo}/pulls', payload)
     if not isinstance(response, dict):
         raise DeliverySessionError('PR creation returned non-object; outcome uncertain')

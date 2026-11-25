@@ -318,39 +318,128 @@ def _public(record: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _intents_terminal_and_valid(intents: list[dict[str, Any]]) -> bool:
-    """A negative-reconciled push is terminal ONLY with one confirmed successor.
-
-    Never mistake a reconciled-but-unfinished push for delivery success.
-    Historical journals may contain unrelated confirmed PR/CI intents.
-    """
-    if not isinstance(intents, list) or len(intents) > 128:
+def _recovery_pair_valid(old: Mapping[str, Any], new: Mapping[str, Any], *, terminal: bool) -> bool:
+    """Validate a bounded predecessor/successor chain, never a replay grant."""
+    if (old.get('state') != 'reconciled_no_remote_change' or
+        new.get('state') not in (('confirmed',) if terminal else ('confirmed','unresolved')) or
+        new.get('attempt') != 2 or new.get('predecessor_intent_id') != old.get('id') or
+        old.get('operation') != new.get('operation') or old.get('key_sha256') != new.get('key_sha256')):
         return False
-    if not all(isinstance(x, dict) for x in intents):
+    proof = old.get('reconciliation')
+    if not isinstance(proof, dict) or proof.get('result') != 'NOT_APPLIED_AT_RECONCILIATION':
+        return False
+    if old.get('operation') == 'push':
+        return (new.get('observed_remote_before') == proof.get('remote_head_sha') and
+                (new.get('observed_remote_before') is not None or
+                 (new.get('remote_observation') == 'VERIFIED_ABSENT' and proof.get('remote_observation') == 'VERIFIED_ABSENT')))
+    if old.get('operation') == 'pr_create':
+        request = proof.get('request_sha256')
+        return (isinstance(request,str) and re.fullmatch(r'[0-9a-f]{64}',request) is not None and
+                new.get('request_sha256') == request and old.get('request_sha256',request) == request and
+                proof.get('remote_observation') == 'ALL_STATE_PR_ABSENT' and
+                _pr_absence_observations_valid(proof.get('observations'),proof.get('source_head_sha'),proof.get('base_sha')))
+    return False
+
+
+def _intents_terminal_and_valid(intents: list[dict[str, Any]]) -> bool:
+    """All intent groups must be independently terminal; retain recovered push/PR pairs."""
+    if not isinstance(intents, list) or len(intents) > 128 or not all(isinstance(x,dict) for x in intents):
         return False
     ids=[x.get('id') for x in intents]
-    if len(set(ids)) != len(ids) or not all(isinstance(i, str) and _HEX32.fullmatch(i) for i in ids):
+    if not all(isinstance(i,str) and _HEX32.fullmatch(i) for i in ids) or len(set(ids)) != len(ids):
         return False
-    previous=[x for x in intents if x.get('state') == 'reconciled_no_remote_change']
-    if not previous:
-        return all(x.get('state') == 'confirmed' for x in intents)
-    if len(previous) != 1:
+    groups: dict[tuple[str,str], list[dict[str,Any]]] = {}
+    for item in intents:
+        operation,key=item.get('operation'),item.get('key_sha256')
+        if operation not in _OPERATIONS or not isinstance(key,str) or not re.fullmatch(r'[0-9a-f]{64}',key):
+            return False
+        groups.setdefault((operation,key),[]).append(item)
+    return all((len(pair)==1 and pair[0].get('state')=='confirmed' and not pair[0].get('predecessor_intent_id')) or
+               (len(pair)==2 and _recovery_pair_valid(*pair,terminal=True)) for pair in groups.values())
+
+
+def _pr_absence_observations_valid(rows: Any, source: Any, base: Any) -> bool:
+    if (not isinstance(source,str) or not _SHA.fullmatch(source) or not isinstance(base,str) or not _SHA.fullmatch(base)
+            or not isinstance(rows,list) or len(rows)!=3):
         return False
-    old=previous[0]
-    pairs=[x for x in intents if x.get('operation') == 'push'
-           and x.get('key_sha256') == old.get('key_sha256')]
-    if (len(pairs)!=2 or pairs[0] is not old
-            or pairs[1].get('state') != 'confirmed'
-            or pairs[1].get('attempt') != 2
-            or pairs[1].get('predecessor_intent_id') != old.get('id')
-            or pairs[1].get('observed_remote_before') !=
-               (old.get('reconciliation') or {}).get('remote_head_sha')
-            or (old.get('reconciliation') or {}).get('result') != 'NOT_APPLIED_AT_RECONCILIATION'
-            or (pairs[1].get('observed_remote_before') is None and
-                (pairs[1].get('remote_observation') != 'VERIFIED_ABSENT' or
-                 (old.get('reconciliation') or {}).get('remote_observation') != 'VERIFIED_ABSENT'))):
-        return False
-    return all(x.get('state') in ('confirmed', 'reconciled_no_remote_change') for x in intents)
+    times=[]
+    for row in rows:
+        if (not isinstance(row,dict) or set(row)!={'source_before','source_after','base_before','base_after','all_state_pr_count','observed_at'}
+                or row['source_before']!=source or row['source_after']!=source or row['base_before']!=base or row['base_after']!=base
+                or type(row['all_state_pr_count']) is not int or row['all_state_pr_count']!=0):
+            return False
+        try:
+            ts=datetime.fromisoformat(row['observed_at'])
+            if ts.tzinfo is None: return False
+            times.append(ts)
+        except (ValueError,TypeError): return False
+    return all((b-a).total_seconds()>=1 for a,b in zip(times,times[1:]))
+
+
+def _pr_intent_group(record: Mapping[str,Any], key: str) -> list[dict[str,Any]]:
+    exact=hashlib.sha256(f"{record.get('base_repository',record['repository'])}:{record['base']}:{record.get('head_repository',record['repository'])}:{record['head']}:{record['head_sha']}".encode()).hexdigest()
+    if key!=exact: raise DeliverySessionError('PR recovery request identity differs')
+    digest=hashlib.sha256(key.encode()).hexdigest()
+    return [x for x in record['intents'] if x.get('operation')=='pr_create' and x.get('key_sha256')==digest]
+
+
+def pr_intent_status(identity: str, key: str, *, state_root: Path | None=None) -> dict[str,Any] | None:
+    folder=_state_root(state_root,identity=identity)
+    _directory(folder,create=False)
+    record=_read(_path(folder,identity))
+    matches=_pr_intent_group(record,key)
+    if not matches:return None
+    if len(matches)==2 and _recovery_pair_valid(*matches,terminal=False):
+        active=matches[-1]
+        return {'id':active['id'],'state':active['state'],'attempt':2,'request_sha256':active['request_sha256']}
+    if len(matches)!=1 or matches[0].get('state') not in ('unresolved','confirmed'):
+        raise DeliverySessionError('Malformed PR recovery chain; no replay')
+    item=matches[0]
+    return {'id':item['id'],'state':item['state'],'attempt':1,'request_sha256':item.get('request_sha256')}
+
+
+def recover_pr_intent(identity: str, key: str, prior_intent_id: str, *, approved: bool,
+                      prior_process_finished: bool, acknowledge_original_request: bool,
+                      request_sha256: str, observations: list[dict[str,Any]],
+                      state_root: Path | None=None) -> dict[str,Any]:
+    """Atomically journal one explicit successor after observed absence (not permanent proof)."""
+    if (approved is not True or prior_process_finished is not True or not _HEX32.fullmatch(prior_intent_id or '')
+            or not re.fullmatch(r'[0-9a-f]{64}',request_sha256 or '')):
+        raise DeliverySessionError('PR recovery requires explicit approval, original intent and completed prior process')
+    folder=_state_root(state_root,identity=identity)
+    with _locked(folder):
+        path=_path(folder,identity);record=_read(path)
+        matches=_pr_intent_group(record,key)
+        if len(matches)!=1 or matches[0].get('id')!=prior_intent_id or matches[0].get('state')!='unresolved':
+            raise DeliverySessionError('Original unresolved PR intent missing or successor already recorded; no further POST')
+        old=matches[0]
+        current=_identity(Path(record['repo_root']),head=record['head'],base=record['base'])
+        if any(current[k]!=record[k] for k in ('head_sha','git_dir','repository')) or record.get('pr'):
+            raise DeliverySessionError('PR recovery source drift or historical PR already journaled')
+        if _git(Path(record['repo_root']),'status','--porcelain'):
+            raise DeliverySessionError('PR recovery requires clean source')
+        if (not _intents_terminal_and_valid([x for x in record['intents'] if x is not old]) or
+                any(c.get('phase')!='confirmed' for c in record.get('check_publications',[]))):
+            raise DeliverySessionError('Other unresolved mutation prohibits PR recovery')
+        saved=old.get('request_sha256')
+        if saved is None and acknowledge_original_request is not True:
+            raise DeliverySessionError('Legacy PR intent requires explicit original request acknowledgement')
+        if saved is not None and saved!=request_sha256:
+            raise DeliverySessionError('PR recovery request digest differs from original')
+        if not _pr_absence_observations_valid(observations,record['head_sha'],record.get('base_sha')):
+            raise DeliverySessionError('PR recovery requires three complete spaced exact-source all-state absence observations')
+        stamp=_utc();old['state']='reconciled_no_remote_change';old['reconciled_at']=stamp
+        old['reconciliation']={'result':'NOT_APPLIED_AT_RECONCILIATION','remote_observation':'ALL_STATE_PR_ABSENT',
+            'source_head_sha':record['head_sha'],'base_sha':record['base_sha'],'request_sha256':request_sha256,
+            'request_authority':'EXPLICIT_LEGACY_REQUEST_ACKNOWLEDGEMENT' if saved is None else 'ORIGINAL_REQUEST_DIGEST',
+            'observations':observations,'prior_process_finished':True}
+        fresh={'id':uuid.uuid4().hex,'operation':'pr_create','key_sha256':old['key_sha256'],'state':'unresolved',
+               'created_at':stamp,'attempt':2,'predecessor_intent_id':prior_intent_id,'request_sha256':request_sha256}
+        record['intents'].append(fresh)
+        record['events'].extend([{'kind':'pr_negative_reconciliation','intent_id':prior_intent_id,'at':stamp},
+             {'kind':'mutation_intent','operation':'pr_create','intent_id':fresh['id'],'attempt':2,'at':stamp}])
+        record['updated_at']=stamp;_write(path,record)
+        return {'intent_id':fresh['id'],'new':True,'attempt':2,'safe_to_replay':False}
 
 
 def _status_record(record: dict[str, Any], *, inspect_git: bool = True) -> dict[str, Any]:
@@ -449,7 +538,8 @@ def resume(identity: str, *, state_root: Path | None = None) -> dict[str, Any]:
 
 def record_intent(identity: str, operation: str, key: str, *, approved: bool,
                   state_root: Path | None = None,
-                  push_observation: dict[str, Any] | None = None) -> dict[str, Any]:
+                  push_observation: dict[str, Any] | None = None,
+                  request_sha256: str | None = None) -> dict[str, Any]:
     """Record an authorized non-idempotent intent *before* a remote mutation.
 
     A repeat returns the unresolved original, never a new permission to retry.
@@ -480,6 +570,10 @@ def record_intent(identity: str, operation: str, key: str, *, approved: bool,
         at = _utc()
         intent = {"id": uuid.uuid4().hex, "operation": operation, "key_sha256": key_hash,
                   "state": "unresolved", "created_at": at}
+        if request_sha256 is not None:
+            if operation != "pr_create" or not re.fullmatch(r"[0-9a-f]{64}",request_sha256):
+                raise DeliverySessionError("Invalid PR request digest")
+            intent["request_sha256"]=request_sha256
         if push_observation is not None:
             remote = push_observation.get('remote_head_sha')
             if (operation != 'push' or set(push_observation) != {'remote_head_sha'}
@@ -545,7 +639,7 @@ def recover_push_intent(identity: str, key: str, prior_intent_id: str, *,
                    and x.get('key_sha256') == key_hash]
         if len(matches) != 1 or matches[0].get('id') != prior_intent_id or matches[0].get('state') != 'unresolved':
             raise DeliverySessionError('Original unresolved push intent missing or already recovered')
-        if any(x.get('state') != 'confirmed' for x in record['intents'] if x is not matches[0]):
+        if not _intents_terminal_and_valid([x for x in record['intents'] if x is not matches[0]]):
             raise DeliverySessionError('Other unresolved mutation prohibits push recovery')
         if any(c.get('phase') != 'confirmed' for c in record.get('check_publications', [])):
             raise DeliverySessionError('Unresolved GA03 check publication requires reconciliation')
@@ -649,6 +743,10 @@ def confirm_intent(identity: str, operation: str, key: str,
         if proof.get('head_sha') != record['head_sha']:
             raise DeliverySessionError('Mutation evidence source SHA does not match session')
         if operation == 'pr_create':
+            _pr_intent_group(record,key)
+            live=_identity(Path(record['repo_root']),head=record['head'],base=record['base'])
+            if any(live[k]!=record[k] for k in ('head_sha','git_dir','repository')):
+                raise DeliverySessionError('PR confirmation source binding changed')
             value = proof.get('pr_number')
             if type(value) is not int or value < 1:
                 raise DeliverySessionError('PR evidence requires an exact PR number')
@@ -710,15 +808,9 @@ def confirm_intent(identity: str, operation: str, key: str,
                 return {'state':'not-recorded','confirmed':False}
             raise DeliverySessionError('Mutation intent was never recorded')
         if len(items) != 1:
-            # A single explicit push recovery may retain the original
-            # negative-reconciled intent and a second, current attempt.
-            previous = [x for x in items if x.get('state') == 'reconciled_no_remote_change']
-            active = [x for x in items if x.get('state') in ('unresolved', 'confirmed')]
-            if (operation != 'push' or len(items) != 2 or len(previous) != 1
-                or len(active) != 1 or active[0].get('attempt') != 2
-                or active[0].get('predecessor_intent_id') != previous[0].get('id')):
-                raise DeliverySessionError('Duplicate mutation journal entries')
-            found = active[0]
+            if len(items)!=2 or not _recovery_pair_valid(*items,terminal=False):
+                raise DeliverySessionError('Duplicate or malformed mutation journal entries')
+            found = items[-1]
         else:
             found = items[0]
         if found['state'] == 'confirmed':

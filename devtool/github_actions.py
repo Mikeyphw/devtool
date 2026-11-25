@@ -789,7 +789,8 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
             return release_readiness(client, slug, local_root, ref=branch,
                 policy_file=policy or str(Path.home()/'.config/devtool/release-policy.json'),
                 signing_identity=str(getattr(args, 'signing_identity', '') or ''),
-                target=str(getattr(args, 'signing_target', 'android_hud') or 'android_hud'))
+                target=str(getattr(args, 'signing_target', 'android_hud') or 'android_hud'),
+                approval_profile=str(getattr(args,'approval_profile','') or ''))
         return release_setup(client, slug, local_root, ref=branch, policy_file=policy,
             signing_identity=str(getattr(args, 'signing_identity', '') or ''),
             target=str(getattr(args, 'signing_target', 'android_hud') or 'android_hud'),
@@ -799,7 +800,8 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
             fmt=str(getattr(args, 'format', 'apk')),
             minimum_version_code=int(getattr(args, 'minimum_version_code', 1)),
             execute=bool(getattr(args, 'yes', False)),
-            rotate_secrets=bool(getattr(args, 'rotate_secrets', False)))
+            rotate_secrets=bool(getattr(args, 'rotate_secrets', False)),
+            approval_profile=str(getattr(args,'approval_profile','') or ''))
     if action == "release":
         from .actions_release import release_verify
         from .actions_runs import run_id

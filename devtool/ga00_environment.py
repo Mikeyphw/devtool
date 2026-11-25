@@ -10,34 +10,49 @@ import json
 from typing import Any, Mapping
 
 SIGNING_ENVIRONMENT = 'devtool-android-signing'
+APPROVAL_PROFILES = ('multi-reviewer', 'single-owner')
 
 
-def evaluate_environment(raw: Any) -> dict[str, Any]:
+def personal_owner_id(metadata: Any, repository: str) -> int | None:
+    if not isinstance(metadata, dict) or str(metadata.get('full_name') or '').casefold()!=repository.casefold():
+        return None
+    owner=metadata.get('owner')
+    if (not isinstance(owner,dict) or owner.get('type')!='User' or
+            str(owner.get('login') or '').casefold()!=repository.split('/',1)[0].casefold() or
+            type(owner.get('id')) is not int or owner['id']<1):
+        return None
+    return owner['id']
+
+
+def evaluate_environment(raw: Any, *, approval_profile: str = "multi-reviewer", owner_id: int | None = None) -> dict[str, Any]:
     """Evaluate actual GitHub environment metadata without claiming deployment approval."""
     failures: list[str] = []
     if not isinstance(raw, dict) or raw.get('name') != SIGNING_ENVIRONMENT:
         return {'verified': False, 'status': 'INCONCLUSIVE',
                 'reasons': ['ENVIRONMENT_IDENTITY_UNVERIFIED'], 'environment': SIGNING_ENVIRONMENT}
-    protection = raw.get('protection_rules')
-    reviewers = []
-    self_review_prevented = False
-    if not isinstance(protection, list):
-        failures.append('PROTECTION_RULES_UNVERIFIED')
+    if approval_profile not in APPROVAL_PROFILES:
+        return {'verified':False,'status':'NOT_QUALIFIED','reasons':['UNKNOWN_APPROVAL_PROFILE'],'environment':SIGNING_ENVIRONMENT}
+    protection=raw.get('protection_rules')
+    reviewers=[];self_review=None
+    rules=[rule for rule in protection if isinstance(rule,dict) and rule.get('type')=='required_reviewers'] if isinstance(protection,list) else []
+    if len(rules)!=1:
+        failures.append('REQUIRED_REVIEWER_RULE_NOT_PROVEN')
     else:
-        for rule in protection:
-            if not isinstance(rule, dict) or rule.get('type') != 'required_reviewers':
-                continue
-            selected = rule.get('reviewers')
-            if isinstance(selected, list):
-                reviewers = [p for p in selected if isinstance(p, dict)
-                             and p.get('type') in ('User', 'Team')
-                             and isinstance(p.get('reviewer'), dict)
-                             and type(p['reviewer'].get('id')) is int and p['reviewer']['id'] > 0]
-            self_review_prevented = rule.get('prevent_self_review') is True
-    if not reviewers:
+        rule=rules[0];selected=rule.get('reviewers');self_review=rule.get('prevent_self_review')
+        if isinstance(selected,list) and selected and all(isinstance(p,dict) and p.get('type') in ('User','Team') and
+             isinstance(p.get('reviewer'),dict) and type(p['reviewer'].get('id')) is int and p['reviewer']['id']>0 for p in selected):
+            reviewers=selected
+    if not reviewers or len({(p['type'],p['reviewer']['id']) for p in reviewers})!=len(reviewers):
         failures.append('REQUIRED_REVIEWERS_NOT_PROVEN')
-    if not self_review_prevented:
-        failures.append('SELF_REVIEW_RESTRICTION_NOT_PROVEN')
+    if approval_profile=='multi-reviewer':
+        if self_review is not True: failures.append('SELF_REVIEW_RESTRICTION_NOT_PROVEN')
+    else:
+        # An explicitly selected personal-repository profile is not a generic
+        # bypass: require exactly the independently observed repository owner.
+        if type(owner_id) is not int or owner_id<1 or len(reviewers)!=1 or reviewers[0]['type']!='User' or reviewers[0]['reviewer']['id']!=owner_id:
+            failures.append('SINGLE_OWNER_REVIEWER_IDENTITY_NOT_PROVEN')
+        if self_review is not False:
+            failures.append('SINGLE_OWNER_SELF_REVIEW_POLICY_NOT_PROVEN')
     policy = raw.get('deployment_branch_policy')
     branch_protected = (isinstance(policy, Mapping) and
                         policy.get('protected_branches') is True and
@@ -50,7 +65,10 @@ def evaluate_environment(raw: Any) -> dict[str, Any]:
             'verified': not failures,
             'status': 'VERIFIED_CONFIGURATION' if not failures else 'NOT_QUALIFIED',
             'required_reviewer_count': len(reviewers),
-            'self_review_prevented': self_review_prevented,
+            'approval_profile':approval_profile,
+            'owner_reviewer_id':owner_id if approval_profile=='single-owner' else None,
+            'self_review_prevented':self_review is True,
+            'self_review_policy_verified': self_review is (approval_profile=='multi-reviewer'),
             'protected_branches_only': branch_protected,
             'admin_bypass_disabled': raw.get('can_admins_bypass') is False,
             'reasons': failures,
@@ -58,13 +76,18 @@ def evaluate_environment(raw: Any) -> dict[str, Any]:
             'secret_values_verified': False}
 
 
-def inspect_environment(client: Any, repository: str) -> dict[str, Any]:
+def inspect_environment(client: Any, repository: str, *, approval_profile: str = "multi-reviewer", expected_owner_id: int | None = None) -> dict[str, Any]:
     """Only a GitHub GET; unavailable metadata is not approval."""
     try:
         from .github_actions import _slug
         slug = _slug(repository)
         metadata = client._get('/repos/' + slug + '/environments/' + SIGNING_ENVIRONMENT)
-        return evaluate_environment(metadata)
+        owner_id=None
+        if approval_profile=='single-owner':
+            owner_id=personal_owner_id(client.repository(slug),slug)
+            if expected_owner_id is not None and owner_id!=expected_owner_id:
+                return {'environment':SIGNING_ENVIRONMENT,'verified':False,'status':'NOT_QUALIFIED','reasons':['PINNED_OWNER_IDENTITY_CHANGED']}
+        return evaluate_environment(metadata,approval_profile=approval_profile,owner_id=owner_id)
     except (Exception,):
         # Transport/provider exceptions may embed credentials. Never echo them.
         return {'environment': SIGNING_ENVIRONMENT, 'verified': False,
@@ -75,13 +98,18 @@ def inspect_environment(client: Any, repository: str) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description='Read-only release environment policy verification')
     parser.add_argument('--repo', required=True, help='GitHub owner/repository')
+    parser.add_argument('--approval-profile',choices=APPROVAL_PROFILES,default='multi-reviewer')
     args = parser.parse_args(argv)
     from .actions_setup import _gh
     from .github_actions import _slug
     slug = _slug(args.repo)
     try:
         obj = json.loads(_gh(['api', '--method', 'GET', 'repos/' + slug + '/environments/' + SIGNING_ENVIRONMENT]))
-        result = evaluate_environment(obj)
+        owner_id=None
+        if args.approval_profile=='single-owner':
+            metadata=json.loads(_gh(['api','--method','GET','repos/'+slug]))
+            owner_id=personal_owner_id(metadata,slug)
+        result = evaluate_environment(obj,approval_profile=args.approval_profile,owner_id=owner_id)
     except (ValueError, OSError, Exception):
         result = {'environment': SIGNING_ENVIRONMENT, 'verified': False,
                   'status': 'INCONCLUSIVE', 'reasons': ['LIVE_ENVIRONMENT_UNAVAILABLE']}

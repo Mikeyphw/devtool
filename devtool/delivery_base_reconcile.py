@@ -128,7 +128,7 @@ def advance_base_pin(session_id: str, *, expected_old_sha: str,
         if (record.get('native_apply') or {}).get('state') != 'COMMITTED':
             raise BasePinRefused('BASE_PIN_NATIVE_COMMIT_UNVERIFIED')
         intents = record.get('intents')
-        if not isinstance(intents, list) or any(i.get('state') != 'confirmed' for i in intents):
+        if not ds._intents_terminal_and_valid(intents):
             raise BasePinRefused('BASE_PIN_UNRESOLVED_INTENTS')
         if not any(i.get('operation') == 'push' for i in intents):
             raise BasePinRefused('BASE_PIN_VERIFIED_PUSH_INTENT_MISSING')

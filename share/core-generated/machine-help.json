@@ -6708,6 +6708,21 @@
           "spellings": [
             "--signing-target"
           ]
+        },
+        {
+          "choices": [
+            "multi-reviewer",
+            "single-owner"
+          ],
+          "dest": "approval_profile",
+          "help": "Explicit signing approval policy; defaults to private policy or multi-reviewer",
+          "hidden": false,
+          "id": "cli.option.actions.release.readiness.approval_profile",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--approval-profile"
+          ]
         }
       ],
       "path": [
@@ -6903,6 +6918,21 @@
           "required": false,
           "spellings": [
             "--yes"
+          ]
+        },
+        {
+          "choices": [
+            "multi-reviewer",
+            "single-owner"
+          ],
+          "dest": "approval_profile",
+          "help": "Explicit signing approval policy; defaults to private policy or multi-reviewer",
+          "hidden": false,
+          "id": "cli.option.actions.release.setup.approval_profile",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--approval-profile"
           ]
         }
       ],
@@ -40388,6 +40418,42 @@
           "spellings": [
             "--json"
           ]
+        },
+        {
+          "choices": [],
+          "dest": "recover_intent",
+          "help": "Exact original uncertain PR creation intent ID; authorize only one successor",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.recover_intent",
+          "nargs": null,
+          "required": false,
+          "spellings": [
+            "--recover-intent"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "prior_process_finished",
+          "help": "Acknowledge the original PR creation process has exited",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.prior_process_finished",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--prior-process-finished"
+          ]
+        },
+        {
+          "choices": [],
+          "dest": "acknowledge_original_request",
+          "help": "Acknowledge exact original title/body when legacy intent lacks request digest",
+          "hidden": false,
+          "id": "cli.option.delivery.session.pr.acknowledge_original_request",
+          "nargs": 0,
+          "required": false,
+          "spellings": [
+            "--acknowledge-original-request"
+          ]
         }
       ],
       "path": [
@@ -42891,7 +42957,7 @@
       "summary": "M7 credential health and guided recovery"
     }
   ],
-  "digest": "7dc1826836a486c4bc7eb53953f7b46f1ca8e12de17f5fb1d045f7cb52c017ab",
+  "digest": "daa4d37a433e1b7d34641a4fae6f9ff490f6c858e4417f28ae07fdb5fd53beda",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -43475,7 +43541,7 @@
     "registry_command_count": 438
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "239c926009bba12446f160ddfe70c7125aeb1e6cccc929aca820685d8195f2c9",
+  "registry_digest": "0d16086a3fd3c0043a9f91a313732d7562a9554ab650b63bbf95fbe1cc39ec9c",
   "registry_schema_version": 1,
   "schema_version": 1
 }
