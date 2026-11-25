@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GA-02 focused native validation; full 468-case regression run independently.
+"""GA-02 merged GA-01 native validation; full CI24 remains independent.
 
 Native apply uses its own committed-state locks. Keep this validation bounded to
 production paths touched by GA-02 and their direct credential/federation peers;
@@ -13,6 +13,13 @@ if not (ROOT/'.devtool.toml').is_file():
 sys.path.insert(0,str(ROOT))
 import pytest
 TESTS=(
+    'tests/test_dt_hotfix_cli.py',
+    'tests/test_dt_hotfix_m6.py',
+    'tests/test_dt_hotfix_push_scope.py',
+    'tests/test_qualification_workflows.py',
+    'tests/test_native_delivery_contract_v3.py',
+    'tests/test_ga01_managed_pr_writes.py',
+    'tests/test_delivery_m4_integration.py',
     'tests/test_ga02_installation_relationships.py',
     'tests/test_ga02_federation_source_guards.py',
     'tests/test_ga02_live_registry.py',
