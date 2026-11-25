@@ -71,7 +71,7 @@ repository secrets. GitHub returns metadata, not decrypted secret values.
 
 Required signing environment: `devtool-android-signing`. The owner's GitHub
 Settings > Environments configuration must have **required reviewers**,
-**prevent self review**, **deployment branches restricted to protected branches**
+**explicit approval profile**, **deployment branches restricted to protected branches**
 and **administrator bypass disabled**. The read-only Devtool check uses the
 GitHub environment API; unavailable fields, unprotected branches or missing
 approval are **NOT VERIFIED**, not PASS. A YAML environment label alone can
@@ -102,3 +102,9 @@ record redacted receipts. Actual App installation grants, secret value provenanc
 protected signing approvals and live signed output cannot be certified by unit
 tests or earlier CI24 on a different source SHA. P09 and P15 source paths are
 implemented; external configuration/acceptance remains PENDING ENVIRONMENT.
+
+## W2 explicit signing approval profiles
+
+The existing strict `multi-reviewer` default requires self-review prevention. An owner may explicitly select `single-owner` only for a personal repository with a live numeric owner identity, one required User reviewer matching that owner, and explicit `prevent_self_review=false`. Both require protected branches only and admin bypass disabled. No automatic approval, environment creation, secret movement, release publication or bypass is provided.
+
+Read-only verification: `python3 -B -m devtool.ga00_environment --repo Mikeyphw/devtool --approval-profile single-owner`. Provisioning and readiness: use `actions release setup` / `actions release readiness` with `--approval-profile single-owner`. Private schema-2 release policy binds the owner numeric ID and profile; existing schema-1 policies remain strict. An existing conflicting policy is refused, not silently replaced. Recheck actual deployment admission and certificate independently.

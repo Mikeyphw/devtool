@@ -17887,6 +17887,31 @@
     },
     {
       "aliases": [],
+      "canonical": "--approval-profile",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "multi-reviewer",
+          "single-owner"
+        ],
+        "dest": "approval_profile",
+        "help": "Explicit signing approval policy; defaults to private policy or multi-reviewer",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "readiness"
+        ],
+        "required": false
+      },
+      "scope": "actions release readiness",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.readiness.approval_profile",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
       "canonical": "--application-id",
       "config_field_id": null,
       "metadata": {
@@ -18216,6 +18241,31 @@
       "sensitive": false,
       "stable_id": "cli.option.actions.release.setup.yes",
       "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--approval-profile",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [
+          "multi-reviewer",
+          "single-owner"
+        ],
+        "dest": "approval_profile",
+        "help": "Explicit signing approval policy; defaults to private policy or multi-reviewer",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "actions",
+          "release",
+          "setup"
+        ],
+        "required": false
+      },
+      "scope": "actions release setup",
+      "sensitive": false,
+      "stable_id": "cli.option.actions.release.setup.approval_profile",
+      "value_kind": "_StoreAction"
     },
     {
       "aliases": [],
@@ -68117,6 +68167,72 @@
       "value_kind": "_StoreTrueAction"
     },
     {
+      "aliases": [],
+      "canonical": "--recover-intent",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "recover_intent",
+        "help": "Exact original uncertain PR creation intent ID; authorize only one successor",
+        "hidden": false,
+        "nargs": null,
+        "path": [
+          "delivery",
+          "session",
+          "pr"
+        ],
+        "required": false
+      },
+      "scope": "delivery session pr",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.pr.recover_intent",
+      "value_kind": "_StoreAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--prior-process-finished",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "prior_process_finished",
+        "help": "Acknowledge the original PR creation process has exited",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "pr"
+        ],
+        "required": false
+      },
+      "scope": "delivery session pr",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.pr.prior_process_finished",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
+      "aliases": [],
+      "canonical": "--acknowledge-original-request",
+      "config_field_id": null,
+      "metadata": {
+        "choices": [],
+        "dest": "acknowledge_original_request",
+        "help": "Acknowledge exact original title/body when legacy intent lacks request digest",
+        "hidden": false,
+        "nargs": 0,
+        "path": [
+          "delivery",
+          "session",
+          "pr"
+        ],
+        "required": false
+      },
+      "scope": "delivery session pr",
+      "sensitive": false,
+      "stable_id": "cli.option.delivery.session.pr.acknowledge_original_request",
+      "value_kind": "_StoreTrueAction"
+    },
+    {
       "aliases": [
         "--help"
       ],
@@ -99700,6 +99816,57 @@
                                 ],
                                 "required": false,
                                 "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": null,
+                                "const": null,
+                                "default": "",
+                                "dest": "recover_intent",
+                                "group": null,
+                                "help": "Exact original uncertain PR creation intent ID; authorize only one successor",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--recover-intent"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "prior_process_finished",
+                                "group": null,
+                                "help": "Acknowledge the original PR creation process has exited",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--prior-process-finished"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store_true",
+                                "choices": null,
+                                "const": true,
+                                "default": false,
+                                "dest": "acknowledge_original_request",
+                                "group": null,
+                                "help": "Acknowledge exact original title/body when legacy intent lacks request digest",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": 0,
+                                "option_strings": [
+                                  "--acknowledge-original-request"
+                                ],
+                                "required": false,
+                                "type": null
                               }
                             ],
                             "add_help": true,
@@ -128169,6 +128336,26 @@
                                 ],
                                 "required": false,
                                 "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "multi-reviewer",
+                                  "single-owner"
+                                ],
+                                "const": null,
+                                "default": "",
+                                "dest": "approval_profile",
+                                "group": null,
+                                "help": "Explicit signing approval policy; defaults to private policy or multi-reviewer",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--approval-profile"
+                                ],
+                                "required": false,
+                                "type": null
                               }
                             ],
                             "add_help": true,
@@ -128310,6 +128497,26 @@
                                 "nargs": null,
                                 "option_strings": [
                                   "--signing-target"
+                                ],
+                                "required": false,
+                                "type": null
+                              },
+                              {
+                                "action": "store",
+                                "choices": [
+                                  "multi-reviewer",
+                                  "single-owner"
+                                ],
+                                "const": null,
+                                "default": "",
+                                "dest": "approval_profile",
+                                "group": null,
+                                "help": "Explicit signing approval policy; defaults to private policy or multi-reviewer",
+                                "metavar": null,
+                                "mutex": null,
+                                "nargs": null,
+                                "option_strings": [
+                                  "--approval-profile"
                                 ],
                                 "required": false,
                                 "type": null

@@ -1,0 +1,21 @@
+"""W2 integrated native regression inventory; no Gradle or network."""
+TESTS = (
+    'tests/test_w2_pr_recovery.py',
+    'tests/test_w2_signing_profile.py',
+    'tests/test_delivery_session.py',
+    'tests/test_delivery_github.py',
+    'tests/test_delivery_base_reconcile.py',
+    'tests/test_delivery_base_rich_projection.py',
+    'tests/test_delivery_receipt.py',
+    'tests/test_dt25_absent_push_recovery.py',
+    'tests/test_delivery_m4_integration.py',
+    'tests/test_delivery_cli_surface.py',
+    'tests/test_actions_09_release_setup.py',
+    'tests/test_ga00_followup_security.py',
+    'tests/test_ga00_actions_secret_integration.py',
+    'tests/test_ga00_security_baseline.py',
+    'tests/test_core_x04_generated_surfaces.py',
+    'tests/test_ga03_checks.py',
+    'tests/test_native_delivery_continuity_m3.py',
+    'tests/test_native_delivery_contract_v3.py',
+)

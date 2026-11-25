@@ -270,7 +270,8 @@ def _write_policy(root: Path, path: Path, document: dict[str, Any]) -> bool:
 
 
 def release_readiness(client: GitHubActionsClient, slug: str, root: Path, *, ref: str,
-                      policy_file: str, source_sha: str = '', signing_identity: str = '', target: str = 'android_hud') -> dict[str, Any]:
+                      policy_file: str, source_sha: str = '', signing_identity: str = '', target: str = 'android_hud',
+                      approval_profile: str = '') -> dict[str, Any]:
     slug = _slug(slug); branch = _branch(ref)
     repo = client.repository(slug)
     remote = client._get('/repos/' + slug + '/commits/' + quote(branch, safe=''))
@@ -282,7 +283,6 @@ def release_readiness(client: GitHubActionsClient, slug: str, root: Path, *, ref
     workflow = client.workflow(slug, Path(_WORKFLOW).name)
     protected = _protected(client, slug, branch)
     from .ga00_environment import SIGNING_ENVIRONMENT, inspect_environment
-    environment = inspect_environment(client, slug)
     existing_repository_secrets = sorted(set(SECRETS) & _secrets(slug))
     installed_secrets = _environment_secrets(slug)
     missing = [name for name in SECRETS if name not in installed_secrets]
@@ -299,6 +299,15 @@ def release_readiness(client: GitHubActionsClient, slug: str, root: Path, *, ref
             policy_problem = str(exc)
     else:
         policy_problem = 'Private policy is not created yet'
+    from .ga00_environment import APPROVAL_PROFILES
+    saved_profile=policy.get('approval_profile','multi-reviewer') if policy else None
+    selected_profile=approval_profile or saved_profile or 'multi-reviewer'
+    if selected_profile not in APPROVAL_PROFILES:
+        raise GitHubActionsError('Unknown signing approval profile')
+    if saved_profile is not None and saved_profile!=selected_profile:
+        policy_problem='Private release approval profile differs; explicit owner policy replacement required'
+    environment=inspect_environment(client,slug,approval_profile=selected_profile,
+        expected_owner_id=policy.get('owner_reviewer_id') if policy else None)
     source_ok = (not source_sha or source_sha == sha)
     selected_signer = ''
     signer_problem = ''
@@ -322,7 +331,8 @@ def release_readiness(client: GitHubActionsClient, slug: str, root: Path, *, ref
     return {'phase': 'ACTIONS-09', 'repository': slug, 'ref': 'refs/heads/' + branch,
             'source_sha': sha, 'local_source_sha': source_sha or None,
             'policy_file': str(policy_path), 'secret_names_missing': missing,
-            'signing_environment': environment,
+            'signing_environment': environment, 'approval_profile':selected_profile,
+            'policy_problem':policy_problem,
             'repository_level_signing_secret_names': existing_repository_secrets,
             'signing_identity_id': selected_signer or None, 'signing_identity_problem': signer_problem,
             'gates': gates, 'ready': all(gates.values()), 'qualified_release': False,
@@ -332,7 +342,7 @@ def release_readiness(client: GitHubActionsClient, slug: str, root: Path, *, ref
             'next_actions': [msg for condition, msg in (
                 (not gates['source_match'], 'Push your intended source commit before setup'),
                 (not gates['branch_protected'], 'Protect branch independently through owner-approved governance; setup never creates rulesets'),
-                (not gates['signing_environment_protected'], 'Configure signing environment with required independent reviewers, protected branches and admin bypass disabled'),
+                (not gates['signing_environment_protected'], 'Configure signing environment for the selected explicit approval profile, protected branches and admin bypass disabled'),
                 (not gates['signing_secrets_repository_scope_clear'], 'Remove repository-level signing secrets through separate owner-reviewed migration; setup never deletes them'),
                 (bool(missing), 'Provision environment-only secrets from the Devtool signing identity using setup --yes'),
                 (bool(signer_problem), signer_problem),
@@ -344,11 +354,11 @@ def release_setup(client: GitHubActionsClient, slug: str, root: Path, *, ref: st
                   policy_file: str = '', signing_identity: str = '', target: str = 'android_hud',
                   project_dir: str = 'android/devtool-live-hud', module: str = 'app',
                   application_id: str = '', fmt: str = 'apk', minimum_version_code: int = 1,
-                  execute: bool = False, rotate_secrets: bool = False) -> dict[str, Any]:
+                  execute: bool = False, rotate_secrets: bool = False, approval_profile: str = '') -> dict[str, Any]:
     root = root.resolve(); slug = _slug(slug); branch = _branch(ref)
     path = policy_file or str(Path.home()/'.config/devtool/release-policy.json')
     plan = release_readiness(client, slug, root, ref=branch, policy_file=path, source_sha=_source(root),
-                             signing_identity=signing_identity, target=target)
+                             signing_identity=signing_identity, target=target, approval_profile=approval_profile)
     plan['mode'] = 'apply' if execute else 'plan'
     plan['required_inputs'] = {'signing_identity_id': plan['signing_identity_id'], 'target': target,
                                'application_id': application_id or '(auto-discover)',
@@ -369,7 +379,9 @@ def release_setup(client: GitHubActionsClient, slug: str, root: Path, *, ref: st
     policy_target = _policy_target(root, path)
     if policy_target.exists():
         # First validate the independent trust anchor before touching secrets.
-        release_policy(root, str(policy_target))
+        existing_policy=release_policy(root,str(policy_target))
+        if existing_policy.get('approval_profile','multi-reviewer')!=plan['approval_profile']:
+            raise GitHubActionsError('Existing private release approval profile differs; refusing mutation')
     profile = _signing_profile(root, identity_id=signing_identity, target=target)
     # Validate all signing material before any remote mutation. All secret
     # values come from AndroidSigningManager's existing secret providers.
@@ -379,6 +391,8 @@ def release_setup(client: GitHubActionsClient, slug: str, root: Path, *, ref: st
                 'ref': 'refs/heads/' + branch, 'source_sha': plan['source_sha'],
                 'application_id': app, 'signer_sha256': signer, 'format': fmt,
                 'minimum_version_code': minimum_version_code}
+    if plan['approval_profile']=='single-owner':
+        document.update(schema=2,approval_profile='single-owner',owner_reviewer_id=plan['signing_environment']['owner_reviewer_id'])
     if policy_target.exists():
         # Detect conflicting trust anchor before sending secrets or modifying remote.
         release_policy(root, str(policy_target))
@@ -406,6 +420,10 @@ def release_setup(client: GitHubActionsClient, slug: str, root: Path, *, ref: st
                 resolved_secrets['DEVTOOL_ANDROID_SIGNING_KEY_PASSWORD'])
     from .ga00_secret_journal import opened_journal, journal_path, SecretJournalRefusal
     uploaded = []
+    from .ga00_environment import inspect_environment
+    refreshed=inspect_environment(client,slug,approval_profile=plan['approval_profile'],expected_owner_id=document.get('owner_reviewer_id'))
+    if not refreshed['verified'] or refreshed!=plan['signing_environment']:
+        raise GitHubActionsError('Protected signing environment changed before provisioning; refusing mutation')
     # A single locked, fsynced intent journal covers every secret, including
     # interrupted or ambiguous responses. Never replay an unresolved write.
     try:
@@ -443,6 +461,7 @@ def release_setup(client: GitHubActionsClient, slug: str, root: Path, *, ref: st
             'application_id': app, 'secret_names_updated': uploaded,
             'secret_scope': 'environment:' + SIGNING_ENVIRONMENT,
             'environment_protection_verified_before_write': True,
+            'approval_profile':plan['approval_profile'], 'deployment_approved':False,
             'existing_secret_values_unverified': True,
             'secret_assurance': 'metadata_present_value_unverified',
             'secret_values_verified': False,
