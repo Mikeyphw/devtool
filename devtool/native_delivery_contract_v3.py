@@ -154,7 +154,7 @@ def normalize_delivery_contract(manifest: Mapping[str, Any]) -> dict[str, Any] |
         _refuse('inventory must contain 1..48 reviewed changes')
     touched: list[str] = []
     before: dict[str, str] = {}
-    after: dict[str, str] = {}
+    after: dict[str, str | None] = {}
     for item in entries:
         if not isinstance(item, dict):
             _refuse('inventory entries must be objects')
@@ -169,6 +169,8 @@ def normalize_delivery_contract(manifest: Mapping[str, Any]) -> dict[str, Any] |
             before[path] = _sha256(item.get('source_sha256'), 'inventory.source_sha256')
         if action != 'delete':
             after[path] = _sha256(item.get('sha256'), 'inventory.sha256')
+        else:
+            after[path] = None
         if 'size' in item and not _is_int(item['size']):
             _refuse('inventory.size must be a nonnegative integer')
     if manifest.get('touched_paths') != sorted(touched):

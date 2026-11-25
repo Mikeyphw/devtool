@@ -71,7 +71,8 @@ def _ls_remote(repo: str, branch: str, *, runner=None) -> str | None:
     if p.returncode == 2 and not p.stdout.strip():
         return None
     if p.returncode != 0:
-        raise DeliverySessionError('Git remote inspection failed; remote absence was NOT established')
+        raise DeliverySessionError('Git remote inspection failed; remote absence was NOT established; '+
+                                   _git_error_code(p.stderr,p.stdout,p.returncode)+'; git_exit='+str(p.returncode))
     lines = p.stdout.splitlines()
     if len(lines) != 1:
         raise DeliverySessionError('Ambiguous remote branch identity')
@@ -117,25 +118,47 @@ def _git_error_code(stderr: str, stdout: str, rc: int) -> str:
     """Fixed-code classification; never return provider text or secrets."""
     if rc == 0:
         return 'GIT_EXIT_ZERO'
+    if rc < 0:
+        return 'GIT_PROCESS_SIGNAL'
     msg=(str(stderr)+' '+str(stdout)).casefold()
     if 'workflow' in msg and ('permission' in msg or 'refusing' in msg or 'grant' in msg):
         return 'GIT_WORKFLOW_PERMISSION_REJECTED'
-    if 'non-fast-forward' in msg or 'fetch first' in msg:
+    if 'non-fast-forward' in msg or 'fetch first' in msg or 'stale info' in msg:
         return 'GIT_NON_FAST_FORWARD'
-    if 'authentication failed' in msg or 'http 401' in msg or 'http 403' in msg:
+    if ('askpass' in msg and ('no such file' in msg or 'cannot run' in msg or 'permission denied' in msg)):
+        return 'GIT_ASKPASS_UNAVAILABLE'
+    if any(x in msg for x in ('ssl certificate problem', 'certificate verify failed', 'server certificate verification failed', 'certificate has expired')):
+        return 'GIT_TLS_CERTIFICATE_FAILURE'
+    if 'could not resolve host' in msg:
+        return 'GIT_DNS_FAILURE'
+    if 'returned error: 403' in msg or ('permission to' in msg and 'denied' in msg):
+        return 'GIT_HTTP_403'
+    if any(x in msg for x in ('authentication failed', 'returned error: 401', 'could not read username', 'could not read password', 'terminal prompts disabled')):
         return 'GIT_AUTH_REJECTED'
-    if 'remote rejected' in msg or 'pre-receive hook declined' in msg:
+    if 'repository not found' in msg or 'returned error: 404' in msg:
+        return 'GIT_REPOSITORY_UNAVAILABLE'
+    if 'src refspec' in msg and 'does not match any' in msg:
+        return 'GIT_REF_MISSING'
+    if 'remote rejected' in msg or 'pre-receive hook declined' in msg or 'repository rule violations' in msg:
         return 'GIT_REMOTE_REJECTED'
-    if 'unable to access' in msg or 'could not resolve host' in msg or 'timed out' in msg:
+    if any(x in msg for x in ('unable to access', 'timed out', 'failed to connect', 'connection reset', 'remote end hung up')):
         return 'GIT_TRANSPORT_FAILURE'
     return 'GIT_EXIT_NONZERO'
+
+
+def _push_argv(branch: str, *, create_only: bool = False) -> list[str]:
+    ref = f'refs/heads/{branch}'
+    # Empty expected value means atomic create-only. It cannot update an
+    # existing ref, even an ancestor. No general force/lease override.
+    return ['push', '--porcelain', *([f'--force-with-lease={ref}:'] if create_only else []),
+            'origin', f'{ref}:{ref}']
 
 
 def push(session_id: str, *, yes: bool = False, state_root: Path | None = None,
          remote_probe: Callable[[str, str], str | None] = _ls_remote,
          git_push: Callable[[str, str], int] | None = None,
          auth: str = 'auto', recovery_intent_id: str | None = None,
-         prior_process_finished: bool = False) -> dict[str, Any]:
+         prior_process_finished: bool = False, prior_branch_absent: bool = False) -> dict[str, Any]:
     if auth == 'app':
         if remote_probe is not _ls_remote or git_push is not None:
             raise DeliverySessionError('App push cannot override native credential transport')
@@ -169,19 +192,34 @@ def push(session_id: str, *, yes: bool = False, state_root: Path | None = None,
         # No new journal intent is recorded if the credential cannot be used
         # by the real native Git transport. Historic DT19 failed this ordering.
         from .github_app import _check_git_argv
-        _check_git_argv(['push','--porcelain','origin',
-                         f"refs/heads/{bound['head']}:refs/heads/{bound['head']}"],
-                        credential.capability)
+        push_args = _push_argv(bound['head'], create_only=old is None and recovery_intent_id is not None)
+        _check_git_argv(push_args, credential.capability)
+        if old is None and recovery_intent_id is not None and prior_branch_absent:
+            # Probe actual receive-pack/auth with a nonmutating Git dry run
+            # before spending the single journaled recovery attempt. This is
+            # not server-side write qualification; the real push is still gated.
+            dry_args = [*push_args[:2], '--dry-run', *push_args[2:]]
+            _check_git_argv(dry_args, credential.capability)
+            preview = run_git_authenticated(bound['repo_root'],dry_args,credential,timeout=150)
+            if preview.returncode:
+                raise DeliverySessionError('Create-only Git dry-run preflight failed: '+_git_error_code(preview.stderr,preview.stdout,preview.returncode)+'; no new intent recorded')
+        first_delivery_observation = True
         def app_remote_probe(root,branch):
-            return _ls_remote(root,branch,runner=lambda r,argv,timeout:
+            nonlocal first_delivery_observation
+            observed = _ls_remote(root,branch,runner=lambda r,argv,timeout:
                 run_git_authenticated(r,argv,credential,timeout=timeout))
+            if recovery_intent_id is not None and first_delivery_observation and branch == bound['head']:
+                first_delivery_observation = False
+                if observed not in (old, bound['head_sha']):
+                    raise DeliverySessionError('Remote changed between read and write credential preflight')
+            return observed
         def app_git_push(root,branch):
-            return run_git_authenticated(root,
-                ['push','--porcelain','origin',f'refs/heads/{branch}:refs/heads/{branch}'],
-                credential,timeout=150)
+            if branch != bound['head']:
+                raise DeliverySessionError('App recovery branch changed')
+            return run_git_authenticated(root,push_args,credential,timeout=150)
         result=push(session_id,yes=yes,state_root=state_root,remote_probe=app_remote_probe,
                     git_push=app_git_push,auth='auto',recovery_intent_id=recovery_intent_id,
-                    prior_process_finished=prior_process_finished)
+                    prior_process_finished=prior_process_finished, prior_branch_absent=prior_branch_absent)
         result['credential']=credential.public_receipt()
         result['workflow_change_permission_required']=needs_workflows
         return result
@@ -195,6 +233,8 @@ def push(session_id: str, *, yes: bool = False, state_root: Path | None = None,
         return {'state':'PUSH_VERIFIED','pushed_now':False,'head_sha':current,
                 'repository':item['repository'],'source_bound':True}
     if current is not None:
+        if recovery_intent_id is not None and prior_branch_absent:
+            raise DeliverySessionError('Previously absent branch now exists at an unexpected commit')
         _assert_nonforce_fast_forward(item['repo_root'],current,item['head_sha'])
     if not yes:
         return {'state':'PUSH_REQUIRES_APPROVAL','pushed_now':False,
@@ -203,22 +243,32 @@ def push(session_id: str, *, yes: bool = False, state_root: Path | None = None,
     if recovery_intent_id is not None:
         if not prior_process_finished:
             raise DeliverySessionError('Explicit acknowledgement of finished previous Git process is required')
+        # For a new branch, prove the exact same-repository base is still
+        # current. A missing base, changed ref or transport failure is NOT
+        # a verified negative outcome. Existing branch recovery stays narrow.
         if current is None:
-            raise DeliverySessionError('Recovery cannot prove the existing remote branch')
-        # Two independent observations before adopting or using an intent.
+            if not prior_branch_absent:
+                raise DeliverySessionError('Absent-branch recovery requires explicit prior absence evidence acknowledgement')
+            if (item['base_repository'].casefold() != item['repository'].casefold()
+                    or not _SHA.fullmatch(item.get('base_sha') or '')
+                    or remote_probe(item['repo_root'],item['base']) != item['base_sha']):
+                raise DeliverySessionError('Absent-branch recovery requires unchanged exact same-repository base')
         second=remote_probe(item['repo_root'],item['head'])
         if second != current:
             raise DeliverySessionError('Remote changed during negative push reconciliation')
+        if current is None and remote_probe(item['repo_root'],item['base']) != item['base_sha']:
+            raise DeliverySessionError('Remote base changed during negative push reconciliation')
         intent=recover_push_intent(session_id,key,recovery_intent_id,
-                                   remote_old_sha=current,approved=True,state_root=state_root)
+                                   remote_old_sha=current,approved=True,state_root=state_root,
+                                   prior_branch_absent=prior_branch_absent)
     else:
-        intent=record_intent(session_id,'push',key,approved=True,state_root=state_root)
+        intent=record_intent(session_id,'push',key,approved=True,state_root=state_root,
+                             push_observation={'remote_head_sha':current})
         if not intent['new']:
             raise DeliverySessionError('Previous push intent cannot be replayed; reconcile remote branch')
     if git_push is None:
         def git_push(root: str, branch: str):
-            return subprocess.run(['git','-C',root,'push','--porcelain','origin',
-                f'refs/heads/{branch}:refs/heads/{branch}'],capture_output=True,
+            return subprocess.run(['git','-C',root,*_push_argv(branch,create_only=current is None and recovery_intent_id is not None)],capture_output=True,
                 text=True,timeout=150,env={**os.environ,'GIT_TERMINAL_PROMPT':'0'})
     try:
         result=git_push(item['repo_root'],item['head'])
@@ -229,10 +279,15 @@ def push(session_id: str, *, yes: bool = False, state_root: Path | None = None,
             category=_git_error_code(result.stderr,result.stdout,rc)
     except (OSError,subprocess.SubprocessError):
         rc=-1;category='GIT_PROCESS_UNAVAILABLE'
+    except Exception as exc:
+        from .github_app import GitHubAppError
+        if not isinstance(exc, GitHubAppError):
+            raise
+        rc=-1;category='GIT_PROCESS_UNAVAILABLE'
     record_push_diagnostic(session_id,intent['intent_id'],category,rc,state_root=state_root)
     observed=remote_probe(item['repo_root'],item['head'])
     if observed!=item['head_sha']:
-        raise DeliverySessionError('Push outcome uncertain or mismatched: '+category+'; intent remains unresolved, no automatic retry')
+        raise DeliverySessionError('Push outcome uncertain or mismatched: '+category+'; git_exit='+str(rc)+'; intent remains unresolved, no automatic retry')
     confirm_intent(session_id,'push',key,{'head_sha':observed},state_root=state_root)
     return {'state':'PUSH_VERIFIED','pushed_now':True,'git_exit':rc,
             'git_diagnostic':category,'head_sha':observed,'repository':item['repository'],

@@ -413,3 +413,23 @@ def test_adoption_refuses_incomplete_native_transaction(tmp_path, monkeypatch):
     with pytest.raises(DeliverySessionError,match='completed transaction'):
         adopt_applied(repo,overlay,state_root=state)
     assert not list(state.glob('*.json'))
+
+
+def test_static_history_records_each_lifecycle_child(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    from devtool import cli
+    repo,overlay,state,receipt=repo_fixture(tmp_path,monkeypatch)
+    captured=[]
+    monkeypatch.setattr(cli,'append_history',lambda root,item,**kw:(captured.append(item) or state/'history.json'))
+    monkeypatch.setattr(cli,'latest_commit_hash',lambda root:receipt['commit_hash'])
+    monkeypatch.setattr(cli,'collect_hook_events',lambda results:[])
+    monkeypatch.setattr(cli,'_apply_transaction_path',lambda results:'')
+    monkeypatch.setattr(cli,'_repo_local_artifact_history_enabled',lambda root:False)
+    monkeypatch.setattr(cli,'publish_event',lambda event:None)
+    args=SimpleNamespace(command='apply-overlay',validate=False,static_validate=True,validate_only=False,preview=False,
+                         artifact=str(overlay),commit='source-bound native',_devtool_artifact_manifest=receipt['manifest'],_devtool_run_id='static-run')
+    row=cli.OperationResult('artifact-test:second',[],0,0.0,'',[])
+    row.metadata.update(lifecycle_steps_replace_parent=True,lifecycle_steps=[{'name':name,'returncode':0,'skipped':False,'warnings':0} for name in ('artifact-test:first','artifact-test:second')])
+    cli._record_apply_history(SimpleNamespace(repo_root=repo),args,[cli.OperationResult('apply-overlay',[],0,0.0,'',[]),row,cli.OperationResult('git-commit',[],0,0.0,'',[])])
+    assert captured[0]['validation_status']=='ok'
+    assert [x['name'] for x in captured[0]['validation_plan']['validation_step_outcomes']]==['artifact-test:first','artifact-test:second']

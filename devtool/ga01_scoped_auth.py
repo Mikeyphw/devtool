@@ -41,7 +41,9 @@ _OPERATION_CAPABILITIES = {
     'delivery.pr.read': 'pr_read',
     'm8.pr.body.set': 'pr_maintain',
     'm8.pr.labels.replace': 'pr_maintain',
+    'delivery.checks.publish': 'checks_write',
     'delivery.checks.read': 'checks_read',
+    'delivery.checks.evidence': 'checks_evidence',
     'federation.source.fetch': 'repository_read',
 }
 

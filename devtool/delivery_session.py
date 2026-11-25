@@ -166,6 +166,14 @@ def _read(path: Path) -> dict[str, Any]:
         raise DeliverySessionError("Delivery journal has invalid source SHA")
     if not isinstance(raw.get("intents"), list) or not isinstance(raw.get("events"), list):
         raise DeliverySessionError("Delivery journal contains invalid event collections")
+    publications = raw.get("check_publications", [])
+    if not isinstance(publications, list) or len(publications) > 48 or any(
+        not isinstance(item, dict) or item.get("phase") not in ("create_intent", "created", "complete_intent", "confirmed")
+        or item.get("kind") not in ("source", "integration", "federation")
+        or type(item.get("attempt")) is not int or not 1 <= item["attempt"] <= 16
+        for item in publications
+    ):
+        raise DeliverySessionError("Invalid Check publication journal")
     return raw
 
 
@@ -306,7 +314,7 @@ def _public(record: Mapping[str, Any]) -> dict[str, Any]:
         "base_repository": record.get("base_repository", record["repository"]),
         "base_sha": record.get("base_sha"),
     } | {
-        key: record[key] for key in ("pr", "ci", "native_apply") if key in record
+        key: record[key] for key in ("pr", "ci", "native_apply", "check_publications") if key in record
     }
 
 
@@ -337,7 +345,10 @@ def _intents_terminal_and_valid(intents: list[dict[str, Any]]) -> bool:
             or pairs[1].get('predecessor_intent_id') != old.get('id')
             or pairs[1].get('observed_remote_before') !=
                (old.get('reconciliation') or {}).get('remote_head_sha')
-            or (old.get('reconciliation') or {}).get('result') != 'NOT_APPLIED_AT_RECONCILIATION'):
+            or (old.get('reconciliation') or {}).get('result') != 'NOT_APPLIED_AT_RECONCILIATION'
+            or (pairs[1].get('observed_remote_before') is None and
+                (pairs[1].get('remote_observation') != 'VERIFIED_ABSENT' or
+                 (old.get('reconciliation') or {}).get('remote_observation') != 'VERIFIED_ABSENT'))):
         return False
     return all(x.get('state') in ('confirmed', 'reconciled_no_remote_change') for x in intents)
 
@@ -347,7 +358,8 @@ def _status_record(record: dict[str, Any], *, inspect_git: bool = True) -> dict[
     result["intents"] = [{"id": x["id"], "operation": x["operation"], "state": x["state"]}
                          for x in record["intents"]]
     result["events_count"] = len(record["events"])
-    result["resumable"] = _intents_terminal_and_valid(record["intents"])
+    result["check_reconciliation_required"] = any(c.get("phase") != "confirmed" for c in record.get("check_publications", []))
+    result["resumable"] = _intents_terminal_and_valid(record["intents"]) and not result["check_reconciliation_required"]
     if inspect_git:
         try:
             latest = _identity(Path(record["repo_root"]), head=record["head"], base=record["base"])
@@ -436,7 +448,8 @@ def resume(identity: str, *, state_root: Path | None = None) -> dict[str, Any]:
 
 
 def record_intent(identity: str, operation: str, key: str, *, approved: bool,
-                  state_root: Path | None = None) -> dict[str, Any]:
+                  state_root: Path | None = None,
+                  push_observation: dict[str, Any] | None = None) -> dict[str, Any]:
     """Record an authorized non-idempotent intent *before* a remote mutation.
 
     A repeat returns the unresolved original, never a new permission to retry.
@@ -456,6 +469,8 @@ def record_intent(identity: str, operation: str, key: str, *, approved: bool,
             current["git_dir"] != record["git_dir"] or
             current["repository"] != record["repository"]):
             raise DeliverySessionError("Source drift: refusing to create a mutation intent")
+        if any(c.get("phase") != "confirmed" for c in record.get("check_publications", [])):
+            raise DeliverySessionError("Unresolved GA03 check publication requires reconciliation")
         for item in record["intents"]:
             if item["operation"] == operation and item["key_sha256"] == key_hash:
                 return {"intent_id": item["id"], "state": item["state"], "new": False,
@@ -465,6 +480,13 @@ def record_intent(identity: str, operation: str, key: str, *, approved: bool,
         at = _utc()
         intent = {"id": uuid.uuid4().hex, "operation": operation, "key_sha256": key_hash,
                   "state": "unresolved", "created_at": at}
+        if push_observation is not None:
+            remote = push_observation.get('remote_head_sha')
+            if (operation != 'push' or set(push_observation) != {'remote_head_sha'}
+                    or (remote is not None and (not isinstance(remote,str) or not _SHA.fullmatch(remote)))):
+                raise DeliverySessionError('Invalid initial push remote observation')
+            intent['observed_remote_before'] = remote
+            intent['remote_observation'] = 'VERIFIED_ABSENT' if remote is None else 'VERIFIED_PRESENT'
         record["intents"].append(intent)
         record["events"].append({"kind": "mutation_intent", "operation": operation,
                                  "intent_id": intent["id"], "at": at})
@@ -476,7 +498,8 @@ def record_intent(identity: str, operation: str, key: str, *, approved: bool,
 
 
 def recover_push_intent(identity: str, key: str, prior_intent_id: str, *,
-                        remote_old_sha: str, approved: bool, state_root: Path | None = None) -> dict[str, Any]:
+                        remote_old_sha: str | None, approved: bool, state_root: Path | None = None,
+                        prior_branch_absent: bool = False) -> dict[str, Any]:
     """Explicit second push attempt after independent negative remote verification.
 
     Caller proves the previous foreground Git process exited and independently
@@ -486,8 +509,8 @@ def recover_push_intent(identity: str, key: str, prior_intent_id: str, *,
     """
     if not approved or not _HEX32.fullmatch(prior_intent_id or ''):
         raise DeliverySessionError('Push recovery requires explicit approval and original intent ID')
-    if not _SHA.fullmatch(remote_old_sha or ''):
-        raise DeliverySessionError('Cannot recover without an exact existing remote commit')
+    if remote_old_sha is not None and not _SHA.fullmatch(remote_old_sha):
+        raise DeliverySessionError('Cannot recover without an exact remote observation')
     folder = _state_root(state_root, identity=identity)
     with _locked(folder):
         path = _path(folder, identity)
@@ -501,8 +524,22 @@ def recover_push_intent(identity: str, key: str, prior_intent_id: str, *,
         # Single-parent remediation is deliberately narrow: remote is exactly
         # the previous source, not an arbitrary ancestor or different PR.
         parents = _git(Path(record['repo_root']), 'rev-list', '--parents', '-n', '1', 'HEAD').split()
-        if len(parents) != 2 or parents[0] != record['head_sha'] or parents[1] != remote_old_sha:
+        if len(parents) != 2 or parents[0] != record['head_sha']:
+            raise DeliverySessionError('Push recovery requires a single-parent committed source')
+        if remote_old_sha is not None and parents[1] != remote_old_sha:
             raise DeliverySessionError('Push recovery requires exact parent as remote head')
+        if remote_old_sha is None:
+            if not prior_branch_absent:
+                raise DeliverySessionError('Prior branch absence acknowledgement required')
+            native = record.get('native_apply') or {}
+            if (native.get('state') != 'COMMITTED' or native.get('result_commit') != record['head_sha']
+                    or native.get('result_parent') != parents[1] or native.get('validation_status') != 'ok'
+                    or record.get('base_sha') != parents[1]
+                    or native.get('result_tree') != _git(Path(record['repo_root']), 'rev-parse', 'HEAD^{tree}')
+                    or native.get('transaction_status') != 'completed'
+                    or not native.get('transaction_id') or not native.get('history_id')
+                    or _git(Path(record['repo_root']), 'status', '--porcelain')):
+                raise DeliverySessionError('Absent-branch recovery requires exact validated native single-parent commit and base')
         key_hash = hashlib.sha256(key.encode('utf-8')).hexdigest()
         matches = [x for x in record['intents'] if x.get('operation') == 'push'
                    and x.get('key_sha256') == key_hash]
@@ -510,17 +547,31 @@ def recover_push_intent(identity: str, key: str, prior_intent_id: str, *,
             raise DeliverySessionError('Original unresolved push intent missing or already recovered')
         if any(x.get('state') != 'confirmed' for x in record['intents'] if x is not matches[0]):
             raise DeliverySessionError('Other unresolved mutation prohibits push recovery')
+        if any(c.get('phase') != 'confirmed' for c in record.get('check_publications', [])):
+            raise DeliverySessionError('Unresolved GA03 check publication requires reconciliation')
+        if remote_old_sha is None:
+            original_observation = matches[0].get('remote_observation')
+            if original_observation not in (None, 'VERIFIED_ABSENT') or (original_observation == 'VERIFIED_ABSENT' and matches[0].get('observed_remote_before') is not None):
+                raise DeliverySessionError('Initial push did not observe an absent remote branch')
+            completed = [e for e in record['events'] if e.get('kind') == 'push_attempt_result'
+                         and e.get('intent_id') == prior_intent_id and type(e.get('exit_code')) is int
+                         and e['exit_code'] > 0]
+            if len(completed) != 1:
+                raise DeliverySessionError('Absent-branch recovery requires recorded nonzero completed Git attempt')
         stamp = _utc()
         prior = matches[0]
         prior['state'] = 'reconciled_no_remote_change'
         prior['reconciled_at'] = stamp
         prior['reconciliation'] = {'remote_head_sha': remote_old_sha,
                                   'source_head_sha': record['head_sha'],
+                                  'remote_observation': 'VERIFIED_ABSENT' if remote_old_sha is None else 'EXACT_PARENT',
+                                  'prior_absence_authority': ('ORIGINAL_NATIVE_REMOTE_OBSERVATION' if prior.get('remote_observation') == 'VERIFIED_ABSENT' else 'EXPLICIT_HISTORICAL_PREFLIGHT_ACKNOWLEDGEMENT') if remote_old_sha is None else None,
                                   'result': 'NOT_APPLIED_AT_RECONCILIATION'}
         fresh = {'id': uuid.uuid4().hex, 'operation': 'push', 'key_sha256': key_hash,
                  'state': 'unresolved', 'created_at': stamp, 'attempt': 2,
                  'predecessor_intent_id': prior_intent_id,
-                 'observed_remote_before': remote_old_sha}
+                 'observed_remote_before': remote_old_sha,
+                 'remote_observation': 'VERIFIED_ABSENT' if remote_old_sha is None else 'EXACT_PARENT'}
         record['intents'].append(fresh)
         record['events'].append({'kind':'push_negative_reconciliation','intent_id':prior_intent_id,
                                  'remote_sha':remote_old_sha,'at':stamp})
@@ -539,8 +590,10 @@ def record_push_diagnostic(identity: str, intent_id: str, code: str, exit_code: 
     allowed = {'GIT_WORKFLOW_PERMISSION_REJECTED', 'GIT_AUTH_REJECTED',
                'GIT_NON_FAST_FORWARD', 'GIT_REMOTE_REJECTED',
                'GIT_TRANSPORT_FAILURE', 'GIT_EXIT_NONZERO', 'GIT_EXIT_ZERO',
-               'GIT_PROCESS_UNAVAILABLE'}
-    if code not in allowed or type(exit_code) is not int or not -1 <= exit_code <= 255:
+               'GIT_PROCESS_UNAVAILABLE', 'GIT_ASKPASS_UNAVAILABLE',
+               'GIT_TLS_CERTIFICATE_FAILURE', 'GIT_DNS_FAILURE', 'GIT_REF_MISSING',
+               'GIT_PROCESS_SIGNAL', 'GIT_HTTP_403', 'GIT_REPOSITORY_UNAVAILABLE'}
+    if code not in allowed or type(exit_code) is not int or not -128 <= exit_code <= 255:
         raise DeliverySessionError('Unsafe Git push diagnostic')
     folder = _state_root(state_root, identity=identity)
     with _locked(folder):
@@ -825,6 +878,42 @@ def _legacy_required_artifact_test_outcomes(receipt: Mapping[str, Any],
 
 
 
+def _legacy_static_validation_outcomes(receipt: Mapping[str, Any], manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Interpret only the known DT37 static-only history defect; never rewrite it."""
+    if not isinstance(manifest, Mapping): return []
+    validation = manifest.get('validation')
+    if (manifest.get('schema_version') != 3 or receipt.get('validation_status') != 'not-run'
+            or not isinstance(validation,dict) or validation.get('required') is not True
+            or any(validation.get(k) is not False for k in ('restore','build','test'))
+            or any(validation.get(k) for k in ('refs','tasks','gradle_tasks'))):
+        return []
+    names=[]
+    if validation.get('script'):
+        if not isinstance(validation['script'],dict): return []
+        names.append('artifact-validate-script')
+    tests = validation.get('tests') or []
+    if not isinstance(tests,list): return []
+    for t in tests:
+        if (not isinstance(t,dict) or t.get('required') is not True or t.get('runner')!='python'
+                or not isinstance(t.get('id'),str) or not t['id']): return []
+        names.append('artifact-test:'+t['id'])
+    if not names or len(names)!=len(set(names)) or len(names)>64: return []
+    plan=receipt.get('validation_plan')
+    if not isinstance(plan,dict): return []
+    steps=plan.get('validation_step_outcomes')
+    children=receipt.get('child_outcomes')
+    if not isinstance(steps,list) or not isinstance(children,list): return []
+    def passed(x):
+        return isinstance(x,dict) and type(x.get('returncode')) is int and x['returncode']==0 and x.get('skipped') is False
+    if not all(passed(x) for x in children) or not any(x.get('name')=='git-commit' for x in children): return []
+    actual=[x for x in steps if isinstance(x,dict) and x.get('name') in names]
+    if (len(actual)!=len(names) or {x['name'] for x in actual}!=set(names)
+            or not all(passed(x) and x.get('outcome')=='passed' for x in steps)
+            or not all(sum(x.get('name')==name for x in children)==1 for name in names)):
+        return []
+    return [{'name':x['name'],'outcome':'passed','returncode':0,'skipped':False} for x in actual]
+
+
 def _committed_safe_path(value: str) -> str:
     """Reject noncanonical or unsafe tracked paths before native scope checks."""
     from pathlib import PurePosixPath
@@ -968,7 +1057,8 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
                   and item.get('artifact') == artifact_path]
     qualified = [item for item in historical
                  if str(item.get('status') or '').lower() in {'ok', 'applied', 'success', 'succeeded'}
-                 and str(item.get('validation_status') or '').lower() in {'ok', 'passed', 'success', 'succeeded'}
+                 and (str(item.get('validation_status') or '').lower() in {'ok', 'passed', 'success', 'succeeded'}
+                      or bool(_legacy_static_validation_outcomes(item,item.get('manifest') or {})))
                  and isinstance(item.get('manifest'), dict)
                  and isinstance(item.get('sha256'), str)
                  and re.fullmatch(r'[0-9a-f]{64}', item['sha256'])]
@@ -982,6 +1072,9 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
         raise DeliverySessionError('Applied native history lacks completed transaction proof')
     validation = manifest.get('validation') if isinstance(manifest.get('validation'), dict) else {}
     outcomes = (receipt.get('validation_plan') or {}).get('validation_step_outcomes')
+    legacy_static = _legacy_static_validation_outcomes(receipt, manifest)
+    if legacy_static:
+        outcomes = legacy_static
     legacy_child_evidence = False
     if validation.get('required') is True:
         if not isinstance(outcomes, list) or not outcomes:
@@ -999,10 +1092,12 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
         'history_id': str(receipt.get('history_id') or ''),
         'operation_id': str(receipt.get('operation_id') or ''),
         'transaction_id': str(tx['id']), 'transaction_status': tx['status'],
-        'validation_status': str(receipt['validation_status']).lower(),
+        'validation_status': 'ok' if legacy_static else str(receipt['validation_status']).lower(),
         'source_tree': str(manifest.get('base_tree') or ''),
         'artifact_sha256': digest,
     }
+    if legacy_static:
+        native_apply['validation_evidence_source'] = 'original-static-child-outcomes'
     if legacy_child_evidence:
         # Explicit provenance: this is an interpretation of persisted native
         # child outcomes, NOT an invented or rewritten validation_plan receipt.
@@ -1057,6 +1152,8 @@ def adopt_applied(repo: Path, overlay: Path, *, base: str = 'main',
         if not path or path.startswith('/') or '..' in path.split('/') or '\\' in path:
             raise DeliverySessionError('Applied overlay inventory path invalid')
         if action == 'delete':
+            if manifest.get('schema_version') == 3 and (path not in expected or expected[path] is not None):
+                raise DeliverySessionError('Applied deletion must have an explicit null postimage')
             present = subprocess.run(['git', '-C', str(root), 'cat-file', '-e', f'HEAD:{path}'],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
             if present.returncode == 0:

@@ -13,6 +13,7 @@ def main(argv=None):
     ap.add_argument('--prior-intent-id',required=True)
     ap.add_argument('--auth',choices=('app',),default='app')
     ap.add_argument('--prior-process-finished',action='store_true')
+    ap.add_argument('--prior-branch-absent',action='store_true',help='Explicitly acknowledge prior preflight evidence of absent branch (legacy journal)')
     ap.add_argument('--yes',action='store_true')
     ap.add_argument('--reconcile-only',action='store_true')
     args=ap.parse_args(argv)
@@ -24,7 +25,8 @@ def main(argv=None):
         else:
             result=push(args.session_id,auth=args.auth,yes=args.yes,
                         recovery_intent_id=args.prior_intent_id,
-                        prior_process_finished=args.prior_process_finished)
+                        prior_process_finished=args.prior_process_finished,
+                        prior_branch_absent=args.prior_branch_absent)
     except (DeliverySessionError,GitHubAppError,OSError,ValueError) as exc:
         print('DT19_NATIVE_RECOVERY_REFUSED '+str(exc),file=sys.stderr,flush=True)
         return 2
