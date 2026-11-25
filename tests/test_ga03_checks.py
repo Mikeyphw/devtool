@@ -46,6 +46,7 @@ class FakeChecks:
 
 @pytest.fixture
 def fixture(tmp_path,monkeypatch):
+    monkeypatch.setattr(c,'_READBACK_DELAYS',(0,0,0,0))
     root=tmp_path/'repo';root.mkdir();git(root,'init','-q','-b','main');git(root,'config','user.name','Fixture');git(root,'config','user.email','fixture@example.invalid')
     (root/'README').write_text('base');git(root,'add','.');git(root,'commit','-qm','base');git(root,'switch','-c','feature/check')
     (root/'README').write_text('checked');(root/'config').mkdir();(root/'config/delivery-required-ci.json').write_text('{}\n');git(root,'add','.');git(root,'commit','-qm','source');git(root,'remote','add','origin','https://github.com/Example/repo.git')
@@ -229,3 +230,135 @@ def test_check_transport_fixed_endpoints_and_token_scope():
     with pytest.raises(c.CheckRefused,match='WRITE_SCOPE_REQUIRED'):t.create({})
     with pytest.raises(c.CheckRefused,match='HTTP_PATH_REFUSED'):t._call('GET','../other')
     assert len(opener.calls)==1
+
+
+def test_delayed_create_and_completion_readback(fixture,monkeypatch):
+    f=fixture;fake=f.fake;real_runs=fake.runs;real_get=fake.get
+    counts={'POST':0,'PATCH':0}; stale={}
+    def create(payload):
+        FakeChecks.create(fake,payload)
+        stale.update(deepcopy(fake.rows[0]))
+    def runs(sha):
+        if fake.writes==['POST']:
+            counts['POST']+=1
+            if counts['POST']<3:return []
+        return real_runs(sha)
+    def get(identity):
+        if fake.writes==['POST','PATCH']:
+            counts['PATCH']+=1
+            if counts['PATCH']<3:return deepcopy(stale)
+        return real_get(identity)
+    monkeypatch.setattr(fake,'create',create);monkeypatch.setattr(fake,'runs',runs);monkeypatch.setattr(fake,'get',get)
+    result=f.run(yes=True)
+    assert result['phase']=='confirmed' and fake.writes==['POST','PATCH']
+    assert counts['POST']>=3 and counts['PATCH']==3
+
+
+@pytest.mark.parametrize('phase,expected_writes,phase_name',[
+    ('create',['POST'],'create_intent'),('complete',['POST','PATCH'],'complete_intent')])
+def test_readback_exhaustion_preserves_intent_then_resumes_read_only(fixture,monkeypatch,phase,expected_writes,phase_name):
+    f=fixture;fake=f.fake;real=fake.runs;reads=[]
+    def runs(sha):
+        if fake.writes==expected_writes:
+            reads.append(sha);return []
+        return real(sha)
+    monkeypatch.setattr(fake,'runs',runs)
+    with pytest.raises(c.CheckRefused,match=phase.upper()+'_OUTCOME_UNCERTAIN'):f.run(yes=True)
+    assert len(reads)==len(c._READBACK_DELAYS)+1
+    assert fake.writes==expected_writes
+    assert ds._read(f.state/(f.sid+'.json'))['check_publications'][0]['phase']==phase_name
+    with pytest.raises(c.CheckRefused,match='UNCERTAIN'):f.run(yes=True)
+    assert len(reads)==2*(len(c._READBACK_DELAYS)+1) and fake.writes==expected_writes
+    monkeypatch.setattr(fake,'runs',real)
+    receipt=f.run(yes=True)
+    assert receipt['phase']==('created' if phase=='create' else 'confirmed')
+    assert receipt['remote_mutation'] is False and fake.writes==expected_writes
+    if phase=='create':assert f.run(yes=True)['phase']=='confirmed'
+    assert fake.writes==['POST','PATCH']
+
+
+def test_transient_read_failure_is_polled_without_replaying_writes(fixture,monkeypatch):
+    f=fixture;fake=f.fake;real=fake.runs;seen=[]
+    def runs(sha):
+        if fake.writes==['POST'] and not seen:
+            seen.append(sha);raise c.CheckTransportRefused('GET','provider_unavailable','DNS_FAILURE')
+        return real(sha)
+    monkeypatch.setattr(fake,'runs',runs)
+    assert f.run(yes=True)['phase']=='confirmed'
+    assert len(seen)==1 and fake.writes==['POST','PATCH']
+
+
+@pytest.mark.parametrize('diagnostic,classification',[
+    ('TLS_CERTIFICATE_FAILURE','provider_unavailable'),('HTTP_PERMISSION','permission_unavailable')])
+def test_permanent_read_failure_fails_closed_without_polling(fixture,monkeypatch,diagnostic,classification):
+    f=fixture;fake=f.fake;real=fake.runs;seen=[]
+    def runs(sha):
+        if fake.writes:
+            seen.append(sha);raise c.CheckTransportRefused('GET',classification,diagnostic)
+        return real(sha)
+    monkeypatch.setattr(fake,'runs',runs)
+    with pytest.raises(c.CheckRefused,match=diagnostic):f.run(yes=True)
+    assert len(seen)==1 and fake.writes==['POST']
+    assert ds._read(f.state/(f.sid+'.json'))['check_publications'][0]['phase']=='create_intent'
+
+
+def test_readback_rejects_competing_run_without_retry(fixture,monkeypatch):
+    f=fixture;fake=f.fake;real=fake.runs;seen=[]
+    def runs(sha):
+        rows=real(sha)
+        if fake.writes:
+            seen.append(sha);rows.append({**rows[0],'id':95,'external_id':'unregistered'})
+        return rows
+    monkeypatch.setattr(fake,'runs',runs)
+    with pytest.raises(c.CheckRefused,match='UNREGISTERED'):f.run(yes=True)
+    assert len(seen)==1 and fake.writes==['POST']
+
+
+def test_readback_rejects_identity_drift_without_retry(fixture,monkeypatch):
+    f=fixture;fake=f.fake;real=fake.get;seen=[]
+    def get(identity):
+        seen.append(identity);return {**real(identity),'head_sha':'f'*40}
+    monkeypatch.setattr(fake,'get',get)
+    with pytest.raises(c.CheckRefused,match='IDENTITY_MISMATCH'):f.run(yes=True)
+    assert len(seen)==1 and fake.writes==['POST']
+
+
+def test_readback_completion_refuses_changed_id(fixture,monkeypatch):
+    f=fixture;fake=f.fake;real=FakeChecks.finish
+    def finish(identity,payload):
+        real(fake,identity,payload);fake.rows[0]['id']=99
+    monkeypatch.setattr(fake,'finish',finish)
+    with pytest.raises(c.CheckRefused,match='CHECK_ID_DRIFT'):f.run(yes=True)
+    assert fake.writes==['POST','PATCH']
+    assert ds._read(f.state/(f.sid+'.json'))['check_publications'][0]['phase']=='complete_intent'
+
+
+def test_readback_monotonic_budget_prevents_late_confirmation(fixture,monkeypatch):
+    f=fixture;fake=f.fake;real=fake.runs;now=[0.0]
+    monkeypatch.setattr(c.time,'monotonic',lambda:now[0])
+    def runs(sha):
+        if fake.writes:now[0]=c._READBACK_SECONDS+1
+        return real(sha)
+    monkeypatch.setattr(fake,'runs',runs)
+    with pytest.raises(c.CheckRefused,match='CREATE_OUTCOME_UNCERTAIN_TIMEOUT'):f.run(yes=True)
+    assert fake.writes==['POST']
+    assert ds._read(f.state/(f.sid+'.json'))['check_publications'][0]['phase']=='create_intent'
+
+
+def test_checks_transport_diagnostic_redacts_and_caps_request_timeout(monkeypatch):
+    import socket
+    from urllib.error import URLError
+    class Opener:
+        def __init__(self):self.calls=[]
+        def open(self,req,timeout):
+            self.calls.append((req.get_method(),timeout));raise URLError(socket.gaierror(-2,'secret-token-and-private-url'))
+    opener=Opener();access=SimpleNamespace(repository='Example/repo',token='synthetic-private',expires_at=int(time.time())+1000,capability='checks_write')
+    t=c.ChecksTransport(access,opener=opener)
+    monkeypatch.setattr(c.time,'monotonic',lambda:100)
+    t._readback_deadline=103
+    with pytest.raises(c.CheckTransportRefused) as err:t.get(1)
+    assert str(err.value)=='GA03_HTTP_GET_PROVIDER_UNAVAILABLE_DNS_FAILURE' and err.value.retry_read
+    assert opener.calls==[('GET',3)]
+    with pytest.raises(c.CheckTransportRefused) as err:t.create({})
+    assert str(err.value)=='GA03_HTTP_POST_PROVIDER_UNAVAILABLE_DNS_FAILURE' and not err.value.retry_read
+    assert opener.calls==[('GET',3),('POST',20)]

@@ -358,3 +358,40 @@ def test_same_repo_provider_label_is_required_for_exact_match():
     assert _pr_match(row,'owner/repo','feature/new','main','a'*40)
     del row['head']['label']
     assert _pr_match(row,'owner/repo','feature/new','main','a'*40) is None
+
+
+def test_provider_transport_diagnostic_uses_only_fixed_codes():
+    import errno, socket, ssl
+    from urllib.error import URLError, HTTPError
+    from email.message import Message
+    from devtool.delivery_provider import provider_transport_diagnostic as diagnose
+    secret='token=ghp_private_opaque https://private.invalid/path'
+    examples=[(socket.gaierror(-2,secret),'DNS_FAILURE'),(ssl.SSLCertVerificationError(1,secret),'TLS_CERTIFICATE_FAILURE'),
+              (ssl.SSLError(1,secret),'TLS_FAILURE'),(TimeoutError(secret),'TIMEOUT'),
+              (ConnectionRefusedError(secret),'CONNECTION_REFUSED'),(ConnectionResetError(secret),'CONNECTION_INTERRUPTED'),
+              (OSError(errno.ENETUNREACH,secret),'NETWORK_UNREACHABLE'),(OSError(errno.EIO,secret),'OS_TRANSPORT_FAILURE')]
+    for exc,expected in examples:
+        assert diagnose(exc)==diagnose(URLError(exc))==expected
+        assert secret not in diagnose(exc)
+    assert diagnose(URLError(secret))=='TRANSPORT_UNCLASSIFIED'
+    for status,expected in [(401,'HTTP_AUTHENTICATION'),(403,'HTTP_PERMISSION'),(404,'HTTP_RESOURCE_UNVERIFIED'),(422,'HTTP_UNPROCESSABLE'),(429,'HTTP_RATE_LIMIT'),(503,'HTTP_SERVER_ERROR'),(302,'HTTP_REDIRECT_REFUSED')]:
+        assert diagnose(HTTPError(secret,status,secret,Message(),None))==expected
+
+
+def test_provider_shared_request_diagnostics_and_no_post_replay(monkeypatch):
+    import socket
+    from urllib.error import URLError
+    import devtool.delivery_provider as provider
+    class Opener:
+        def __init__(self):self.methods=[]
+        def open(self,request,timeout):
+            self.methods.append(request.get_method());raise URLError(socket.gaierror(-2,'private-token-url'))
+    opener=Opener()
+    client=type('Client',(),{'_opener':opener,'_token':'synthetic-token','timeout':1})()
+    monkeypatch.setattr(provider.time,'sleep',lambda _:None)
+    with pytest.raises(DeliverySessionError) as err:request_json(client,'GET','/repos/a/b/pulls')
+    assert str(err.value)=='GitHub GET provider_unavailable [DNS_FAILURE]'
+    assert opener.methods==['GET','GET']
+    with pytest.raises(DeliverySessionError) as err:request_json(client,'POST','/repos/a/b/pulls',{})
+    assert str(err.value)=='GitHub POST provider_unavailable [DNS_FAILURE] — outcome uncertain; do not retry'
+    assert opener.methods==['GET','GET','POST']

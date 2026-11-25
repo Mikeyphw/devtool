@@ -21,7 +21,7 @@ from urllib.request import Request, build_opener
 
 from . import delivery_session as ds
 from .delivery_github import _ci_candidate, _remote_head
-from .delivery_provider import classify_provider_error
+from .delivery_provider import classify_provider_error, provider_transport_diagnostic
 from .github_app import AppInstallationProvider, _NoRedirect, _repository
 from .ga01_scoped_auth import issue_for_operation
 from .github_relationships import load_registry
@@ -32,12 +32,29 @@ NAMES = {'source': 'Devtool / Source Validation',
          'integration': 'Devtool / Integration Qualification',
          'federation': 'Devtool / Federation Compatibility'}
 _MAX_ATTEMPTS = 16
+# Each cycle performs only bounded GETs. No POST/PATCH is ever retried.
+_READBACK_DELAYS = (0.25, 0.5, 1.0, 2.0)
+_READBACK_SECONDS = 12.0
+_TRANSIENT_READ_DIAGNOSTICS = frozenset({
+    'DNS_FAILURE', 'TIMEOUT', 'CONNECTION_INTERRUPTED', 'CONNECTION_REFUSED',
+    'NETWORK_UNREACHABLE', 'HTTP_SERVER_ERROR', 'HTTP_RATE_LIMIT',
+    'HTTP_RESOURCE_UNVERIFIED', 'OS_TRANSPORT_FAILURE', 'TRANSPORT_UNCLASSIFIED',
+})
 _SHA = re.compile(r'[0-9a-f]{40}\Z')
 _HEX64 = re.compile(r'[0-9a-f]{64}\Z')
 
 
 class CheckRefused(ds.DeliverySessionError):
     pass
+
+
+class CheckTransportRefused(CheckRefused):
+    def __init__(self, method, classification, diagnostic):
+        self.diagnostic = diagnostic
+        self.retry_read = (method == 'GET' and
+                           diagnostic in _TRANSIENT_READ_DIAGNOSTICS and
+                           classification in ('provider_unavailable', 'resource_unverified'))
+        super().__init__('GA03_HTTP_'+method+'_'+classification.upper()+'_'+diagnostic)
 
 
 def _require(condition, reason):
@@ -217,6 +234,7 @@ class ChecksTransport:
         self.slug=_repository(access.repository)
         self.opener=opener or build_opener(_NoRedirect())
         self.client=GitHubActionsClient(access.token,opener=self.opener)
+        self._readback_deadline=None
 
     def _call(self, method, suffix, payload=None):
         _require(self.access.expires_at > int(time.time())+15,'TOKEN_EXPIRES_TOO_SOON')
@@ -232,13 +250,20 @@ class ChecksTransport:
                     headers={'Authorization':'Bearer '+self.access.token,'Accept':'application/vnd.github+json',
                              'X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json','User-Agent':'devtool-ga03/1'})
         try:
-            with self.opener.open(req,timeout=20) as response:
+            timeout=20
+            if method=='GET' and self._readback_deadline is not None:
+                timeout=min(timeout,self._readback_deadline-time.monotonic())
+                if timeout<=0:
+                    raise CheckTransportRefused('GET','provider_unavailable','TIMEOUT')
+            with self.opener.open(req,timeout=timeout) as response:
                 _require(int(response.status)==(201 if method=='POST' else 200),'HTTP_STATUS_UNEXPECTED')
                 raw=response.read(2*1024*1024+1)
             _require(len(raw)<=2*1024*1024,'HTTP_RESPONSE_OVERSIZE')
+            if method=='GET' and self._readback_deadline is not None and time.monotonic()>=self._readback_deadline:
+                raise CheckTransportRefused('GET','provider_unavailable','TIMEOUT')
             return json.loads(raw.decode())
         except (HTTPError,URLError,TimeoutError,OSError) as exc:
-            raise CheckRefused('GA03_HTTP_'+method+'_'+classify_provider_error(exc).upper()) from None
+            raise CheckTransportRefused(method,classify_provider_error(exc),provider_transport_diagnostic(exc)) from None
         except (ValueError,UnicodeError):
             raise CheckRefused('GA03_HTTP_RESPONSE_INVALID') from None
 
@@ -356,6 +381,62 @@ def _match(transport, record, entry, rows):
     return actual
 
 
+def _assert_registered(rows, entry, known, *, reason='UNREGISTERED_APP_CHECK'):
+    _require(not any(r.get('name')==NAMES[entry['kind']] and
+                     (r.get('app') or {}).get('id')==entry['app_id'] and
+                     r.get('external_id') not in known for r in rows),reason)
+
+
+def _readback(transport, record, entry, known):
+    """Bounded independent read-only reconciliation of a persisted intent.
+
+    Absence, an old in-progress state, or transient GET failure never permits
+    another write. An exact identity/payload mismatch is not retried. The same
+    read transport is used for both ordinary and resumed reconciliation.
+    """
+    phase=entry['phase']
+    _require(phase in ('create_intent','complete_intent'),'READBACK_PHASE_INVALID')
+    if phase=='complete_intent':
+        _require(_positive(entry.get('check_id')),'CHECK_ID_INVALID')
+    expected='in_progress' if phase=='create_intent' else 'completed'
+    uncertain='CREATE_OUTCOME_UNCERTAIN' if phase=='create_intent' else 'COMPLETE_OUTCOME_UNCERTAIN'
+    deadline=time.monotonic()+_READBACK_SECONDS
+    last_diagnostic=None
+    actual_transport=isinstance(transport,ChecksTransport)
+    prior_deadline=transport._readback_deadline if actual_transport else None
+    if actual_transport:
+        transport._readback_deadline=min(deadline,prior_deadline) if prior_deadline is not None else deadline
+    try:
+        for index in range(len(_READBACK_DELAYS)+1):
+            if index and time.monotonic()>=deadline:
+                break
+            try:
+                rows=transport.runs(record['head_sha'])
+                _assert_registered(rows,entry,known)
+                actual=_match(transport,record,entry,rows)
+                if actual is not None:
+                    _require(entry.get('check_id') in (None,actual['id']),'CHECK_ID_DRIFT')
+                    if actual['status']==expected:
+                        if time.monotonic()>=deadline:
+                            last_diagnostic='TIMEOUT'; break
+                        return actual
+                    _require(phase=='complete_intent' and actual['status']=='in_progress',
+                             'UNJOURNALED_COMPLETION')
+                last_diagnostic=None
+            except CheckTransportRefused as exc:
+                if not exc.retry_read:
+                    raise
+                last_diagnostic=exc.diagnostic
+            if index<len(_READBACK_DELAYS):
+                remaining=deadline-time.monotonic()
+                if remaining<=0:break
+                time.sleep(min(_READBACK_DELAYS[index],remaining))
+    finally:
+        if actual_transport:
+            transport._readback_deadline=prior_deadline
+    raise CheckRefused('GA03_'+uncertain+('_'+last_diagnostic if last_diagnostic else ''))
+
+
 def publish(session_id, *, kind, attempt, policy, policy_sha256, yes=False, state_root=None):
     """Preview/reconcile or publish one exact native evidence class.
 
@@ -382,10 +463,13 @@ def publish(session_id, *, kind, attempt, policy, policy_sha256, yes=False, stat
         _require(attempt>=highest and attempt<=highest+1,'STALE_OR_NONCONTIGUOUS_ATTEMPT')
         matching=[e for e in own if e.get('attempt')==attempt]
         _require(len(matching)<=1,'JOURNAL_DUPLICATE')
-        rows=transport.runs(record['head_sha'])
         known={e['external_id'] for e in own}
-        _require(not any(r.get('name')==NAMES[kind] and (r.get('app') or {}).get('id')==transport.access.app_id
-                         and r.get('external_id') not in known for r in rows),'UNREGISTERED_APP_CHECK')
+        scope_entry={'kind':kind,'app_id':transport.access.app_id}
+        # An existing unresolved intent goes directly through the bounded
+        # readback path rather than an unbounded extra preflight list.
+        if not matching or matching[0].get('phase') not in ('create_intent','complete_intent'):
+            rows=transport.runs(record['head_sha'])
+            _assert_registered(rows,scope_entry,known)
         def save():
             record['updated_at']=ds._utc(); ds._write(path,record)
         if matching:
@@ -393,19 +477,22 @@ def publish(session_id, *, kind, attempt, policy, policy_sha256, yes=False, stat
             _require(entry['external_id']==external and entry['repository_id']==node.repository_id and entry['policy_sha256']==registry.sha256
                      and entry['app_id']==transport.access.app_id and entry['installation_id']==transport.access.installation_id
                      and entry['evidence_sha256']==_hash(entry['evidence']),'JOURNAL_IDENTITY_DRIFT')
-            actual=_match(transport,record,entry,rows)
             reconciled=False
-            if actual:
-                _require(entry.get('check_id') in (None,actual['id']),'CHECK_ID_DRIFT')
+            if entry['phase'] in ('create_intent','complete_intent'):
+                actual=_readback(transport,record,entry,known)
+                _attest(transport,record,registry)
                 entry['check_id']=actual['id']
-                if entry['phase']=='create_intent' and actual['status']=='in_progress':
-                    entry['phase']='created'; save(); reconciled=True
-                elif entry['phase']=='complete_intent' and actual['status']=='completed':
-                    entry['phase']='confirmed'; save(); reconciled=True
-                elif entry['phase']=='confirmed':
-                    _require(actual['status']=='completed','CONFIRMED_CHECK_DRIFT')
-                elif entry['phase']=='created':
-                    _require(actual['status']=='in_progress','UNJOURNALED_COMPLETION')
+                entry['phase']='created' if entry['phase']=='create_intent' else 'confirmed'
+                save(); reconciled=True
+            else:
+                actual=_match(transport,record,entry,rows)
+                if actual:
+                    _require(entry.get('check_id') in (None,actual['id']),'CHECK_ID_DRIFT')
+                    entry['check_id']=actual['id']
+                    if entry['phase']=='confirmed':
+                        _require(actual['status']=='completed','CONFIRMED_CHECK_DRIFT')
+                    elif entry['phase']=='created':
+                        _require(actual['status']=='in_progress','UNJOURNALED_COMPLETION')
             if entry['phase']=='confirmed':
                 _require(actual is not None and actual['status']=='completed','CONFIRMED_CHECK_MISSING')
                 # Old green checks cannot be presented as current evidence.
@@ -436,9 +523,9 @@ def publish(session_id, *, kind, attempt, policy, policy_sha256, yes=False, stat
                     and r.get('external_id') not in known for r in current_rows),'DUPLICATE_OR_COMPETING_CHECK')
             entry['phase']='create_intent'; entries.append(entry); save()
             write.create(_payload(record,entry,complete=False))
-            # Separate read and no blind retry on absent result.
-            actual=_match(transport,record,entry,transport.runs(record['head_sha']))
-            _require(actual is not None and actual['status']=='in_progress','CREATE_OUTCOME_UNCERTAIN')
+            # Separate bounded read-only polling; absence cannot replay POST.
+            actual=_readback(transport,record,entry,known|{entry['external_id']})
+            _attest(transport,record,registry)
             entry['check_id']=actual['id']; entry['phase']='created'; save()
         else:
             _require(current is not None and current['id']==entry['check_id'] and current['status']=='in_progress','CHECK_BEFORE_UPDATE_DRIFT')
@@ -446,8 +533,8 @@ def publish(session_id, *, kind, attempt, policy, policy_sha256, yes=False, stat
         _require(_hash(_evidence(record,registry,kind,transport))==entry['evidence_sha256'],'STALE_EVIDENCE_BEFORE_COMPLETION')
         entry['phase']='complete_intent'; save()
         write.finish(entry['check_id'],_payload(record,entry,complete=True))
-        actual=_match(transport,record,entry,transport.runs(record['head_sha']))
-        _require(actual is not None and actual['id']==entry['check_id'] and actual['status']=='completed','COMPLETE_OUTCOME_UNCERTAIN')
+        actual=_readback(transport,record,entry,known|{entry['external_id']})
+        _require(actual['id']==entry['check_id'],'CHECK_ID_DRIFT')
         _attest(transport,record,registry)
         entry['phase']='confirmed'; save()
         _require(_hash(_evidence(record,registry,kind,transport))==entry['evidence_sha256'],'STALE_EVIDENCE_AFTER_COMPLETION')
