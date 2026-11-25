@@ -28,7 +28,8 @@ from . import m8_webhooks as wh
 
 _SCHEMA = 'devtool.m8.automation-policy.v1'
 _EVENTS = frozenset(f'{name}:{action}' for name, actions in wh.EVENTS.items() for action in actions)
-_EFFECTS = frozenset({'observe', 'pr_reconcile', 'pr_comment', 'pr_labels_add', 'commit_status',
+_EFFECTS = frozenset({'observe', 'pr_reconcile', 'pr_comment', 'pr_labels_add',
+                      'pr_body_set', 'pr_labels_replace', 'commit_status',
                       'ci_dispatch', 'ci_rerun'})
 _SHA = re.compile(r'[0-9a-f]{40}\Z')
 _HEX32 = re.compile(r'[0-9a-f]{32}\Z')
@@ -57,6 +58,10 @@ def _dt(value: str) -> datetime:
         return datetime.fromisoformat(value.replace('Z', '+00:00'))
     except ValueError:
         refuse('M8_POLICY_EXPIRY_INVALID')
+
+
+def _hash_pin(value: str) -> bool:
+    return type(value) is str and bool(re.fullmatch(r'[a-f0-9]{64}', value))
 
 
 def _positive(value: Any) -> bool:
@@ -94,10 +99,16 @@ class Policy:
     workflow: str
     rerun_run_id: int
     max_events: int
+    pr_body: str = ''
+    pr_body_before_sha256: str = ''
+    pr_labels_before_sha256: str = ''
 
     @classmethod
     def parse(cls, raw: Mapping[str, Any], *, at: datetime | None = None) -> 'Policy':
-        if not isinstance(raw, dict) or set(raw) != set(cls.__dataclass_fields__):
+        optional = {'pr_body', 'pr_body_before_sha256', 'pr_labels_before_sha256'}
+        if (not isinstance(raw, dict) or
+                not (set(raw) == set(cls.__dataclass_fields__) or
+                     set(raw) == set(cls.__dataclass_fields__) - optional)):
             refuse('M8_POLICY_SCHEMA')
         if any(type(raw[k]) is not list for k in ('events', 'effects', 'labels')):
             refuse('M8_POLICY_COLLECTIONS')
@@ -133,7 +144,26 @@ class Policy:
                 or type(p.workflow) is not str):
             refuse('M8_POLICY_CONTENT')
         if ('pr_comment' in p.effects) != bool(p.comment): refuse('M8_POLICY_COMMENT_SCOPE')
-        if ('pr_labels_add' in p.effects) != bool(p.labels): refuse('M8_POLICY_LABEL_SCOPE')
+        label_effects = {'pr_labels_add', 'pr_labels_replace'} & set(p.effects)
+        if (len(label_effects)>1 or
+                ('pr_labels_add' in label_effects and not p.labels) or
+                (not label_effects and bool(p.labels))):
+            refuse('M8_POLICY_LABEL_SCOPE')
+        if (type(p.pr_body) is not str or len(p.pr_body) > 4096
+                or '\x00' in p.pr_body or type(p.pr_body_before_sha256) is not str
+                or type(p.pr_labels_before_sha256) is not str):
+            refuse('M8_POLICY_PR_BODY_SCOPE')
+        if 'pr_body_set' in p.effects:
+            if (not _hash_pin(p.pr_body_before_sha256)
+                    or len(_canonical({'body':p.pr_body})) > 8192):
+                refuse('M8_POLICY_PR_BODY_PREIMAGE_REQUIRED')
+        elif p.pr_body or p.pr_body_before_sha256:
+            refuse('M8_POLICY_PR_BODY_SCOPE')
+        if 'pr_labels_replace' in p.effects:
+            if not _hash_pin(p.pr_labels_before_sha256):
+                refuse('M8_POLICY_LABEL_PREIMAGE_REQUIRED')
+        elif p.pr_labels_before_sha256:
+            refuse('M8_POLICY_LABEL_PREIMAGE_UNAPPROVED')
         if 'commit_status' in p.effects:
             if not _CONTEXT.fullmatch(p.status_context) or p.status_state not in {'pending','success','failure','error'}:
                 refuse('M8_POLICY_STATUS_SCOPE')
@@ -159,6 +189,9 @@ class Policy:
         # A user's approved message is not a secret, but keep it out of routine output.
         d['comment_sha256'] = _hash(self.comment.encode()) if self.comment else ''
         d.pop('comment')
+        d['pr_body_sha256'] = (_hash(self.pr_body.encode('utf-8'))
+             if 'pr_body_set' in self.effects else '')
+        d.pop('pr_body')
         return d
 
 
@@ -182,19 +215,38 @@ def load_policy(root: Path, *, allow_expired: bool = False) -> Policy:
     return p
 
 
-def _native_session(p: Policy) -> dict[str, Any]:
-    from .delivery_session import status
-    d = status(p.session_id)
+def _native_session(p: Policy, *, confirmation: tuple[str, str, str | None] | None = None) -> dict[str, Any]:
+    from .delivery_session import status, m8_confirmation_status, DeliverySessionError
+    if confirmation is None:
+        d = status(p.session_id)
+        eligible = d.get('resumable') is True
+    else:
+        operation, key, intent_id = confirmation
+        try:
+            d = m8_confirmation_status(p.session_id, operation, key, intent_id=intent_id)
+        except DeliverySessionError:
+            refuse('M8_NATIVE_CONFIRMATION_INTENT_DRIFT')
+        eligible = (d.get('resumable') is False and
+                    isinstance(d.get('confirmation_intent_id'), str) and
+                    (intent_id is None or d['confirmation_intent_id'] == intent_id))
     if (d.get('repository') != p.repository or d.get('head_sha') != p.head_sha
             or d.get('head') != p.head_branch or d.get('base') != p.base_branch
             or (d.get('pr') or {}).get('number') != p.pr_number
-            or d.get('source_binding') != 'matching' or d.get('resumable') is not True):
+            or d.get('source_binding') != 'matching' or not eligible):
         refuse('M8_NATIVE_SESSION_DRIFT')
     return d
 
 
-def _client(p: Policy, auth: str, capability: str = 'pr_read'):
+def _client(p: Policy, auth: str, capability: str = 'pr_read',
+            operation: str = ''):
     if auth == 'app':
+        if operation:
+            from .ga01_scoped_auth import capability_for_operation, AppOperationRefused
+            try:
+                if capability_for_operation(operation) != capability:
+                    refuse('M8_GA01_CAPABILITY_MISMATCH')
+            except AppOperationRefused:
+                refuse('M8_GA01_OPERATION_UNAUTHORIZED')
         from .github_app import AppInstallationProvider, make_app_client
         provider = AppInstallationProvider.from_environment()
         if provider.config.installation_id != p.installation_id:
@@ -205,8 +257,9 @@ def _client(p: Policy, auth: str, capability: str = 'pr_read'):
     return GitHubActionsClient(token)
 
 
-def verify_live(p: Policy, auth: str = 'auto', client: Any = None) -> tuple[dict[str, Any], Any, dict[str, Any]]:
-    session = _native_session(p)
+def verify_live(p: Policy, auth: str = 'auto', client: Any = None, *,
+                confirmation: tuple[str, str, str | None] | None = None) -> tuple[dict[str, Any], Any, dict[str, Any]]:
+    session = _native_session(p) if confirmation is None else _native_session(p, confirmation=confirmation)
     client = client or _client(p, auth)
     repo = client._get(f'/repos/{p.repository}')
     if repo.get('id') != p.repository_id or repo.get('full_name') != p.repository:
@@ -347,40 +400,58 @@ def _native_intent(p:Policy, operation:str, key:str):
     rec=record_intent(p.session_id,operation,key,approved=True)
     if not rec.get('new') or rec.get('state')!='unresolved':
         refuse('M8_EXISTING_NATIVE_INTENT_READ_ONLY_RECONCILE')
+    return rec['intent_id']
 
 
-def _native_confirm(p:Policy, operation:str, key:str, proof:dict[str,Any]):
+def _native_confirm(p:Policy, operation:str, key:str, proof:dict[str,Any], *, intent_id:str):
     from .delivery_session import confirm_intent
-    receipt=confirm_intent(p.session_id,operation,key,proof)
+    receipt=confirm_intent(p.session_id,operation,key,proof,expected_intent_id=intent_id)
     if receipt.get('confirmed') is not True: refuse('M8_INTENT_NOT_CONFIRMED')
 
 
-def _post(client:Any, p:Policy, operation:str, number_or_sha:str, payload:dict[str,Any]):
-    """Use existing native GitHubActionsClient credential transport, no new client.
+def _approved_write(client:Any, p:Policy, operation:str, number_or_sha:str,
+                    payload:dict[str,Any]):
+    """Only five finite GitHub writes, never arbitrary URL/method/payload.
 
-    One bounded POST, never redirected, with credentials in memory only.
-    Uncertain outcomes are left to native durable intent reconciliation.
+    Use the native M8 intent before any network request; never retry
+    PATCH/PUT/POST whose outcome is unknown.
     """
     from .github_actions import API_ORIGIN, API_VERSION, GitHubActionsError, GitHubDispatchOutcomeUnknown
     from urllib.request import Request
-    allowed={'pr_comment':f'/repos/{p.repository}/issues/{p.pr_number}/comments',
-             'pr_labels':f'/repos/{p.repository}/issues/{p.pr_number}/labels',
-             'commit_status':f'/repos/{p.repository}/statuses/{p.head_sha}'}
+    allowed={
+        'pr_comment':('POST',f'/repos/{p.repository}/issues/{p.pr_number}/comments'),
+        'pr_labels':('POST',f'/repos/{p.repository}/issues/{p.pr_number}/labels'),
+        'commit_status':('POST',f'/repos/{p.repository}/statuses/{p.head_sha}'),
+        'pr_body_set':('PATCH',f'/repos/{p.repository}/pulls/{p.pr_number}'),
+        'pr_labels_replace':('PUT',f'/repos/{p.repository}/issues/{p.pr_number}/labels')}
     if operation not in allowed: refuse('M8_WRITE_OPERATION_INVALID')
+    method,path=allowed[operation]
+    if operation in ('pr_body_set','pr_labels_replace'):
+        if number_or_sha!=str(p.pr_number):
+            refuse('M8_PR_WRITE_TARGET_NOT_APPROVED')
+        approved = ({'body':p.pr_body} if operation=='pr_body_set'
+                    else {'labels':list(p.labels)})
+        if type(payload) is not dict or payload!=approved:
+            refuse('M8_PR_WRITE_PAYLOAD_NOT_APPROVED')
+    if hasattr(client, 'assert_approved_pr_write') and method in ('PATCH','PUT'):
+        client.assert_approved_pr_write(p.repository,operation,method,p.pr_number)
+    elif getattr(client,'_app_access',None) is not None and method in ('PATCH','PUT'):
+        refuse('M8_APP_PR_WRITE_ADAPTER_MISSING')
     token=getattr(client,'_token',None)
     if not isinstance(token,str) or not token: refuse('M8_AUTHENTICATED_CLIENT_REQUIRED')
     raw=_canonical(payload)
-    if len(raw)>2048: refuse('M8_WRITE_BODY_TOO_LARGE')
+    if len(raw)>(8192 if operation=='pr_body_set' else 2048):
+        refuse('M8_WRITE_BODY_TOO_LARGE')
     headers={'Accept':'application/vnd.github+json','X-GitHub-Api-Version':API_VERSION,
              'User-Agent':'devtool-m8-approved-native/1','Content-Type':'application/json',
              'Authorization':'Bearer '+token}
-    req=Request(API_ORIGIN+allowed[operation],data=raw,headers=headers,method='POST')
+    req=Request(API_ORIGIN+path,data=raw,headers=headers,method=method)
     try:
         with client._opener.open(req,timeout=client.timeout) as response:
             status=int(response.status)
             data=response.read(65537)
     except HTTPError as exc:
-        if int(exc.code) in (400,401,403,404,409,422):
+        if int(exc.code) in (400,401,403,404,409,412,422):
             raise GitHubActionsError('M8 GitHub write definitively rejected by provider') from None
         raise GitHubDispatchOutcomeUnknown('M8 PR mutation outcome uncertain; reconcile read-only') from None
     except (URLError,TimeoutError,OSError):
@@ -390,7 +461,8 @@ def _post(client:Any, p:Policy, operation:str, number_or_sha:str, payload:dict[s
     try: d=json.loads(data)
     except (UnicodeError,ValueError):
         raise GitHubDispatchOutcomeUnknown('M8 invalid mutation receipt; outcome uncertain') from None
-    if not isinstance(d,dict) and not (operation=='pr_labels' and isinstance(d,list)):
+    if not isinstance(d,dict) and not (operation in ('pr_labels',
+            'pr_labels_replace') and isinstance(d,list)):
         raise GitHubDispatchOutcomeUnknown('M8 invalid mutation receipt type; outcome uncertain')
     return d
 
@@ -468,7 +540,12 @@ def maintain(root:Path, effect:str, *, yes:bool,auth:str='auto', request_id:str=
         if _observe(p,root,request_id,auth).get('pre_merge')!='PASSED':
             refuse('M8_CUSTOM_SUCCESS_STATUS_REQUIRES_NATIVE_B3')
     capability='status_write' if effect=='commit_status' else 'pr_maintain'
-    writer=client or _client(p,auth,capability)
+    selected_operation=({'pr_body_set':'m8.pr.body.set',
+                         'pr_labels_replace':'m8.pr.labels.replace'}.get(effect,''))
+    writer=client or _client(p,auth,capability,operation=selected_operation)
+    if auth=='app' and selected_operation and not hasattr(writer,
+            'assert_approved_pr_write'):
+        refuse('M8_APP_PR_WRITE_ADAPTER_MISSING')
     # Always re-read remote identity with the same exact permission-scoped client.
     verify_live(p,auth,writer)
     if effect=='pr_comment':
@@ -477,16 +554,16 @@ def maintain(root:Path, effect:str, *, yes:bool,auth:str='auto', request_id:str=
         request={'body':body}
         operation='pr_comment'
         key=_effect_key(p,effect,request)
-        _native_intent(p,operation,key)
-        response=_post(writer,p,operation,str(p.pr_number),request)
+        intent_id=_native_intent(p,operation,key)
+        response=_approved_write(writer,p,operation,str(p.pr_number),request)
         comment_id=response.get('id') if isinstance(response,dict) else None
         if not _positive(comment_id):refuse('M8_COMMENT_RECEIPT_UNKNOWN_NO_RETRY')
         check=writer._get(f'/repos/{p.repository}/issues/comments/{comment_id}')
         if (check.get('id')!=comment_id or check.get('body')!=body or
                 check.get('issue_url') != f'https://api.github.com/repos/{p.repository}/issues/{p.pr_number}'):
             refuse('M8_COMMENT_POSTIMAGE_UNVERIFIED_NO_RETRY')
-        verify_live(p,auth,writer)
-        _native_confirm(p,operation,key,{'head_sha':p.head_sha,'pr_number':p.pr_number,'comment_id':comment_id})
+        verify_live(p,auth,writer,confirmation=(operation,key,intent_id))
+        _native_confirm(p,operation,key,{'head_sha':p.head_sha,'pr_number':p.pr_number,'comment_id':comment_id},intent_id=intent_id)
         return {'state':'NATIVE_CONFIRMED','effect':effect,'comment_id':comment_id}
     if effect=='pr_labels_add':
         request={'labels':list(p.labels)}
@@ -496,22 +573,72 @@ def maintain(root:Path, effect:str, *, yes:bool,auth:str='auto', request_id:str=
         if set(p.labels)<=existing:
             return {'state':'ALREADY_PRESENT_READ_ONLY','labels':list(p.labels)}
         key=_effect_key(p,effect,request)
-        _native_intent(p,operation,key)
-        _post(writer,p,operation,str(p.pr_number),request)
+        intent_id=_native_intent(p,operation,key)
+        _approved_write(writer,p,operation,str(p.pr_number),request)
         after=writer._get(f'/repos/{p.repository}/issues/{p.pr_number}')
         found={a['name'] for a in after.get('labels',[]) if isinstance(a,dict) and isinstance(a.get('name'),str)}
         if not set(p.labels)<=found:refuse('M8_LABEL_POSTIMAGE_UNVERIFIED_NO_RETRY')
-        verify_live(p,auth,writer)
+        verify_live(p,auth,writer,confirmation=(operation,key,intent_id))
         _native_confirm(p,operation,key,{'head_sha':p.head_sha,'pr_number':p.pr_number,
-                                         'labels':list(p.labels)})
+                                         'labels':list(p.labels)},intent_id=intent_id)
         return {'state':'NATIVE_CONFIRMED','effect':effect,'labels':list(p.labels)}
+    if effect=='pr_body_set':
+        before=writer._get(f'/repos/{p.repository}/pulls/{p.pr_number}')
+        old=before.get('body') if isinstance(before,dict) else None
+        if old is None:old=''
+        if type(old) is not str or _hash(old.encode('utf-8'))!=p.pr_body_before_sha256:
+            refuse('M8_PR_BODY_PREIMAGE_DRIFT_NO_WRITE')
+        if old==p.pr_body:
+            return {'state':'ALREADY_PRESENT_READ_ONLY','effect':effect}
+        operation='pr_body_set'
+        request={'body':p.pr_body}
+        key=_effect_key(p,effect,request)
+        intent_id=_native_intent(p,operation,key)
+        _approved_write(writer,p,operation,str(p.pr_number),request)
+        after=writer._get(f'/repos/{p.repository}/pulls/{p.pr_number}')
+        if not isinstance(after,dict) or after.get('body')!=p.pr_body:
+            refuse('M8_PR_BODY_POSTIMAGE_UNVERIFIED_NO_RETRY')
+        _,_,latest=verify_live(p,auth,writer,confirmation=(operation,key,intent_id))
+        if latest.get('body')!=p.pr_body:refuse('M8_PR_BODY_POSTIMAGE_UNVERIFIED_NO_RETRY')
+        _native_confirm(p,operation,key,{'head_sha':p.head_sha,'pr_number':p.pr_number,
+            'body_sha256':_hash(p.pr_body.encode('utf-8'))},intent_id=intent_id)
+        return {'state':'NATIVE_CONFIRMED','effect':effect}
+    if effect=='pr_labels_replace':
+        before=writer._get(f'/repos/{p.repository}/issues/{p.pr_number}')
+        labels=before.get('labels') if isinstance(before,dict) else None
+        if not isinstance(labels,list) or any(not isinstance(x,dict) or
+                 type(x.get('name')) is not str for x in labels):
+            refuse('M8_LABEL_PREIMAGE_UNVERIFIED_NO_WRITE')
+        old={x['name'] for x in labels}
+        old_hash=_hash(_canonical({'labels':sorted(old)}))
+        if len(old)!=len(labels) or old_hash!=p.pr_labels_before_sha256:
+            refuse('M8_LABEL_PREIMAGE_DRIFT_NO_WRITE')
+        if old==set(p.labels):
+            return {'state':'ALREADY_PRESENT_READ_ONLY','effect':effect}
+        operation='pr_labels_replace'
+        request={'labels':list(p.labels)}
+        key=_effect_key(p,effect,request)
+        intent_id=_native_intent(p,operation,key)
+        _approved_write(writer,p,operation,str(p.pr_number),request)
+        after=writer._get(f'/repos/{p.repository}/issues/{p.pr_number}')
+        result=after.get('labels') if isinstance(after,dict) else None
+        if not isinstance(result,list) or any(not isinstance(x,dict) or
+                type(x.get('name')) is not str for x in result):
+            refuse('M8_LABEL_POSTIMAGE_UNVERIFIED_NO_RETRY')
+        names=[x['name'] for x in result]
+        if len(names)!=len(set(names)) or set(names)!=set(p.labels):
+            refuse('M8_LABEL_POSTIMAGE_UNVERIFIED_NO_RETRY')
+        verify_live(p,auth,writer,confirmation=(operation,key,intent_id))
+        _native_confirm(p,operation,key,{'head_sha':p.head_sha,'pr_number':p.pr_number,
+            'labels':list(p.labels)},intent_id=intent_id)
+        return {'state':'NATIVE_CONFIRMED','effect':effect}
     if effect=='commit_status':
         request={'state':p.status_state,'context':p.status_context,
                  'description':'M8 operator-approved, non-release status'}
         operation='commit_status'
         key=_effect_key(p,effect,request)
-        _native_intent(p,operation,key)
-        response=_post(writer,p,operation,p.head_sha,request)
+        intent_id=_native_intent(p,operation,key)
+        response=_approved_write(writer,p,operation,p.head_sha,request)
         status_id=response.get('id') if isinstance(response,dict) else None
         if not _positive(status_id):refuse('M8_STATUS_RECEIPT_UNKNOWN_NO_RETRY')
         check=writer._get(f'/repos/{p.repository}/commits/{p.head_sha}/status')
@@ -519,10 +646,63 @@ def maintain(root:Path, effect:str, *, yes:bool,auth:str='auto', request_id:str=
                   s.get('id')==status_id and s.get('context')==p.status_context and
                   s.get('state')==p.status_state and s.get('description')==request['description']]
         if len(matching)!=1:refuse('M8_STATUS_POSTIMAGE_UNVERIFIED_NO_RETRY')
-        verify_live(p,auth,writer)
-        _native_confirm(p,operation,key,{'head_sha':p.head_sha,'status_id':status_id,'context':p.status_context})
+        verify_live(p,auth,writer,confirmation=(operation,key,intent_id))
+        _native_confirm(p,operation,key,{'head_sha':p.head_sha,'status_id':status_id,'context':p.status_context},intent_id=intent_id)
         return {'state':'NATIVE_CONFIRMED','effect':effect,'status_id':status_id}
     refuse('M8_MAINTENANCE_UNKNOWN_OPERATION')
+
+
+def reconcile_managed_write(root: Path, effect: str, *, yes: bool, prior_process_finished: bool,
+                            auth: str = 'auto', client: Any = None) -> dict[str, Any]:
+    """Resolve an existing GA-01 intent by read-only exact-postimage evidence.
+
+    No new intent, remote write, policy renewal or replay is permitted. Expiry
+    and revocation block new mutations, not reconciliation of an old receipt.
+    The original foreground process must be finished before invoking this.
+    """
+    if yes is not True or prior_process_finished is not True:
+        refuse('M8_RECONCILIATION_REQUIRES_EXPLICIT_ACKNOWLEDGEMENT')
+    p = load_policy(root, allow_expired=True)
+    pin = wh.current_pin(root)
+    if any(getattr(pin, name) != getattr(p, name) for name in
+           ('repository','repository_id','installation_id','head_sha','pr_number','session_id')):
+        refuse('M8_POLICY_PIN_MISMATCH')
+    if effect not in p.effects or effect not in ('pr_body_set','pr_labels_replace'):
+        refuse('M8_RECONCILIATION_EFFECT_NOT_APPROVED')
+    request = {'body':p.pr_body} if effect == 'pr_body_set' else {'labels':list(p.labels)}
+    key = _effect_key(p,effect,request)
+    session, reader, remote = verify_live(p,auth,client,confirmation=(effect,key,None))
+    intent_id = session['confirmation_intent_id']
+    proof = {'head_sha':p.head_sha,'pr_number':p.pr_number}
+    if effect == 'pr_body_set':
+        if remote.get('body') != p.pr_body:
+            refuse('M8_PR_BODY_POSTIMAGE_UNVERIFIED_NO_RETRY')
+        proof['body_sha256'] = _hash(p.pr_body.encode('utf-8'))
+    else:
+        issue = reader._get(f'/repos/{p.repository}/issues/{p.pr_number}')
+        labels = issue.get('labels') if isinstance(issue,dict) else None
+        if not isinstance(labels,list) or any(not isinstance(x,dict) or
+                type(x.get('name')) is not str for x in labels):
+            refuse('M8_LABEL_POSTIMAGE_UNVERIFIED_NO_RETRY')
+        names = [x['name'] for x in labels]
+        if len(names) != len(set(names)) or set(names) != set(p.labels):
+            refuse('M8_LABEL_POSTIMAGE_UNVERIFIED_NO_RETRY')
+        proof['labels'] = list(p.labels)
+    _,_,latest = verify_live(p,auth,reader,confirmation=(effect,key,intent_id))
+    if effect == 'pr_body_set' and latest.get('body') != p.pr_body:
+        refuse('M8_PR_BODY_POSTIMAGE_UNVERIFIED_NO_RETRY')
+    if effect == 'pr_labels_replace':
+        issue = reader._get(f'/repos/{p.repository}/issues/{p.pr_number}')
+        labels = issue.get('labels') if isinstance(issue,dict) else None
+        if not isinstance(labels,list) or any(not isinstance(x,dict) or
+                type(x.get('name')) is not str for x in labels):
+            refuse('M8_LABEL_POSTIMAGE_UNVERIFIED_NO_RETRY')
+        names = [x['name'] for x in labels]
+        if len(names) != len(set(names)) or set(names) != set(p.labels):
+            refuse('M8_LABEL_POSTIMAGE_UNVERIFIED_NO_RETRY')
+    _native_confirm(p,effect,key,proof,intent_id=intent_id)
+    return {'state':'NATIVE_RECONCILED','effect':effect,'intent_id':intent_id,
+            'remote_write_performed':False,'operation_replayed':False}
 
 
 def m6_events(repo_root:Path, *, limit:int=20) -> list[dict[str,Any]]:
@@ -602,6 +782,11 @@ def main(argv: list[str] | None = None) -> int:
     m=sub.add_parser('maintain');m.add_argument('--effect',choices=sorted(_EFFECTS-{'observe'}),required=True)
     m.add_argument('--auth',choices=('app','gh','auto'),default='auto')
     m.add_argument('--request-id',default='');m.add_argument('--yes',action='store_true')
+    recovery=sub.add_parser('reconcile',help='Read-only remote postimage reconciliation of a pending managed PR write')
+    recovery.add_argument('--effect',choices=('pr_body_set','pr_labels_replace'),required=True)
+    recovery.add_argument('--auth',choices=('app','gh','auto'),default='auto')
+    recovery.add_argument('--yes',action='store_true')
+    recovery.add_argument('--prior-process-finished',action='store_true')
     args=ap.parse_args(argv)
     os.umask(0o077)
     try:
@@ -610,6 +795,9 @@ def main(argv: list[str] | None = None) -> int:
             result=approve(args.state_dir,raw,yes=args.yes,auth=args.auth)
         elif args.command=='revoke':result=revoke(args.state_dir,yes=args.yes)
         elif args.command=='status':result=state(args.state_dir)
+        elif args.command=='reconcile':
+            result=reconcile_managed_write(args.state_dir,args.effect,yes=args.yes,
+                    prior_process_finished=args.prior_process_finished,auth=args.auth)
         elif args.command=='maintain':
             result=maintain(args.state_dir,args.effect,yes=args.yes,auth=args.auth,
                             request_id=args.request_id)

@@ -30,6 +30,11 @@ _BRANCH = re.compile(r'[A-Za-z0-9._/-]{1,200}\Z')
 _MAX_RESPONSE = 1024 * 1024
 _PERMISSIONS = {
     'repository_read': {'contents': 'read'},
+    'actions_read': {'contents': 'read', 'actions': 'read'},
+    'actions_control': {'contents': 'read', 'actions': 'write'},
+    'runners_read': {'contents': 'read', 'administration': 'read'},
+    'release_read': {'contents': 'read'},
+    'release_write': {'contents': 'write'},
     'pr_read': {'pull_requests': 'read', 'contents': 'read'},
     'pr_create': {'pull_requests': 'write', 'contents': 'read'},
     'pr_maintain': {'pull_requests': 'write', 'contents': 'read'},
@@ -228,6 +233,11 @@ class AppInstallationProvider:
 
     @classmethod
     def from_environment(cls, environ: Mapping[str,str] | None = None, *, role: str = 'base') -> 'AppInstallationProvider':
+        if environ is None and role == 'base':
+            # M7's private literal-only config is canonical for local Termux
+            # and Linux operators. No shell sourcing and no PAT fallback.
+            from .federation_app_auth import installed_app_environment
+            environ = installed_app_environment()
         return cls(AppConfig.from_environment(environ, role=role))
 
     def issue(self, repository: str, capability: str) -> InstallationAccess:
@@ -437,14 +447,55 @@ def run_git_authenticated(repo: str | Path, argv: list[str], access: Installatio
 def make_app_client(repository: str, capability: str, *, role: str = 'base'):
     """Auto-renewing Actions transport for GET polling, never auto-replays POST."""
     from .github_actions import GitHubActionsClient
+    # The provider itself reuses M7's private configuration for base roles;
+    # HEAD roles always require their distinct installation variables.
     provider = AppInstallationProvider.from_environment(role=role)
     class _AppClient(GitHubActionsClient):
         def __init__(self):
             self._app_access = None
+            self._bound_repository = _repository(repository)
             super().__init__(token=None)
+        def _assert_repository(self, slug):
+            if _repository(slug).casefold()!=self._bound_repository.casefold():
+                raise GitHubAppError('APP_CLIENT_CROSS_REPOSITORY_REFUSED')
+        def assert_approved_pr_write(self, slug, operation, method, number):
+            """Guard the two managed M8 PR writes before exposing a scoped token."""
+            self._assert_repository(slug)
+            allowed = {'pr_body_set': 'PATCH', 'pr_labels_replace': 'PUT'}
+            if (capability != 'pr_maintain' or allowed.get(operation) != method
+                    or type(number) is not int or number < 1):
+                raise GitHubAppError('APP_CLIENT_PR_WRITE_NOT_ADMITTED')
+
+        def _request(self, path):
+            # Pagination and internal raw GET adapters must never escape the
+            # chosen installation repository, even before the provider does a
+            # real GitHub permission check.
+            parsed=urlsplit(path)
+            prefix='/repos/'+self._bound_repository
+            if (parsed.scheme!='https' or parsed.netloc!='api.github.com'
+                    or not (parsed.path.casefold()==prefix.casefold() or
+                            parsed.path.casefold().startswith(prefix.casefold()+'/'))):
+                raise GitHubAppError('APP_CLIENT_CROSS_REPOSITORY_REFUSED')
+            return super()._request(path)
+        def dispatch(self, slug, workflow_id, ref, inputs):
+            self._assert_repository(slug)
+            if capability!='actions_dispatch':
+                raise GitHubAppError('APP_CLIENT_OPERATION_CAPABILITY_REFUSED')
+            return super().dispatch(slug,workflow_id,ref,inputs)
+        def run_mutation(self, slug, identity, action):
+            self._assert_repository(slug)
+            if capability!='actions_control':
+                raise GitHubAppError('APP_CLIENT_OPERATION_CAPABILITY_REFUSED')
+            return super().run_mutation(slug,identity,action)
+        def artifact_download_location(self, slug, identity):
+            self._assert_repository(slug)
+            return super().artifact_download_location(slug,identity)
+        def run_log_location(self, slug, identity):
+            self._assert_repository(slug)
+            return super().run_log_location(slug,identity)
         @property
         def _token(self):
-            access = provider.issue(repository,capability)
+            access = provider.issue(self._bound_repository,capability)
             self._app_access = access
             return access.token
         @_token.setter
@@ -452,5 +503,5 @@ def make_app_client(repository: str, capability: str, *, role: str = 'base'):
             if value:
                 raise GitHubAppError('APP_CLIENT_TOKEN_OVERRIDE_REFUSED')
         def app_receipt(self):
-            return provider.issue(repository,capability).public_receipt()
+            return provider.issue(self._bound_repository,capability).public_receipt()
     return _AppClient()

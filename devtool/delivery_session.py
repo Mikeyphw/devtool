@@ -24,8 +24,10 @@ _SCHEMA = "devtool.delivery-session.v1"
 _HEX32 = re.compile(r"[0-9a-f]{32}\Z")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
-_OPERATIONS = frozenset({"push", "pr_create", "dispatch", "rerun", "pr_comment", "pr_labels", "commit_status"})
+_OPERATIONS = frozenset({"push", "pr_create", "dispatch", "rerun", "pr_comment", "pr_labels", "commit_status", "pr_body_set", "pr_labels_replace"})
 _MAX_RECORD = 512 * 1024
+_M8_CONFIRM_OPERATIONS = frozenset({"pr_comment", "pr_labels", "commit_status",
+                                    "pr_body_set", "pr_labels_replace"})
 
 
 class DeliverySessionError(RuntimeError):
@@ -326,10 +328,7 @@ def _intents_terminal_and_valid(intents: list[dict[str, Any]]) -> bool:
     return all(x.get('state') in ('confirmed', 'reconciled_no_remote_change') for x in intents)
 
 
-def status(identity: str, *, state_root: Path | None = None, inspect_git: bool = True) -> dict[str, Any]:
-    folder = _state_root(state_root, identity=identity)
-    _directory(folder, create=False)
-    record = _read(_path(folder, identity))
+def _status_record(record: dict[str, Any], *, inspect_git: bool = True) -> dict[str, Any]:
     result = _public(record)
     result["intents"] = [{"id": x["id"], "operation": x["operation"], "state": x["state"]}
                          for x in record["intents"]]
@@ -349,6 +348,60 @@ def status(identity: str, *, state_root: Path | None = None, inspect_git: bool =
         result["event_stream"] = build_stream(record)
     except ValueError as exc:
         raise DeliverySessionError("Delivery event stream invalid") from exc
+    return result
+
+
+def status(identity: str, *, state_root: Path | None = None, inspect_git: bool = True) -> dict[str, Any]:
+    folder = _state_root(state_root, identity=identity)
+    _directory(folder, create=False)
+    return _status_record(_read(_path(folder, identity)), inspect_git=inspect_git)
+
+
+def _m8_pending(record: Mapping[str, Any], operation: str, key: str,
+                intent_id: str | None) -> str:
+    """Prove exactly one matching unresolved M8 intent and all other intents terminal.
+
+    This is confirmation authority, never permission to issue a remote mutation.
+    It deliberately does not promote the session's general resumable flag.
+    """
+    if (operation not in _M8_CONFIRM_OPERATIONS or not isinstance(key, str)
+            or not 1 <= len(key) <= 160 or (intent_id is not None and
+            (not isinstance(intent_id, str) or not _HEX32.fullmatch(intent_id)))):
+        raise DeliverySessionError('Invalid M8 confirmation identity')
+    intents = record['intents']
+    if (not isinstance(intents, list) or not 1 <= len(intents) <= 128
+            or not all(isinstance(x, dict) for x in intents)):
+        raise DeliverySessionError('Invalid M8 confirmation journal')
+    digest = hashlib.sha256(key.encode('utf-8')).hexdigest()
+    matches = [x for x in intents if x.get('operation') == operation
+               and x.get('key_sha256') == digest]
+    if len(matches) != 1 or matches[0].get('state') != 'unresolved':
+        raise DeliverySessionError('Exact unresolved M8 intent is unavailable')
+    pending = matches[0]
+    found = pending.get('id')
+    if (not isinstance(found, str) or not _HEX32.fullmatch(found)
+            or (intent_id is not None and found != intent_id)
+            or sum(x.get('id') == found for x in intents) != 1
+            or not _intents_terminal_and_valid([x for x in intents if x is not pending])):
+        raise DeliverySessionError('M8 confirmation intent or other journal state differs')
+    current = _identity(Path(record['repo_root']), head=record['head'], base=record['base'])
+    if any(current[k] != record[k] for k in ('head_sha', 'git_dir', 'repository')):
+        raise DeliverySessionError('M8 confirmation source binding changed')
+    return found
+
+
+def m8_confirmation_status(identity: str, operation: str, key: str, *,
+                           intent_id: str | None = None,
+                           state_root: Path | None = None) -> dict[str, Any]:
+    """Read-only confirmation-specific view of the integrity-checked native journal."""
+    folder = _state_root(state_root, identity=identity)
+    _directory(folder, create=False)
+    record = _read(_path(folder, identity))
+    pending = _m8_pending(record, operation, key, intent_id)
+    result = _status_record(record)
+    if result['source_binding'] != 'matching' or result['resumable'] is not False:
+        raise DeliverySessionError('M8 confirmation source or session state differs')
+    result['confirmation_intent_id'] = pending
     return result
 
 
@@ -510,7 +563,7 @@ def report(identity: str, *, state_root: Path | None = None) -> dict[str, Any]:
 
 def confirm_intent(identity: str, operation: str, key: str,
                    evidence: Mapping[str, Any], *, state_root: Path | None = None,
-                   optional: bool = False) -> dict[str, Any]:
+                   optional: bool = False, expected_intent_id: str | None = None) -> dict[str, Any]:
     """Resolve a previously journaled mutation using independently observed proof.
 
     The caller must read the external provider *after* a possibly uncertain
@@ -524,6 +577,8 @@ def confirm_intent(identity: str, operation: str, key: str,
     with _locked(folder):
         path = _path(folder, identity)
         record = _read(path)
+        if expected_intent_id is not None:
+            _m8_pending(record, operation, key, expected_intent_id)
         if proof.get('head_sha') != record['head_sha']:
             raise DeliverySessionError('Mutation evidence source SHA does not match session')
         if operation == 'pr_create':
@@ -541,7 +596,8 @@ def confirm_intent(identity: str, operation: str, key: str,
                     live['git_dir'] != record['git_dir'] or
                     live['repository'].casefold() != record['repository'].casefold()):
                 raise DeliverySessionError('Push verification source identity changed')
-        if operation in ('pr_comment', 'pr_labels', 'commit_status'):
+        if operation in ('pr_comment', 'pr_labels', 'commit_status',
+                          'pr_body_set', 'pr_labels_replace'):
             pr_number = (record.get('pr') or {}).get('number')
             if type(pr_number) is not int or pr_number < 1:
                 raise DeliverySessionError('M8 mutation requires exact saved PR identity')
@@ -558,6 +614,22 @@ def confirm_intent(identity: str, operation: str, key: str,
                         len(set(str(v) for v in labels)) != len(labels) or
                         any(not isinstance(v, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,48}', v) for v in labels)):
                     raise DeliverySessionError('M8 labels proof is not exact and bounded')
+            elif operation == 'pr_body_set':
+                if (set(proof) != {'head_sha', 'pr_number', 'body_sha256'} or
+                        proof.get('pr_number') != pr_number or
+                        type(proof.get('body_sha256')) is not str or
+                        not re.fullmatch(r'[a-f0-9]{64}', proof['body_sha256'])):
+                    raise DeliverySessionError('GA01 PR body proof requires bound PR and SHA256')
+            elif operation == 'pr_labels_replace':
+                labels = proof.get('labels')
+                if (set(proof) != {'head_sha', 'pr_number', 'labels'} or
+                        proof.get('pr_number') != pr_number or
+                        type(labels) is not list or not 0 <= len(labels) <= 8 or
+                        len(set(str(v) for v in labels)) != len(labels) or
+                        any(type(v) is not str or
+                            not re.fullmatch(r'[A-Za-z0-9_.-]{1,48}', v)
+                            for v in labels)):
+                    raise DeliverySessionError('GA01 replacement labels proof invalid')
             else:
                 if (set(proof) != {'head_sha', 'status_id', 'context'} or
                         type(proof.get('status_id')) is not int or proof['status_id'] < 1 or

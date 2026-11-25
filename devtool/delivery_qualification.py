@@ -233,8 +233,15 @@ def qualify(session_id: str, *, request_id: str = '', client: Any = None,
     else:
         try:
             if client is None:
-                token,_ = resolve_token(auth)
-                client = GitHubActionsClient(token)
+                if auth == 'app':
+                    # Qualify in the upstream/base repository using only the
+                    # read-scoped installation; never borrow fork credentials.
+                    from .github_app import make_app_client
+                    client = make_app_client(item.get('base_repository') or item['repository'],
+                                             'checks_read')
+                else:
+                    token,_ = resolve_token(auth)
+                    client = GitHubActionsClient(token)
             live, merge = _live_pr(client,item)
             required = _required_ci(client,item,live,merge)
             regression = _regression(client,item,request_id,state_root=dispatch_state_root)
