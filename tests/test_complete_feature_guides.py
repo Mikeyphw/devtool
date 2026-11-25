@@ -73,3 +73,18 @@ def test_guides_explain_warning_scope_and_major_feature_families() -> None:
         assert "durable" in text.lower()
         assert "workflow" in text.lower()
         assert "machine" in text.lower()
+
+
+def test_guide_parity_is_in_early_source_and_native_gates() -> None:
+    import runpy
+    import tomllib
+
+    module = "tests/test_complete_feature_guides.py"
+    config = tomllib.loads((ROOT / ".devtool.toml").read_text(encoding="utf-8"))
+    fixed_point, = [entry for entry in config["test"] if entry["id"] == "core-g3-generated-fixed-point"]
+    assert module in fixed_point["command"]
+    assert module in runpy.run_path(str(ROOT / "tests/w2_native_validate.py"))["TESTS"]
+    ga_source = (ROOT / ".github/workflows/devtool-ga-source-acceptance.yml").read_text(encoding="utf-8")
+    assert any(line.strip().startswith("run: python3 -B -m pytest ") and module in line.split() for line in ga_source.splitlines())
+    canonical = (ROOT / ".github/workflows/devtool-delivery-s7-p02.yml").read_text(encoding="utf-8")
+    assert "run: python -B tools/generate_complete_feature_guides.py --check" in canonical

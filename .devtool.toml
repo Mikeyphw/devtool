@@ -4445,7 +4445,7 @@ id = "core-g3-generated-fixed-point"
 name = "CORE-G3 generated surface fixed point"
 runner = "pytest"
 timeout_seconds = 600
-command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_core_x04_generated_surfaces.py"]
+command = ["python", "-m", "pytest", "-q", "--tb=short", "tests/test_core_x04_generated_surfaces.py", "tests/test_complete_feature_guides.py"]
 
 [[test]]
 id = "core-g3-wrapper-federation-ssh"
