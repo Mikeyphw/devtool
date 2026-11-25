@@ -119,6 +119,38 @@ def resolve_token(mode: str = "auto", *, environ: Mapping[str, str] | None = Non
     return None, "anonymous"
 
 
+def _actions_token(args: Any, repository: str) -> tuple[str | None, str]:
+    """One operation-bound App token, or unchanged explicit legacy identity."""
+    mode = str(getattr(args, 'auth', 'auto') or 'auto')
+    if mode != 'app':
+        return resolve_token(mode)
+    from .ga01_scoped_auth import AppOperationRefused, actions_operation, issue_for_operation
+    try:
+        scope = issue_for_operation(repository, actions_operation(args))
+    except AppOperationRefused as exc:
+        raise GitHubActionsError(str(exc)) from None
+    return scope.token, 'github-app'
+
+
+def _actions_client(args: Any, repository: str) -> tuple['GitHubActionsClient', str]:
+    """Bound Actions client with live M4 refresh during long watch operations.
+
+    App route is a repo- and operation-scoped short-lived provider with a
+    five-minute refresh margin; it never switches to PAT when App is missing.
+    """
+    mode = str(getattr(args,'auth','auto') or 'auto')
+    if mode != 'app':
+        token,kind = resolve_token(mode)
+        return GitHubActionsClient(token),kind
+    from .ga01_scoped_auth import AppOperationRefused, actions_operation, _OPERATION_CAPABILITIES
+    from .github_app import make_app_client, GitHubAppError
+    try:
+        operation=actions_operation(args)
+        return make_app_client(_slug(repository),_OPERATION_CAPABILITIES[operation]),'github-app'
+    except (AppOperationRefused,GitHubAppError) as exc:
+        raise GitHubActionsError(str(exc)) from None
+
+
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
         return None
@@ -139,7 +171,7 @@ class GitHubActionsClient:
         self.timeout = timeout
         self._opener = opener if opener is not None else build_opener(_NoRedirect())
 
-    def _request(self, path: str) -> tuple[dict[str, Any], Mapping[str, str]]:
+    def _request(self, path: str, *, expect_list: bool = False) -> tuple[Any, Mapping[str, str]]:
         parsed = urlsplit(path)
         if (parsed.scheme != "https" or parsed.netloc != "api.github.com"
                 or parsed.username or parsed.password or parsed.fragment):
@@ -184,7 +216,7 @@ class GitHubActionsClient:
             result = json.loads(data)
         except (UnicodeDecodeError, ValueError):
             raise GitHubActionsError("GitHub API returned invalid JSON") from None
-        if not isinstance(result, dict):
+        if not isinstance(result, list if expect_list else dict):
             raise GitHubActionsError("Unexpected GitHub API response shape")
         return result, response_headers
 
@@ -211,6 +243,30 @@ class GitHubActionsClient:
                            if isinstance(obj.get("permissions"), dict) else {},
             "html_url": f"https://github.com/{slug}",
         }
+
+    def user_repositories(self, *, max_results: int = 100) -> list[dict[str, Any]]:
+        """Bounded account-visible owner, collaborator and organization list, GET only.
+
+        This is discovery, not a grant; App installation membership is checked
+        independently. No cached pagination or fallback to anonymous identity.
+        """
+        if not self._token or type(max_results) is not int or not 1 <= max_results <= 300:
+            raise GitHubActionsError("Authenticated bounded repository discovery required")
+        items: list[dict[str, Any]] = []
+        per_page = min(100, max_results)
+        for page in range(1, 5):
+            remaining = max_results-len(items)
+            if remaining <= 0:
+                break
+            url = API_ORIGIN + ("/user/repos?affiliation=owner%2Ccollaborator%2Corganization_member"
+                                f"&per_page={per_page}&page={page}")
+            response, _ = self._request(url, expect_list=True)
+            if len(response)>per_page or any(not isinstance(row, dict) for row in response):
+                raise GitHubActionsError("Repository discovery response shape invalid")
+            items.extend(response[:remaining])
+            if len(response)<per_page:
+                break
+        return items
 
     def viewer(self) -> dict[str, Any]:
         if not self._token:
@@ -484,11 +540,11 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
         repo = resolve_repository(str(getattr(args, "github_repo", "") or ""), local_root)
         if not bool(getattr(args, 'live', False)):
             return lineage_snapshot(local_root, repo, str(getattr(args, "pipeline_id", "") or ""))
-        token, _ = resolve_token(str(getattr(args, 'auth', 'auto') or 'auto'))
-        if not token:
+        client,_ = _actions_client(args, repo)
+        if not getattr(client,'_token',None):
             raise GitHubActionsError('R04 --live requires a credentialed read-only GitHub API session')
         return lineage_snapshot(local_root, repo, str(getattr(args, "pipeline_id", "") or ""),
-                                live_client=GitHubActionsClient(token))
+                                live_client=client)
     if action == 'qualification':
         from .actions_qualification import qualification_report
         command = str(getattr(args, 'qualification_command', '') or '')
@@ -508,8 +564,7 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
             return gitlab_pipelines(project_id=int(project_raw),
                 token=environ.get('GITLAB_TOKEN',''),limit=int(getattr(args,'limit',20)))
         slug=resolve_repository(str(getattr(args,'github_repo','') or ''),local_root)
-        token,source=resolve_token(str(getattr(args,'auth','auto') or 'auto'))
-        client=GitHubActionsClient(token)
+        client,source=_actions_client(args, slug)
         if sub=='metrics':
             return ci_metrics(client,slug,limit=int(getattr(args,'limit',30)))
         if sub=='runners':
@@ -529,11 +584,19 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
     if action in ('review', 'collect'):
         from .actions_handoff import review_run, collect_verified
         explicit = str(getattr(args, 'github_repo', '') or '')
-        token, authentication = resolve_token(str(getattr(args, 'auth', 'auto') or 'auto'))
-        client = GitHubActionsClient(token)
         request = str(getattr(args, 'request_id', '') or '')
         if not request:
             raise GitHubActionsError('Specify exact --request-id; no implicit run selection')
+        if str(getattr(args,'auth','auto') or 'auto') == 'app':
+            from .actions_runs import _read_dispatch_receipt
+            _, bound_receipt = _read_dispatch_receipt(request)
+            bound_repo = _slug(str(bound_receipt['repository']))
+            if explicit and _slug(explicit).casefold() != bound_repo.casefold():
+                raise GitHubActionsError('GA01_RECEIPT_REPOSITORY_MISMATCH')
+            client, authentication = _actions_client(args, bound_repo)
+        else:
+            # Preserve the preexisting non-App handoff/client behavior.
+            client, authentication = _actions_client(args, explicit)
         if action == 'review':
             return {'authentication': authentication,
                     **review_run(client, request, repository=explicit)}
@@ -671,18 +734,17 @@ def actions_cli(args: Any, local_root: Path, *, observation_callback: Any = None
                 raise GitHubActionsError("Uncorrelated dispatch cannot be bound with --run-id; inspect it using actions view --run-id")
             if explicit and _slug(explicit).lower() != _slug(pending_receipt["repository"]).lower():
                 raise GitHubActionsError("Request receipt is bound to another repository")
-            token, authentication = resolve_token(str(getattr(args, "auth", "auto") or "auto"))
+            client, authentication = _actions_client(args, _slug(pending_receipt['repository']))
             from .actions_dispatch import inspect_uncorrelated_dispatch
             return {"authentication":authentication, **inspect_uncorrelated_dispatch(
-                GitHubActionsClient(token), request_id)}
+                client, request_id)}
     if request_id and action in ("view", "jobs", "watch", "resume", "logs", "cancel", "rerun", "artifacts", "download", "verify"):
         from .actions_runs import _safe_receipt
         _, bound = _safe_receipt(request_id)
         slug = _slug(explicit) if explicit else _slug(bound["repository"])
     else:
         slug = resolve_repository(explicit, local_root)
-    token, authentication = resolve_token(str(getattr(args, "auth", "auto") or "auto"))
-    client = GitHubActionsClient(token)
+    client, authentication = _actions_client(args, slug)
     if action == 'ci':
         from .actions_polyglot import ci_dispatch, ci_check, ci_collect
         sub = str(getattr(args, 'ci_command', '') or '')

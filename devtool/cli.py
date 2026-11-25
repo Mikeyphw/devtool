@@ -2961,6 +2961,11 @@ def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentPars
     exclusive_tasks = _exclusive_validation_task_values(args)
     if exclusive_tasks and bool(getattr(args, "static_validate", False)):
         parser.error("--task defines an executable native-task plan and cannot be combined with --static-validate.")
+    if bool(getattr(args, "static_validate", False)) and (
+        getattr(args, "validate", False) or getattr(args, "validate_only", False)
+        or getattr(args, "defer_validate", False) or getattr(args, "no_validate", False)
+    ):
+        parser.error("--static-validate is an exclusive one-script validation mode.")
     if args.command in {"validate", "v"}:
         scope = str(getattr(args, "validate_scope", "") or "")
         if scope and scope not in {"overlay", "overlays"}:
@@ -2992,8 +2997,13 @@ def _validate_apply_args(args: argparse.Namespace, parser: argparse.ArgumentPars
         parser.error("--no-commit cannot be combined with --commit.")
     if getattr(args, "no_rollback_on_failure", False) and getattr(args, "rollback_on_failure", False):
         parser.error("--rollback-on-failure cannot be combined with --no-rollback-on-failure.")
-    if (args.skip_restore or args.skip_build or args.skip_test) and not (args.validate or args.validate_only or deferred):
-        parser.error("--skip-restore, --skip-build, and --skip-test require --validate, --validate-only, or --defer-validate.")
+    # Schema-3 manifest defaults can set all three skip flags during an
+    # explicitly requested --static-validate. Rejecting them would prevent the
+    # one required source validator from executing at all (DT-34).
+    if (args.skip_restore or args.skip_build or args.skip_test) and not (
+        args.validate or args.validate_only or deferred or bool(getattr(args, "static_validate", False))
+    ):
+        parser.error("--skip-restore, --skip-build, and --skip-test require a validation mode.")
     if exclusive_tasks and not (args.validate or args.validate_only or deferred):
         parser.error("--task on apply requires --validate, --validate-only, or --defer-validate.")
     if args.validate_only and args.validate:
@@ -3086,6 +3096,12 @@ def _required_artifact_validation_execution_guard(
         for result in validation_results
     )
     artifact_check_ran = artifact_validation_result is not None and not artifact_validation_result.skipped
+    if artifact_check_ran and artifact_validation_result.metadata.get("lifecycle_steps_replace_parent"):
+        artifact_check_ran = any(
+            isinstance(row, dict) and not row.get("skipped", True)
+            and str(row.get("name", "")).startswith(("artifact-valid", "artifact-test:"))
+            for row in artifact_validation_result.metadata.get("lifecycle_steps", [])
+        )
     if repository_check_ran or artifact_check_ran:
         minimum_phase = str(minimum_phase or policy.get("minimum_phase") or "finalize").strip().lower().replace("_", "-")
         if minimum_phase == "final":
@@ -6864,12 +6880,20 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
             or r.name.startswith("artifact-valid")
             or r.name.startswith("artifact-test:")
             or r.name == "validation-contract"
+            or bool((r.metadata or {}).get("lifecycle_steps_replace_parent"))
         )
     ]
-    if not (getattr(args, "validate", False) or getattr(args, "validate_only", False)):
+    if not (getattr(args, "validate", False) or getattr(args, "validate_only", False)
+            or getattr(args, "static_validate", False)):
         validation_status = "not-run"
     elif validation_results and any(r.returncode != 0 for r in validation_results):
         validation_status = "failed"
+    elif getattr(args, "static_validate", False) and not any(
+        (not r.skipped and r.name.startswith(("artifact-valid", "artifact-test:")))
+        or any(not row.get("skipped", True) and str(row.get("name", "")).startswith(("artifact-valid", "artifact-test:"))
+               for row in (r.metadata or {}).get("lifecycle_steps", []))
+        for r in validation_results):
+        validation_status = "not-run"
     else:
         validation_status = "ok"
     commit_hash = ""
@@ -6942,6 +6966,16 @@ def _record_apply_history(config: ProjectConfig, args: argparse.Namespace, resul
         step_outcomes = []
         for result in validation_results:
             metadata = dict(result.metadata or {})
+            if metadata.get("lifecycle_steps_replace_parent"):
+                for row in metadata.get("lifecycle_steps", []):
+                    if not str(row.get("name", "")).startswith(("artifact-valid", "artifact-test:")):
+                        continue
+                    rc = row["returncode"]
+                    skipped = row["skipped"]
+                    step_outcomes.append({"name": row["name"], "outcome": "skipped" if skipped else "failed" if rc else "warning" if row.get("warnings", 0) else "passed",
+                                          "returncode": rc, "skipped": skipped, "warnings": row.get("warnings", 0),
+                                          "failure_kind": row.get("failure_kind", "")})
+                continue
             warnings = sum(1 for issue in result.issues if str(issue.severity).lower() == "warning")
             if result.skipped:
                 outcome = "skipped"
@@ -9992,6 +10026,8 @@ def _artifact_script_result(
             "duration_seconds": float(item.duration_seconds or 0.0),
             "hook_kind": str((item.metadata or {}).get("hook_kind") or ""),
             "hook_phase": str((item.metadata or {}).get("hook_phase") or ""),
+            "warnings": sum(1 for issue in item.issues if str(issue.severity).lower() == "warning"),
+            "failure_kind": item.failure_kind or "",
         }
         for item in executed
     ]
@@ -16927,6 +16963,13 @@ def _main_after_parse(
                     if script_result is not None:
                         results.append(script_result)
                         raw_output += "\n\n" + script_raw
+                    required_guard = _required_artifact_validation_execution_guard(
+                        manifest, validation_requested=True, validation_results=[],
+                        artifact_validation_result=script_result,
+                    )
+                    if required_guard is not None:
+                        results.append(required_guard)
+                        raw_output += "\n\n=== Required static validation guard ===\n" + required_guard.output
                     expectation = _validation_expectation_result(manifest, results)
                     if expectation is not None:
                         results.append(expectation)

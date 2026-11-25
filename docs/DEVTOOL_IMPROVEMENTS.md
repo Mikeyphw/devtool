@@ -1664,3 +1664,21 @@ An adversarial subprocess regression places an invalid `devtool` package in
 the target and verifies the real `devtool --help` nested child executes from
 the runtime source instead. No local Gradle, unsafe worktree rewrite,
 transaction replay, or remote CI qualification occurs in source tests.
+
+### DT-20261122-10/11 GA-02: source-bound federation and exact regression fixture
+
+- The opted-in fetch is now bound to a verified local HEAD and exactly digest-pinned relationship policy before any network mutation.
+- Before fetch, independently attest the explicitly enrolled *owner* GitHub App installation and the target installation's numeric identities, roles, installation scopes and authorization edge. Reject public owner and unobserved policy drift.
+- Check the local HEAD and exact origin again after credentials have been issued. Never leak GitHub App tokens into logs, Git argv, clipboard or receipts.
+- The GA-02 source-identity drift fixture now reaches the target drift assertion after satisfying both previously absent source and owner preconditions.
+- Source patch/test evidence is not native, GitHub PR, CI24, Android/device or release qualification. The native transaction MUST run on an exact clean PR #48 worktree using a distinct clean trusted Devtool runtime.
+
+## 2026-11-24 consolidated Devtool bug-ledger hotfix DT-08/19/20/21/23/28/29/33/34
+
+Source-baseline `05e120d185ce8e81287b591bac6a221054abe94e`; 34 individually classified ledger cases in `docs/DEVTOOL_HOTFIX_BUG_DISPOSITION.json`.
+
+Eight source-fix **candidates**: DT-19, DT-20, DT-21, DT-23, DT-28, DT-29, DT-33, DT-34. DT-03/12 already have source guards with additional regressions. DT-08 includes this milestone-scoped native ledger gate, not a universal gate.
+
+Production changes: App workflow-scope push authorization, exact branch-range detection, two-attempt durable push reconciliation, postcommit controller drift refusal, Rich CI credential/event projection and test-count/static validation safeguards.
+
+**Acceptance at source handoff: PENDING.** New native commit/PR, required CI, CI24, live denial/write, GA-00 and release/device gates NOT YET QUALIFIED. Never reapply a committed source or retry an unresolved push automatically.

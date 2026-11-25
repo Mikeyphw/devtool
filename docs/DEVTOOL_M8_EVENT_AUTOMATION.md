@@ -119,3 +119,26 @@ that your real App has the required write permission, or that physical-device
 or release qualification passed. Those need independent live, device and
 release receipts. The existing full CI24 and B3 gates must be freshly
 qualified for any new source commit. Do not reuse earlier PR #44 receipts.
+
+### Native managed-write confirmation and interruption recovery
+
+The ordinary native session remains non-resumable while a mutation intent is
+unresolved. Post-write confirmation uses a distinct read-only verification of
+the exact operation, policy-derived key and pending intent ID; all other native
+intents must be terminal, and Git source and remote PR identity must still
+match. This never grants another mutation. The final journal transition checks
+the exact pending identity again under its native journal lock.
+
+For an interrupted GA-01 PR-body or label-replacement write, wait until the
+original process has exited. Reconciliation performs only provider reads and
+confirms the existing intent if the exact approved postimage is present:
+
+```zsh
+python3 -B -m devtool.m8_automation --state-dir "$HOME/.local/state/devtool/m8-webhooks" reconcile --effect pr_body_set --auth app --yes --prior-process-finished
+```
+
+For label replacement use `--effect pr_labels_replace`. A missing, different,
+or unverifiable postimage refuses without replay. Expired or revoked policies
+may be read to reconcile their historical intent, never to authorize a new
+write. The original policy, session, intent, and Git/PR identity are preserved.
+No automatic replacement policy, retry, or remote mutation is performed.

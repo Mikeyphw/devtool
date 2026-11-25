@@ -29,3 +29,5 @@ jobs:
       - name: GA-02 source regression
         if: ${{ hashFiles('tests/ga02_native_validate.py') != '' }}
         run: python3 -u -B tests/ga02_native_validate.py
+      - name: GA-03 source regression
+        run: python3 -B -m pytest -q tests/test_ga03_checks.py tests/test_dt25_absent_push_recovery.py tests/test_g0b_delivery_fork_and_provider.py tests/test_native_delivery_continuity_m3.py tests/test_native_delivery_contract_v3.py
