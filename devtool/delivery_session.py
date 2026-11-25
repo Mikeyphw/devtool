@@ -26,6 +26,8 @@ _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 _OPERATIONS = frozenset({"push", "pr_create", "dispatch", "rerun", "pr_comment", "pr_labels", "commit_status", "pr_body_set", "pr_labels_replace"})
 _MAX_RECORD = 512 * 1024
+_M8_CONFIRM_OPERATIONS = frozenset({"pr_comment", "pr_labels", "commit_status",
+                                    "pr_body_set", "pr_labels_replace"})
 
 
 class DeliverySessionError(RuntimeError):
@@ -308,15 +310,44 @@ def _public(record: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def status(identity: str, *, state_root: Path | None = None, inspect_git: bool = True) -> dict[str, Any]:
-    folder = _state_root(state_root, identity=identity)
-    _directory(folder, create=False)
-    record = _read(_path(folder, identity))
+def _intents_terminal_and_valid(intents: list[dict[str, Any]]) -> bool:
+    """A negative-reconciled push is terminal ONLY with one confirmed successor.
+
+    Never mistake a reconciled-but-unfinished push for delivery success.
+    Historical journals may contain unrelated confirmed PR/CI intents.
+    """
+    if not isinstance(intents, list) or len(intents) > 128:
+        return False
+    if not all(isinstance(x, dict) for x in intents):
+        return False
+    ids=[x.get('id') for x in intents]
+    if len(set(ids)) != len(ids) or not all(isinstance(i, str) and _HEX32.fullmatch(i) for i in ids):
+        return False
+    previous=[x for x in intents if x.get('state') == 'reconciled_no_remote_change']
+    if not previous:
+        return all(x.get('state') == 'confirmed' for x in intents)
+    if len(previous) != 1:
+        return False
+    old=previous[0]
+    pairs=[x for x in intents if x.get('operation') == 'push'
+           and x.get('key_sha256') == old.get('key_sha256')]
+    if (len(pairs)!=2 or pairs[0] is not old
+            or pairs[1].get('state') != 'confirmed'
+            or pairs[1].get('attempt') != 2
+            or pairs[1].get('predecessor_intent_id') != old.get('id')
+            or pairs[1].get('observed_remote_before') !=
+               (old.get('reconciliation') or {}).get('remote_head_sha')
+            or (old.get('reconciliation') or {}).get('result') != 'NOT_APPLIED_AT_RECONCILIATION'):
+        return False
+    return all(x.get('state') in ('confirmed', 'reconciled_no_remote_change') for x in intents)
+
+
+def _status_record(record: dict[str, Any], *, inspect_git: bool = True) -> dict[str, Any]:
     result = _public(record)
     result["intents"] = [{"id": x["id"], "operation": x["operation"], "state": x["state"]}
                          for x in record["intents"]]
     result["events_count"] = len(record["events"])
-    result["resumable"] = all(x["state"] == "confirmed" for x in record["intents"])
+    result["resumable"] = _intents_terminal_and_valid(record["intents"])
     if inspect_git:
         try:
             latest = _identity(Path(record["repo_root"]), head=record["head"], base=record["base"])
@@ -331,6 +362,60 @@ def status(identity: str, *, state_root: Path | None = None, inspect_git: bool =
         result["event_stream"] = build_stream(record)
     except ValueError as exc:
         raise DeliverySessionError("Delivery event stream invalid") from exc
+    return result
+
+
+def status(identity: str, *, state_root: Path | None = None, inspect_git: bool = True) -> dict[str, Any]:
+    folder = _state_root(state_root, identity=identity)
+    _directory(folder, create=False)
+    return _status_record(_read(_path(folder, identity)), inspect_git=inspect_git)
+
+
+def _m8_pending(record: Mapping[str, Any], operation: str, key: str,
+                intent_id: str | None) -> str:
+    """Prove exactly one matching unresolved M8 intent and all other intents terminal.
+
+    This is confirmation authority, never permission to issue a remote mutation.
+    It deliberately does not promote the session's general resumable flag.
+    """
+    if (operation not in _M8_CONFIRM_OPERATIONS or not isinstance(key, str)
+            or not 1 <= len(key) <= 160 or (intent_id is not None and
+            (not isinstance(intent_id, str) or not _HEX32.fullmatch(intent_id)))):
+        raise DeliverySessionError('Invalid M8 confirmation identity')
+    intents = record['intents']
+    if (not isinstance(intents, list) or not 1 <= len(intents) <= 128
+            or not all(isinstance(x, dict) for x in intents)):
+        raise DeliverySessionError('Invalid M8 confirmation journal')
+    digest = hashlib.sha256(key.encode('utf-8')).hexdigest()
+    matches = [x for x in intents if x.get('operation') == operation
+               and x.get('key_sha256') == digest]
+    if len(matches) != 1 or matches[0].get('state') != 'unresolved':
+        raise DeliverySessionError('Exact unresolved M8 intent is unavailable')
+    pending = matches[0]
+    found = pending.get('id')
+    if (not isinstance(found, str) or not _HEX32.fullmatch(found)
+            or (intent_id is not None and found != intent_id)
+            or sum(x.get('id') == found for x in intents) != 1
+            or not _intents_terminal_and_valid([x for x in intents if x is not pending])):
+        raise DeliverySessionError('M8 confirmation intent or other journal state differs')
+    current = _identity(Path(record['repo_root']), head=record['head'], base=record['base'])
+    if any(current[k] != record[k] for k in ('head_sha', 'git_dir', 'repository')):
+        raise DeliverySessionError('M8 confirmation source binding changed')
+    return found
+
+
+def m8_confirmation_status(identity: str, operation: str, key: str, *,
+                           intent_id: str | None = None,
+                           state_root: Path | None = None) -> dict[str, Any]:
+    """Read-only confirmation-specific view of the integrity-checked native journal."""
+    folder = _state_root(state_root, identity=identity)
+    _directory(folder, create=False)
+    record = _read(_path(folder, identity))
+    pending = _m8_pending(record, operation, key, intent_id)
+    result = _status_record(record)
+    if result['source_binding'] != 'matching' or result['resumable'] is not False:
+        raise DeliverySessionError('M8 confirmation source or session state differs')
+    result['confirmation_intent_id'] = pending
     return result
 
 
@@ -375,7 +460,7 @@ def record_intent(identity: str, operation: str, key: str, *, approved: bool,
             if item["operation"] == operation and item["key_sha256"] == key_hash:
                 return {"intent_id": item["id"], "state": item["state"], "new": False,
                         "safe_to_replay": False}
-            if item["state"] != "confirmed":
+            if item["state"] != "confirmed" and not _intents_terminal_and_valid(record["intents"]):
                 raise DeliverySessionError("Unresolved mutation intent requires reconciliation before another mutation")
         at = _utc()
         intent = {"id": uuid.uuid4().hex, "operation": operation, "key_sha256": key_hash,
@@ -387,6 +472,92 @@ def record_intent(identity: str, operation: str, key: str, *, approved: bool,
         _write(path, record)
     return {"intent_id": intent["id"], "state": "unresolved", "new": True,
             "safe_to_replay": False}
+
+
+
+def recover_push_intent(identity: str, key: str, prior_intent_id: str, *,
+                        remote_old_sha: str, approved: bool, state_root: Path | None = None) -> dict[str, Any]:
+    """Explicit second push attempt after independent negative remote verification.
+
+    Caller proves the previous foreground Git process exited and independently
+    re-observed the exact unchanged remote twice. This does NOT make a Git
+    write; it atomically preserves the first attempt and journals a NEW one.
+    The subsequent normal non-force push is protected by GitHub's own FF gate.
+    """
+    if not approved or not _HEX32.fullmatch(prior_intent_id or ''):
+        raise DeliverySessionError('Push recovery requires explicit approval and original intent ID')
+    if not _SHA.fullmatch(remote_old_sha or ''):
+        raise DeliverySessionError('Cannot recover without an exact existing remote commit')
+    folder = _state_root(state_root, identity=identity)
+    with _locked(folder):
+        path = _path(folder, identity)
+        record = _read(path)
+        exact = f"{record['repository']}:refs/heads/{record['head']}:{record['head_sha']}"
+        if key != exact or record.get('remote_verified') is True:
+            raise DeliverySessionError('Push recovery source/key already verified or changed')
+        current = _identity(Path(record['repo_root']), head=record['head'], base=record['base'])
+        if any(current[k] != record[k] for k in ('head_sha','git_dir','repository')):
+            raise DeliverySessionError('Push recovery source binding changed')
+        # Single-parent remediation is deliberately narrow: remote is exactly
+        # the previous source, not an arbitrary ancestor or different PR.
+        parents = _git(Path(record['repo_root']), 'rev-list', '--parents', '-n', '1', 'HEAD').split()
+        if len(parents) != 2 or parents[0] != record['head_sha'] or parents[1] != remote_old_sha:
+            raise DeliverySessionError('Push recovery requires exact parent as remote head')
+        key_hash = hashlib.sha256(key.encode('utf-8')).hexdigest()
+        matches = [x for x in record['intents'] if x.get('operation') == 'push'
+                   and x.get('key_sha256') == key_hash]
+        if len(matches) != 1 or matches[0].get('id') != prior_intent_id or matches[0].get('state') != 'unresolved':
+            raise DeliverySessionError('Original unresolved push intent missing or already recovered')
+        if any(x.get('state') != 'confirmed' for x in record['intents'] if x is not matches[0]):
+            raise DeliverySessionError('Other unresolved mutation prohibits push recovery')
+        stamp = _utc()
+        prior = matches[0]
+        prior['state'] = 'reconciled_no_remote_change'
+        prior['reconciled_at'] = stamp
+        prior['reconciliation'] = {'remote_head_sha': remote_old_sha,
+                                  'source_head_sha': record['head_sha'],
+                                  'result': 'NOT_APPLIED_AT_RECONCILIATION'}
+        fresh = {'id': uuid.uuid4().hex, 'operation': 'push', 'key_sha256': key_hash,
+                 'state': 'unresolved', 'created_at': stamp, 'attempt': 2,
+                 'predecessor_intent_id': prior_intent_id,
+                 'observed_remote_before': remote_old_sha}
+        record['intents'].append(fresh)
+        record['events'].append({'kind':'push_negative_reconciliation','intent_id':prior_intent_id,
+                                 'remote_sha':remote_old_sha,'at':stamp})
+        record['events'].append({'kind':'mutation_intent','operation':'push',
+                                 'intent_id':fresh['id'],'at':stamp,'attempt':2})
+        record['updated_at'] = stamp
+        _write(path,record)
+        return {'intent_id':fresh['id'],'previous_intent_id':prior_intent_id,
+                'state':'unresolved','attempt':2,'safe_to_replay':False}
+
+
+
+def record_push_diagnostic(identity: str, intent_id: str, code: str, exit_code: int,
+                           *, state_root: Path | None = None) -> None:
+    """Store only a fixed classification, never raw Git stderr or credential data."""
+    allowed = {'GIT_WORKFLOW_PERMISSION_REJECTED', 'GIT_AUTH_REJECTED',
+               'GIT_NON_FAST_FORWARD', 'GIT_REMOTE_REJECTED',
+               'GIT_TRANSPORT_FAILURE', 'GIT_EXIT_NONZERO', 'GIT_EXIT_ZERO',
+               'GIT_PROCESS_UNAVAILABLE'}
+    if code not in allowed or type(exit_code) is not int or not -1 <= exit_code <= 255:
+        raise DeliverySessionError('Unsafe Git push diagnostic')
+    folder = _state_root(state_root, identity=identity)
+    with _locked(folder):
+        path = _path(folder, identity)
+        record = _read(path)
+        selected = [x for x in record['intents'] if x['id'] == intent_id
+                    and x['operation'] == 'push' and x['state'] == 'unresolved']
+        if len(selected) != 1:
+            raise DeliverySessionError('Push diagnostic not bound to an unresolved intent')
+        if any(e.get('kind') == 'push_attempt_result' and e.get('intent_id') == intent_id
+               for e in record['events']):
+            raise DeliverySessionError('Push attempt diagnostic was already recorded')
+        entry = {'kind':'push_attempt_result','at':_utc(), 'intent_id':intent_id,
+                 'classification':code, 'exit_code':exit_code}
+        record['events'].append(entry)
+        record['updated_at'] = entry['at']
+        _write(path,record)
 
 
 def report(identity: str, *, state_root: Path | None = None) -> dict[str, Any]:
@@ -406,7 +577,7 @@ def report(identity: str, *, state_root: Path | None = None) -> dict[str, Any]:
 
 def confirm_intent(identity: str, operation: str, key: str,
                    evidence: Mapping[str, Any], *, state_root: Path | None = None,
-                   optional: bool = False) -> dict[str, Any]:
+                   optional: bool = False, expected_intent_id: str | None = None) -> dict[str, Any]:
     """Resolve a previously journaled mutation using independently observed proof.
 
     The caller must read the external provider *after* a possibly uncertain
@@ -420,6 +591,8 @@ def confirm_intent(identity: str, operation: str, key: str,
     with _locked(folder):
         path = _path(folder, identity)
         record = _read(path)
+        if expected_intent_id is not None:
+            _m8_pending(record, operation, key, expected_intent_id)
         if proof.get('head_sha') != record['head_sha']:
             raise DeliverySessionError('Mutation evidence source SHA does not match session')
         if operation == 'pr_create':
@@ -484,8 +657,17 @@ def confirm_intent(identity: str, operation: str, key: str,
                 return {'state':'not-recorded','confirmed':False}
             raise DeliverySessionError('Mutation intent was never recorded')
         if len(items) != 1:
-            raise DeliverySessionError('Duplicate mutation journal entries')
-        found = items[0]
+            # A single explicit push recovery may retain the original
+            # negative-reconciled intent and a second, current attempt.
+            previous = [x for x in items if x.get('state') == 'reconciled_no_remote_change']
+            active = [x for x in items if x.get('state') in ('unresolved', 'confirmed')]
+            if (operation != 'push' or len(items) != 2 or len(previous) != 1
+                or len(active) != 1 or active[0].get('attempt') != 2
+                or active[0].get('predecessor_intent_id') != previous[0].get('id')):
+                raise DeliverySessionError('Duplicate mutation journal entries')
+            found = active[0]
+        else:
+            found = items[0]
         if found['state'] == 'confirmed':
             if found.get('evidence') != proof:
                 raise DeliverySessionError('Conflicting mutation reconciliation evidence')

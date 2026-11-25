@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import uuid
 from time import monotonic
 from typing import Any, Iterator
 from zipfile import ZipFile, BadZipFile
@@ -455,32 +456,81 @@ def _ci24_evaluate(client: GitHubActionsClient, slug: str, root: Path, record: d
             'tests': data['tests'], 'modules': data['total_modules'], 'complete': True}
 
 
+def _ci24_failure_code(exc: BaseException) -> str:
+    """Bounded actionable classification; never persist provider text or secrets."""
+    message = str(exc)
+    failed = re.fullmatch(r'GitHub 24-shard run failed: (failure|cancelled|timed_out|action_required|neutral|skipped|stale|startup_failure)', message)
+    if failed:
+        return 'CI24_REMOTE_RUN_' + failed.group(1).upper()
+    exact = {
+        'GitHub run does not match exact source SHA/branch': 'CI24_SOURCE_MISMATCH',
+        'GitHub workflow/event identity mismatch': 'CI24_WORKFLOW_MISMATCH',
+        'Rerun attempt requires an attempt-bound evidence contract; original attempt only': 'CI24_RUN_ATTEMPT_UNSUPPORTED',
+        'Non-success, wrong-attempt or incomplete CI job': 'CI24_JOB_EVIDENCE_REFUSED',
+        'Duplicate CI shard job': 'CI24_JOB_EVIDENCE_REFUSED',
+        'CI is missing or duplicating shard/summary jobs': 'CI24_JOB_EVIDENCE_REFUSED',
+        'CI24 artifact set does not contain exactly 24 shards and one summary': 'CI24_ARTIFACT_INVENTORY_MISMATCH',
+        'CI24 artifact missing authenticated archive SHA256': 'CI24_ARTIFACT_DIGEST_MISSING',
+        'CI24 shard archive byte/digest verification failed': 'CI24_ARTIFACT_DIGEST_MISMATCH',
+        'CI summary is not a complete exact-source 24-shard PASS': 'CI24_SUMMARY_REFUSED',
+        'CI24 24 shard receipts disagree with complete summary': 'CI24_SUMMARY_REFUSED',
+        'CI receipt repository changed': 'CI24_REPOSITORY_MISMATCH',
+        'Run ID contradicts correlated dispatch receipt': 'CI24_RUN_ID_CONFLICT',
+        'GitHub 204 dispatch was uncorrelated; specify DEVTOOL_CI24_RUN_ID explicitly; do not guess or redispatch': 'CI24_EXPLICIT_RUN_ID_REQUIRED',
+        'Dispatch outcome unknown; inspect ACTIONS-02 receipt before trying another run': 'CI24_DISPATCH_OUTCOME_UNKNOWN',
+    }
+    if message in exact:
+        return exact[message]
+    if isinstance(exc, TimeoutError):
+        return 'CI24_OBSERVATION_TIMEOUT'
+    if isinstance(exc, OSError):
+        return 'CI24_OBSERVATION_IO_ERROR'
+    return 'CI24_NATIVE_EVIDENCE_REFUSED'
+
+
 def ci24_resume(root: Path, *, explicit_run_id: int | None = None,
                 client: GitHubActionsClient | None = None, slug: str | None = None) -> dict[str, Any]:
     head, _ = _identity(root)
     with _lock(root, head, 'ci24'):
         record = _load(root, head, 'ci24')
-        if record.get('state') == 'DISPATCH_OUTCOME_UNKNOWN' and not record.get('workflow_id'):
-            raise GitHubActionsError('Dispatch outcome unknown; inspect ACTIONS-02 receipt before trying another run')
-        if client is None or slug is None:
-            client, slug = _client(root)
-        if record.get('repository', '').lower() != slug.lower():
-            raise GitHubActionsError('CI receipt repository changed')
+        observation_id = uuid.uuid4().hex
         original = record.get('run_id')
-        if explicit_run_id is not None and original is not None and int(explicit_run_id) != original:
-            raise GitHubActionsError('Run ID contradicts correlated dispatch receipt')
-        rid = original if original is not None else explicit_run_id
-        if rid is None:
-            raise GitHubActionsError('GitHub 204 dispatch was uncorrelated; specify DEVTOOL_CI24_RUN_ID explicitly; do not guess or redispatch')
-        # Existing explicitly selected run may constitute CI evidence even without
-        # proof of which HTTP 204 request triggered it; never call it correlated.
-        outcome = _ci24_evaluate(client, slug, root, record, rid)
+        try:
+            if record.get('state') == 'DISPATCH_OUTCOME_UNKNOWN' and not record.get('workflow_id'):
+                raise GitHubActionsError('Dispatch outcome unknown; inspect ACTIONS-02 receipt before trying another run')
+            if client is None or slug is None:
+                client, slug = _client(root)
+            if record.get('repository', '').lower() != slug.lower():
+                raise GitHubActionsError('CI receipt repository changed')
+            if explicit_run_id is not None and original is not None and int(explicit_run_id) != original:
+                raise GitHubActionsError('Run ID contradicts correlated dispatch receipt')
+            rid = original if original is not None else explicit_run_id
+            if rid is None:
+                raise GitHubActionsError('GitHub 204 dispatch was uncorrelated; specify DEVTOOL_CI24_RUN_ID explicitly; do not guess or redispatch')
+            # The native verifier owns every source/run/artifact check.
+            outcome = _ci24_evaluate(client, slug, root, record, rid)
+        except (GitHubActionsError, OSError, ValueError, RuntimeError) as exc:
+            # Keep the previous successful observation and dispatch identity intact.
+            # A failed fresh read is not WAITING_REMOTE and not fresh qualification.
+            record['last_observation'] = {'id': observation_id, 'status': 'FAILED',
+                'error_code': _ci24_failure_code(exc),
+                'run_id': original if type(original) is int and original > 0 else None}
+            try:
+                _save(root, head, 'ci24', record)
+            except (OSError, ValueError, RuntimeError):
+                # A receipt write failure cannot replace the original native error.
+                print('CI24_OBSERVATION_FAILURE_RECEIPT_WRITE_FAILED', file=sys.stderr)
+            raise
         record.update(state=outcome['status'], run_id=rid,
                       run_correlated=bool(record.get('run_correlated')),
                       selected_uncorrelated=not bool(record.get('run_correlated')),
-                      verification=outcome)
+                      verification=outcome,
+                      last_observation={'id': observation_id,
+                          'status': 'VERIFIED' if outcome.get('complete') else 'PENDING',
+                          'error_code': None, 'run_id': rid})
         _save(root, head, 'ci24', record)
         return {**_public_ci(record), 'verification': outcome,
+                'last_observation': record['last_observation'],
                 'observation_completed': True, 'qualification_complete': bool(outcome.get('complete')),
                 'qualification_status': ('verified' if outcome.get('complete') else 'pending')}
 
@@ -727,6 +777,16 @@ def qualify_status(root: Path) -> dict[str, Any]:
             continue
         state[kind.replace('-', '_')] = receipt.get('status') if kind == 'g3r' else receipt.get('state')
         state[kind.replace('-', '_')+'_last_recorded_only'] = True
+        if kind == 'ci24':
+            rid = receipt.get('run_id')
+            state['ci24_run_id'] = rid if type(rid) is int and rid > 0 else None
+            state['ci24_run_correlated'] = receipt.get('run_correlated') is True
+            latest = receipt.get('last_observation')
+            if isinstance(latest, dict) and re.fullmatch(r'[a-f0-9]{32}', str(latest.get('id') or '')) and latest.get('status') in ('FAILED', 'PENDING', 'VERIFIED'):
+                error = latest.get('error_code')
+                state['ci24_last_observation'] = {'id': latest['id'], 'status': latest['status'],
+                    'error_code': error if isinstance(error, str) and re.fullmatch(r'CI24_[A-Z0-9_]{1,70}', error) else None,
+                    'run_id': latest.get('run_id') if type(latest.get('run_id')) is int and latest['run_id'] > 0 else None}
     state['automated_milestone_last_recorded'] = (state['ci24'] == 'PASS_CI24_VERIFIED'
                                                    and state['g3r'] == 'PASS_G3R_VERIFIED')
     return state

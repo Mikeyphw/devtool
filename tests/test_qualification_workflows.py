@@ -411,3 +411,66 @@ def test_fs03_callback_exception_blocks_not_silently_passes(tmp_path, monkeypatc
     monkeypatch.setattr(q, 'final_seal_report', broken)
     with pytest.raises(GitHubActionsError, match='FS03.*failed to execute'):
         q._fs03_strict_in_process(root)
+
+
+def test_ci24_latest_failure_is_distinct_from_previous_waiting_and_no_redispatch(tmp_path, monkeypatch):
+    root=fixture_source(tmp_path,monkeypatch)
+    api,_,requests=start(root,monkeypatch)
+    api.remote_status='in_progress'; api.remote_conclusion=None
+    pending=q.ci24_resume(root,client=api,slug=SLUG)
+    old=q.qualify_status(root)
+    assert pending['state']=='WAITING_REMOTE'
+    assert old['ci24_last_observation']['status']=='PENDING'
+    api.remote_status='completed'; api.remote_conclusion='failure'
+    with pytest.raises(GitHubActionsError,match='24-shard run failed'):
+        q.ci24_resume(root,client=api,slug=SLUG)
+    now=q.qualify_status(root)
+    assert now['ci24']=='WAITING_REMOTE' and now['ci24_last_recorded_only'] is True
+    assert now['ci24_run_id']==1234
+    assert now['ci24_last_observation']=={'id':now['ci24_last_observation']['id'],
+        'status':'FAILED','error_code':'CI24_REMOTE_RUN_FAILURE','run_id':1234}
+    assert old['ci24_last_observation']['id']!=now['ci24_last_observation']['id']
+    with pytest.raises(GitHubActionsError,match='NEVER dispatch twice'):
+        q.ci24_start(root,client=api,slug=SLUG)
+    assert requests==[1]
+
+
+def test_ci24_transport_failure_is_sanitized_and_recovery_clears_failure(tmp_path,monkeypatch):
+    root=fixture_source(tmp_path,monkeypatch)
+    api,_,requests=start(root,monkeypatch)
+    original=api.get_run
+    def failed(*a,**kw): raise TimeoutError('secret fixture must not persist')
+    monkeypatch.setattr(api,'get_run',failed)
+    with pytest.raises(TimeoutError):q.ci24_resume(root,client=api,slug=SLUG)
+    receipt=q._load(root,SHA,'ci24')
+    assert receipt['last_observation']['error_code']=='CI24_OBSERVATION_TIMEOUT'
+    assert 'secret fixture' not in json.dumps(receipt)
+    monkeypatch.setattr(api,'get_run',original)
+    fake_artifacts(monkeypatch,tmp_path)
+    result=q.ci24_resume(root,client=api,slug=SLUG)
+    assert result['state']=='PASS_CI24_VERIFIED'
+    latest=q.qualify_status(root)['ci24_last_observation']
+    assert latest['status']=='VERIFIED' and latest['error_code'] is None
+    assert latest['id']!=receipt['last_observation']['id'] and requests==[1]
+
+
+def test_ci24_conflicting_explicit_run_never_rebinds_dispatch(tmp_path,monkeypatch):
+    root=fixture_source(tmp_path,monkeypatch)
+    api,_,_=start(root,monkeypatch)
+    with pytest.raises(GitHubActionsError,match='contradicts'):
+        q.ci24_resume(root,explicit_run_id=999,client=api,slug=SLUG)
+    state=q.qualify_status(root)
+    assert state['ci24_run_id']==1234
+    assert state['ci24_last_observation']['error_code']=='CI24_RUN_ID_CONFLICT'
+    assert state['ci24_last_observation']['run_id']==1234
+
+
+def test_ci24_failed_receipt_write_preserves_original_native_exception(tmp_path,monkeypatch,capsys):
+    root=fixture_source(tmp_path,monkeypatch)
+    api,_,_=start(root,monkeypatch)
+    api.remote_conclusion='failure'
+    def disk_failure(*a,**kw):raise OSError('fixture disk failure')
+    monkeypatch.setattr(q,'_save',disk_failure)
+    with pytest.raises(GitHubActionsError,match='24-shard run failed'):
+        q.ci24_resume(root,client=api,slug=SLUG)
+    assert 'CI24_OBSERVATION_FAILURE_RECEIPT_WRITE_FAILED' in capsys.readouterr().err

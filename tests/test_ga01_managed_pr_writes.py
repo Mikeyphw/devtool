@@ -345,3 +345,116 @@ def test_native_confirmation_requires_valid_exact_pr_proof(monkeypatch,operation
     assert state['intents'][0]['state']=='confirmed'
     assert state['intents'][0]['evidence']==proof
     assert len(writes)==1
+
+
+# Real Git checkout and integrity-protected native journal, with HTTP transport only simulated.
+@pytest.fixture
+def real_m8(tmp_path, monkeypatch):
+    import subprocess
+    from devtool import delivery_session as ds, m8_webhooks as wh
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path/'xdg'))
+    monkeypatch.setenv('HOME', str(tmp_path/'home'))
+    repo=tmp_path/'source';repo.mkdir()
+    def git(*args):
+        return subprocess.check_output(['git','-C',str(repo),*args],text=True,stderr=subprocess.PIPE).strip()
+    git('init','-b','main');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid')
+    git('commit','--allow-empty','-m','base');base=git('rev-parse','HEAD')
+    git('checkout','-b','feature/test');git('commit','--allow-empty','-m','fixture');head=git('rev-parse','HEAD')
+    git('remote','add','origin',f'https://github.com/{REPO}.git')
+    sid=ds.start(repo,base='main',head='feature/test',base_sha=base)['id']
+    ds.record_pr_observation(sid,{'number':51,'head_sha':head,'head':'feature/test','base':'main',
+        'base_sha':base,'url':f'https://github.com/{REPO}/pull/51'})
+    class Transport(FakeClient):
+        def __init__(self):
+            super().__init__();self.pr['head']['sha']=head;self.pr['base']['sha']=base
+            self.comment=None;self.status=None;self.after_write=None
+            self._opener=self
+        def _get(self,path):
+            if path==f'/repos/{REPO}/branches/feature%2Ftest':return {'commit':{'sha':head}}
+            if path==f'/repos/{REPO}/issues/comments/1001':return {'id':1001,'body':self.comment,'issue_url':f'https://api.github.com/repos/{REPO}/issues/51'}
+            if path==f'/repos/{REPO}/commits/{head}/status':return {'statuses':[self.status]}
+            return super()._get(path)
+        def open(self,request,timeout):
+            assert ds.status(sid)['resumable'] is False
+            assert sum(i['state']=='unresolved' for i in ds.status(sid)['intents'])==1
+            self.calls.append(request);data=json.loads(request.data);method=request.get_method()
+            if method=='PATCH':self.pr['body']=data['body'];result=self.pr
+            elif method=='PUT':self.labels=data['labels'];result=[{'name':x} for x in self.labels]
+            elif request.full_url.endswith('/labels'):self.labels.extend(data['labels']);result=[{'name':x} for x in self.labels]
+            elif request.full_url.endswith('/comments'):self.comment=data['body'];result={'id':1001}
+            elif request.full_url.endswith('/statuses/'+head):self.status={'id':3001,**data};result={'id':3001}
+            else:raise AssertionError('unexpected request')
+            if self.after_write:self.after_write()
+            return FakeResponse(result,201 if method=='POST' else 200)
+    client=Transport();root=tmp_path/'policy'
+    wh.pin(root,wh.Pin(REPO,1276037219,54321,head,51,sid))
+    def approve(effect):
+        kw={}
+        if effect=='pr_body_set':kw=dict(body='new',before=hashlib.sha256(b'old').hexdigest())
+        elif effect=='pr_labels_replace':kw=dict(labels=('new',),label_before=m8._hash(m8._canonical({'labels':['old']})))
+        elif effect=='pr_labels_add':kw=dict(labels=('new',))
+        raw=policy(effect,**kw);raw.update(head_sha=head,base_sha=base,session_id=sid)
+        if effect=='pr_comment':raw['comment']='approved comment'
+        if effect=='commit_status':raw.update(status_context='devtool/m8/test',status_state='pending')
+        m8.approve(root,raw,yes=True,client=client)
+        return m8.Policy.parse(raw)
+    return SimpleNamespace(ds=ds,sid=sid,head=head,client=client,root=root,approve=approve,git=git)
+
+
+@pytest.mark.parametrize('effect',['pr_body_set','pr_labels_replace','pr_labels_add','pr_comment','commit_status'])
+def test_real_journal_all_m8_writes_confirm(effect,real_m8):
+    f=real_m8;f.approve(effect)
+    assert m8.maintain(f.root,effect,yes=True,client=f.client)['state']=='NATIVE_CONFIRMED'
+    s=f.ds.status(f.sid)
+    assert s['source_binding']=='matching' and s['resumable'] is True
+    assert [i['state'] for i in s['intents']]==['confirmed']
+    assert len(f.client.calls)==1
+
+
+@pytest.mark.parametrize('effect',['pr_body_set','pr_labels_replace'])
+def test_real_journal_reconcile_after_post_write_interruption(effect,real_m8):
+    f=real_m8;p=f.approve(effect)
+    def interrupted():raise URLError('response lost after write')
+    f.client.after_write=interrupted
+    with pytest.raises(GitHubDispatchOutcomeUnknown):m8.maintain(f.root,effect,yes=True,client=f.client)
+    pending=f.ds.status(f.sid);assert not pending['resumable']
+    with pytest.raises(m8.M8Refusal,match='SESSION_DRIFT'):
+        m8.maintain(f.root,effect,yes=True,client=f.client)
+    with pytest.raises(m8.M8Refusal,match='ACKNOWLEDGEMENT'):
+        m8.reconcile_managed_write(f.root,effect,yes=True,prior_process_finished=False,client=f.client)
+    assert len(f.client.calls)==1
+    m8.revoke(f.root,yes=True)
+    receipt=m8.reconcile_managed_write(f.root,effect,yes=True,prior_process_finished=True,client=f.client)
+    assert receipt['state']=='NATIVE_RECONCILED' and not receipt['remote_write_performed']
+    assert receipt['intent_id']==pending['intents'][0]['id']
+    assert f.ds.status(f.sid)['resumable'] is True and len(f.client.calls)==1
+    with pytest.raises(m8.M8Refusal):m8.reconcile_managed_write(f.root,effect,yes=True,prior_process_finished=True,client=f.client)
+
+
+def test_real_journal_rejects_drift_wrong_key_id_and_other_pending(real_m8):
+    f=real_m8;p=f.approve('pr_body_set');effect='pr_body_set'
+    key=m8._effect_key(p,effect,{'body':p.pr_body})
+    iid=m8._native_intent(p,effect,key)
+    with pytest.raises(f.ds.DeliverySessionError):f.ds.m8_confirmation_status(f.sid,effect,key,intent_id='a'*32)
+    with pytest.raises(f.ds.DeliverySessionError):f.ds.m8_confirmation_status(f.sid,effect,key+'x')
+    with pytest.raises(m8.M8Refusal,match='POSTIMAGE_UNVERIFIED'):
+        m8.reconcile_managed_write(f.root,effect,yes=True,prior_process_finished=True,client=f.client)
+    f.client.pr['body']='new';f.client.pr['head']['sha']='d'*40
+    with pytest.raises(m8.M8Refusal,match='SOURCE_OR_BASE_DRIFT'):
+        m8.reconcile_managed_write(f.root,effect,yes=True,prior_process_finished=True,client=f.client)
+    f.client.pr['head']['sha']=f.head
+    with pytest.raises(f.ds.DeliverySessionError,match='Unresolved mutation intent'):
+        f.ds.record_intent(f.sid,'pr_comment','unrelated',approved=True)
+    assert f.ds.m8_confirmation_status(f.sid,effect,key,intent_id=iid)['resumable'] is False
+    assert not f.client.calls
+    assert not f.ds.status(f.sid)['resumable']
+
+
+def test_real_journal_source_drift_after_write_blocks_confirmation(real_m8):
+    f=real_m8;f.approve('pr_body_set')
+    f.client.after_write=lambda:f.git('commit','--allow-empty','-m','drift')
+    with pytest.raises(m8.M8Refusal,match='CONFIRMATION_INTENT_DRIFT'):
+        m8.maintain(f.root,'pr_body_set',yes=True,client=f.client)
+    s=f.ds.status(f.sid)
+    assert s['source_binding']=='drifted' and s['intents'][0]['state']=='unresolved'
+    assert len(f.client.calls)==1

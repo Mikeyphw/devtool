@@ -564,6 +564,16 @@ def main(args: argparse.Namespace) -> int:
                 raise NativeM5Refused('M5_DELIVER_REQUIRES_EXPLICIT_YES')
             auth=str(getattr(args,'auth','auto') or 'auto')
             if auth not in _AUTH:raise NativeM5Refused('M5_AUTH_MODE_UNSUPPORTED')
+            if auth=='app':
+                # Controller capability check: a stale, independently pinned M2
+                # runtime must never journal a workflow-writing push before
+                # the modern M4 provider/guard code is in effect.
+                from .github_app import _PERMISSIONS, _check_git_argv
+                if _PERMISSIONS.get('branch_write_workflows') != {'contents':'write','workflows':'write'}:
+                    raise NativeM5Refused('M5_APP_WORKFLOW_CONTROLLER_STALE_NO_PUSH_INTENT')
+                _check_git_argv(['push','--porcelain','origin',
+                    f"refs/heads/{bound['head']}:refs/heads/{bound['head']}"],
+                    'branch_write_workflows')
             for action in ('push','pr'):
                 cmd=[sys.executable,'-B','-m','devtool','--host','--no-clipboard',
                      '--repo',str(repo),'delivery','session',action,
