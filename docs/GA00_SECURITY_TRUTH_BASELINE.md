@@ -108,3 +108,33 @@ implemented; external configuration/acceptance remains PENDING ENVIRONMENT.
 The existing strict `multi-reviewer` default requires self-review prevention. An owner may explicitly select `single-owner` only for a personal repository with a live numeric owner identity, one required User reviewer matching that owner, and explicit `prevent_self_review=false`. Both require protected branches only and admin bypass disabled. No automatic approval, environment creation, secret movement, release publication or bypass is provided.
 
 Read-only verification: `python3 -B -m devtool.ga00_environment --repo Mikeyphw/devtool --approval-profile single-owner`. Provisioning and readiness: use `actions release setup` / `actions release readiness` with `--approval-profile single-owner`. Private schema-2 release policy binds the owner numeric ID and profile; existing schema-1 policies remain strict. An existing conflicting policy is refused, not silently replaced. Recheck actual deployment admission and certificate independently.
+
+
+## P09 owner projection and ACTIONS-09 integration repair (2026-11-25)
+
+The production standalone environment validator returned `VERIFIED_CONFIGURATION`,
+while the Actions preview received `owner_reviewer_id=null` because the canonical
+GitHub repository projection discarded `owner`. The canonical client now retains
+only a validated login, numeric ID and account type; missing or invalid owner
+metadata does not establish ownership. Organization, wrong reviewer and owner
+drift continue to fail the single-owner profile; strict multi-reviewer behavior
+is unchanged. The actual Actions parser/dispatch, HTTP normalization, private-file
+LIFE identity resolver, real disposable PKCS12 keytool inspection and secret journal
+are covered together; remote calls are test fixtures, not production proof.
+
+The existing source-pinned workflow path is normalized to GitHub's filename lookup
+and the returned full path must match. The single-owner ACTIONS-08 verifier additionally
+requires the first completed workflow attempt, one actual approval review from the
+pinned User for the exact environment ID/name, and no ambiguous/paginated evidence.
+Current configuration is not deployment approval. GitHub review history is run-scoped;
+reruns cannot inherit this qualification. See GitHub REST workflow-run review history.
+The setup path rechecks environment/owner protection before every secret write and
+before private policy creation. No live environment mutation, secret rotation,
+deployment approval or release publication occurs in this repair.
+
+Production readback (owner supplied): single-owner environment configuration verified;
+LIFE identity `devtool-android-release` registered with certificate SHA-256
+`a167f33d8781c5675464011c9f975b343d938632db8b4dfc414e8322e890e99c`.
+Preserve that identity. Provision only after this source repair is merged and the
+actual Actions preview agrees with the standalone verdict. P17 release acceptance
+remains separate, requiring actual protected deployment and signed provenance.

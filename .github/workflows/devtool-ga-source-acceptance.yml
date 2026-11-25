@@ -21,6 +21,8 @@ jobs:
           python-version: '3.12'
       - name: Install exact checked-out candidate and source test dependencies
         run: python3 -B -m pip install --disable-pip-version-check . pytest pexpect cryptography
+      - name: Verify real JDK signing fixture prerequisite
+        run: keytool -help >/dev/null 2>&1
       - name: GA-00 source regression
         run: python3 -u -B tests/ga00_native_validate.py
       - name: GA-01 source regression

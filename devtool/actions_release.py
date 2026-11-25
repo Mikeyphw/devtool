@@ -134,8 +134,9 @@ def release_verify(client: GitHubActionsClient, slug: str, root: Path, *, run_id
     slug = _slug(slug)
     if slug.lower() != policy['repository'].lower():
         raise GitHubActionsError('Release policy repository differs from GitHub origin')
+    approval = None
     if policy['schema']==2:
-        from .ga00_environment import inspect_environment
+        from .ga00_environment import inspect_environment, verify_single_owner_approval
         profile=inspect_environment(client,slug,approval_profile=policy['approval_profile'],expected_owner_id=policy['owner_reviewer_id'])
         if not profile['verified']:
             raise GitHubActionsError('Single-owner protected signing policy no longer verified')
@@ -151,6 +152,10 @@ def release_verify(client: GitHubActionsClient, slug: str, root: Path, *, run_id
     selected = client.workflow(slug, policy['workflow'])
     if remote.get('workflow_id') != selected.get('id'):
         raise GitHubActionsError('Release workflow identity differs from pinned policy')
+    if policy['schema']==2:
+        approval = verify_single_owner_approval(client, slug, run_id=run_id,
+            run_attempt=remote['run_attempt'], owner_id=policy['owner_reviewer_id'],
+            environment_id=profile['environment_id'])
     checked = android_collect(client, slug, root, run_id=run_id, artifact_id=artifact_id,
                               fmt=policy['format'], variant='release',
                               expected_package=policy['application_id'], expected_cert=policy['signer_sha256'],
@@ -183,10 +188,15 @@ def release_verify(client: GitHubActionsClient, slug: str, root: Path, *, run_id
         if digest.hexdigest() != pkg['sha256'] or count != pkg['size']:
             raise GitHubActionsError('Release package bytes changed since Android signature inspection')
         provenance = _attestation(output, policy)
+    if approval is not None:
+        final_run = _normalize_run(client.get_run(slug, run_id), slug, run_id)
+        if final_run != remote:
+            raise GitHubActionsError('Release run changed during single-owner verification')
     return {'phase': 'ACTIONS-08', 'repository': slug, 'run_id': run_id,
             'artifact_id': artifact_id, 'source_sha': policy['source_sha'],
             'workflow': policy['workflow'], 'release': pkg,
             'archive_sha256': verified['sha256'], 'provenance': provenance,
             'policy_sha256': policy['_policy_sha256'],
+            **({'deployment_approval': approval} if approval is not None else {}),
             'qualified_release': True, 'scope': 'verified-package-provenance; no publishing or deployment',
             'read_only': True}

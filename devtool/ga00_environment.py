@@ -14,11 +14,11 @@ APPROVAL_PROFILES = ('multi-reviewer', 'single-owner')
 
 
 def personal_owner_id(metadata: Any, repository: str) -> int | None:
-    if not isinstance(metadata, dict) or str(metadata.get('full_name') or '').casefold()!=repository.casefold():
+    if not isinstance(metadata, dict) or not isinstance(metadata.get('full_name'), str) or metadata['full_name'].casefold()!=repository.casefold():
         return None
     owner=metadata.get('owner')
     if (not isinstance(owner,dict) or owner.get('type')!='User' or
-            str(owner.get('login') or '').casefold()!=repository.split('/',1)[0].casefold() or
+            not isinstance(owner.get('login'),str) or owner['login'].casefold()!=repository.split('/',1)[0].casefold() or
             type(owner.get('id')) is not int or owner['id']<1):
         return None
     return owner['id']
@@ -63,6 +63,7 @@ def evaluate_environment(raw: Any, *, approval_profile: str = "multi-reviewer", 
         failures.append('ADMIN_BYPASS_RESTRICTION_NOT_PROVEN')
     return {'environment': SIGNING_ENVIRONMENT,
             'verified': not failures,
+            'environment_id': raw.get('id') if type(raw.get('id')) is int and raw['id'] > 0 else None,
             'status': 'VERIFIED_CONFIGURATION' if not failures else 'NOT_QUALIFIED',
             'required_reviewer_count': len(reviewers),
             'approval_profile':approval_profile,
@@ -93,6 +94,45 @@ def inspect_environment(client: Any, repository: str, *, approval_profile: str =
         return {'environment': SIGNING_ENVIRONMENT, 'verified': False,
                 'status': 'INCONCLUSIVE', 'reasons': ['GITHUB_ENVIRONMENT_GET_UNAVAILABLE'],
                 'deployment_approved': False, 'secret_values_verified': False}
+
+
+def verify_single_owner_approval(client: Any, repository: str, *, run_id: int, run_attempt: int,
+                                 owner_id: int, environment_id: int | None) -> dict[str, Any]:
+    """Verify real review history, without approving or replaying a deployment.
+
+    GitHub's approvals endpoint is run-scoped, not attempt-scoped. Only the
+    first attempt is unambiguous; do not promote reruns with older approvals.
+    """
+    from .github_actions import API_ORIGIN, GitHubActionsError, _slug
+    slug = _slug(repository)
+    if (type(run_id) is not int or run_id < 1 or type(run_attempt) is not int or run_attempt != 1
+            or type(owner_id) is not int or owner_id < 1
+            or type(environment_id) is not int or environment_id < 1):
+        raise GitHubActionsError('Single-owner approval requires exact environment and first run attempt')
+    rows, headers = client._request(f'{API_ORIGIN}/repos/{slug}/actions/runs/{run_id}/approvals', expect_list=True)
+    if not isinstance(rows, list) or any(str(k).casefold() == 'link' and v for k, v in headers.items()):
+        raise GitHubActionsError('Single-owner approval history is incomplete')
+    matched = []
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get('environments'), list):
+            raise GitHubActionsError('Single-owner approval history is malformed')
+        for env in row['environments']:
+            if not isinstance(env, dict) or type(env.get('id')) is not int or not isinstance(env.get('name'), str):
+                raise GitHubActionsError('Single-owner approval environment identity is malformed')
+            if env['id'] == environment_id or env['name'] == SIGNING_ENVIRONMENT:
+                if env['id'] != environment_id or env['name'] != SIGNING_ENVIRONMENT:
+                    raise GitHubActionsError('Single-owner approval environment identity differs')
+                matched.append(row)
+    if len(matched) != 1:
+        raise GitHubActionsError('Single-owner deployment approval is missing or ambiguous')
+    review = matched[0]; actor = review.get('user')
+    if (review.get('state') != 'approved' or not isinstance(actor, dict)
+            or actor.get('type') != 'User' or type(actor.get('id')) is not int
+            or actor['id'] != owner_id or not isinstance(actor.get('login'), str)
+            or actor['login'].casefold() != slug.split('/', 1)[0].casefold()):
+        raise GitHubActionsError('Single-owner deployment approval was not verified from the pinned owner')
+    return {'deployment_approved': True, 'run_id': run_id, 'run_attempt': run_attempt,
+            'environment': SIGNING_ENVIRONMENT, 'environment_id': environment_id, 'owner_reviewer_id': owner_id}
 
 
 def main(argv: list[str] | None = None) -> int:
