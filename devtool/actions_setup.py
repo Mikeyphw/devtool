@@ -421,9 +421,11 @@ def release_setup(client: GitHubActionsClient, slug: str, root: Path, *, ref: st
     from .ga00_secret_journal import opened_journal, journal_path, SecretJournalRefusal
     uploaded = []
     from .ga00_environment import inspect_environment
-    refreshed=inspect_environment(client,slug,approval_profile=plan['approval_profile'],expected_owner_id=document.get('owner_reviewer_id'))
-    if not refreshed['verified'] or refreshed!=plan['signing_environment']:
-        raise GitHubActionsError('Protected signing environment changed before provisioning; refusing mutation')
+    def require_current_environment():
+        refreshed=inspect_environment(client,slug,approval_profile=plan['approval_profile'],expected_owner_id=document.get('owner_reviewer_id'))
+        if not refreshed['verified'] or refreshed!=plan['signing_environment']:
+            raise GitHubActionsError('Protected signing environment changed during provisioning; refusing further mutation')
+    require_current_environment()
     # A single locked, fsynced intent journal covers every secret, including
     # interrupted or ambiguous responses. Never replay an unresolved write.
     try:
@@ -433,6 +435,7 @@ def release_setup(client: GitHubActionsClient, slug: str, root: Path, *, ref: st
             if rotate_secrets or not observed:
                 operation_id = journal.new_operation()
                 for name, value in zip(SECRETS, payloads):
+                    require_current_environment()
                     fields = dict(operation_id=operation_id, name=name, repository=slug,
                                   source_sha=document['source_sha'], signer_sha256=signer)
                     journal.record(event='INTENT', **fields)
@@ -453,6 +456,7 @@ def release_setup(client: GitHubActionsClient, slug: str, root: Path, *, ref: st
                 raise GitHubActionsError('GitHub did not confirm all secret names; private policy was not written')
     except SecretJournalRefusal as exc:
         raise GitHubActionsError(str(exc)) from None
+    require_current_environment()
     created = _write_policy(root, policy_target, document)
     return {'phase': 'ACTIONS-09', 'mode': 'apply', 'repository': slug,
             'ref': document['ref'], 'source_sha': document['source_sha'],

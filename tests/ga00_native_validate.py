@@ -19,6 +19,9 @@ import pytest
 
 TESTS = (
     'tests/test_ga00_security_baseline.py',
+    'tests/test_ga00_p09_owner_projection.py',
+    'tests/test_actions_00_01_github_provider.py',
+    'tests/test_w2_signing_profile.py',
     'tests/test_ga00_actions_secret_integration.py',
     'tests/test_ga00_followup_security.py',
     'tests/test_github_app_m4.py',

@@ -234,8 +234,18 @@ class GitHubActionsClient:
         canonical = obj.get("full_name")
         if not isinstance(canonical, str) or canonical.lower() != slug.lower():
             raise GitHubActionsError("GitHub repository identity mismatch")
+        # Retain only canonical public owner identity, not the full provider
+        # object. Missing/malformed owner metadata is never ownership proof.
+        owner = obj.get("owner")
+        safe_owner = None
+        if (isinstance(owner, dict) and owner.get("type") in ("User", "Organization")
+                and isinstance(owner.get("login"), str)
+                and owner["login"].casefold() == canonical.split("/", 1)[0].casefold()
+                and type(owner.get("id")) is int and owner["id"] > 0):
+            safe_owner = {key: owner[key] for key in ("login", "id", "type")}
         return {
             "full_name": canonical, "id": obj.get("id"),
+            "owner": safe_owner,
             "private": bool(obj.get("private")),
             "default_branch": obj.get("default_branch"),
             "permissions": {k: v for k, v in (obj.get("permissions") or {}).items()
@@ -311,7 +321,16 @@ class GitHubActionsClient:
 
     def workflow(self, slug: str, identifier: str) -> dict[str, Any]:
         slug = _slug(slug)
-        if not _WORKFLOW.fullmatch(identifier) or identifier in (".", ".."):
+        # Internal policies pin repository-relative workflow paths. GitHub's
+        # lookup endpoint accepts a filename or ID, never a path. Keep the
+        # original path as an independent response identity check.
+        pinned_path = None
+        if isinstance(identifier, str) and identifier.startswith(".github/workflows/"):
+            pinned_path = identifier
+            identifier = identifier.removeprefix(".github/workflows/")
+            if not identifier.endswith((".yml", ".yaml")):
+                raise GitHubActionsError("Invalid pinned workflow path")
+        if not isinstance(identifier, str) or not _WORKFLOW.fullmatch(identifier) or identifier in (".", ".."):
             raise GitHubActionsError("Workflow must be a numeric ID or a .yml/.yaml filename")
         try:
             data = self._get(f"/repos/{slug}/actions/workflows/{quote(identifier, safe='')}")
@@ -319,8 +338,10 @@ class GitHubActionsClient:
             if "not found or not accessible" in str(exc):
                 raise GitHubActionsError(f"Workflow {identifier} is missing or inaccessible in repository {slug}") from None
             raise
-        if not isinstance(data.get("id"), int):
+        if type(data.get("id")) is not int or data["id"] < 1:
             raise GitHubActionsError("Unexpected GitHub workflow response shape")
+        if pinned_path is not None and data.get("path") != pinned_path:
+            raise GitHubActionsError("GitHub workflow path differs from pinned policy")
         return self._workflow_fields(data)
 
     def dispatch(self, slug: str, workflow_id: str, ref: str, inputs: dict[str, str]) -> dict[str, Any]:
