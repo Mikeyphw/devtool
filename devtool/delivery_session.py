@@ -236,6 +236,20 @@ def plan(repo: Path, *, base: str = "main", head: str | None = None,
                        base_sha=base_sha)
     result.update({"schema": "devtool.delivery-plan.v1", "stage": "PLANNED",
                    "remote_verified": False, "release_qualified": False})
+    # GA-02 is explicitly opt-in: an owner-pinned policy gates cross-owner
+    # fork delivery *before* session creation. M4/M5 still own write authority.
+    from .github_relationships import guard_delivery_plan, RelationshipRefused
+    try:
+        ga02_guard = guard_delivery_plan(
+            head_repository=result["head_repository"],
+            base_repository=result["base_repository"],
+            head_branch=result["head"], base_branch=result["base"],
+            head_sha=result["head_sha"], base_sha=result["base_sha"])
+    except RelationshipRefused as exc:
+        raise DeliverySessionError(str(exc)) from None
+    if ga02_guard is not None:
+        result["ga02_relationship_guard"] = ga02_guard
+
     if overlay is not None:
         supplied = Path(overlay).expanduser()
         if supplied.is_symlink():

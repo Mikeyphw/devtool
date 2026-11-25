@@ -1665,6 +1665,14 @@ the target and verifies the real `devtool --help` nested child executes from
 the runtime source instead. No local Gradle, unsafe worktree rewrite,
 transaction replay, or remote CI qualification occurs in source tests.
 
+### DT-20261122-10/11 GA-02: source-bound federation and exact regression fixture
+
+- The opted-in fetch is now bound to a verified local HEAD and exactly digest-pinned relationship policy before any network mutation.
+- Before fetch, independently attest the explicitly enrolled *owner* GitHub App installation and the target installation's numeric identities, roles, installation scopes and authorization edge. Reject public owner and unobserved policy drift.
+- Check the local HEAD and exact origin again after credentials have been issued. Never leak GitHub App tokens into logs, Git argv, clipboard or receipts.
+- The GA-02 source-identity drift fixture now reaches the target drift assertion after satisfying both previously absent source and owner preconditions.
+- Source patch/test evidence is not native, GitHub PR, CI24, Android/device or release qualification. The native transaction MUST run on an exact clean PR #48 worktree using a distinct clean trusted Devtool runtime.
+
 ## 2026-11-24 consolidated Devtool bug-ledger hotfix DT-08/19/20/21/23/28/29/33/34
 
 Source-baseline `05e120d185ce8e81287b591bac6a221054abe94e`; 34 individually classified ledger cases in `docs/DEVTOOL_HOTFIX_BUG_DISPOSITION.json`.

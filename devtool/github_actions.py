@@ -171,7 +171,7 @@ class GitHubActionsClient:
         self.timeout = timeout
         self._opener = opener if opener is not None else build_opener(_NoRedirect())
 
-    def _request(self, path: str) -> tuple[dict[str, Any], Mapping[str, str]]:
+    def _request(self, path: str, *, expect_list: bool = False) -> tuple[Any, Mapping[str, str]]:
         parsed = urlsplit(path)
         if (parsed.scheme != "https" or parsed.netloc != "api.github.com"
                 or parsed.username or parsed.password or parsed.fragment):
@@ -216,7 +216,7 @@ class GitHubActionsClient:
             result = json.loads(data)
         except (UnicodeDecodeError, ValueError):
             raise GitHubActionsError("GitHub API returned invalid JSON") from None
-        if not isinstance(result, dict):
+        if not isinstance(result, list if expect_list else dict):
             raise GitHubActionsError("Unexpected GitHub API response shape")
         return result, response_headers
 
@@ -243,6 +243,30 @@ class GitHubActionsClient:
                            if isinstance(obj.get("permissions"), dict) else {},
             "html_url": f"https://github.com/{slug}",
         }
+
+    def user_repositories(self, *, max_results: int = 100) -> list[dict[str, Any]]:
+        """Bounded account-visible owner, collaborator and organization list, GET only.
+
+        This is discovery, not a grant; App installation membership is checked
+        independently. No cached pagination or fallback to anonymous identity.
+        """
+        if not self._token or type(max_results) is not int or not 1 <= max_results <= 300:
+            raise GitHubActionsError("Authenticated bounded repository discovery required")
+        items: list[dict[str, Any]] = []
+        per_page = min(100, max_results)
+        for page in range(1, 5):
+            remaining = max_results-len(items)
+            if remaining <= 0:
+                break
+            url = API_ORIGIN + ("/user/repos?affiliation=owner%2Ccollaborator%2Corganization_member"
+                                f"&per_page={per_page}&page={page}")
+            response, _ = self._request(url, expect_list=True)
+            if len(response)>per_page or any(not isinstance(row, dict) for row in response):
+                raise GitHubActionsError("Repository discovery response shape invalid")
+            items.extend(response[:remaining])
+            if len(response)<per_page:
+                break
+        return items
 
     def viewer(self) -> dict[str, Any]:
         if not self._token:

@@ -106,12 +106,74 @@ def installed_app_environment(environ: Mapping[str, str] | None = None,
     return _read_qualifed_local_env(path)
 
 
+def _local_commit(root: Path) -> str:
+    """Read the actual pinned checkout commit, not a policy-provided echo."""
+    result = subprocess.run(
+        ['git', '-C', str(root), 'rev-parse', '--verify', 'HEAD^{commit}'],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        timeout=15, check=False,
+        env={**os.environ, 'GIT_NO_REPLACE_OBJECTS': '1',
+             'GIT_OPTIONAL_LOCKS': '0', 'GIT_TERMINAL_PROMPT': '0'},
+    )
+    value = result.stdout.strip()
+    if result.returncode or not re.fullmatch(r'[a-f0-9]{40}', value):
+        from .github_relationships import RelationshipRefused
+        raise RelationshipRefused('GA02_FEDERATION_LOCAL_HEAD_UNVERIFIED')
+    return value
+
+
 def fetch_from_github_app(root: str | Path, locked_locator: str) -> subprocess.CompletedProcess[str]:
-    """One exact source-lock-scoped Git fetch, no implicit PAT or SSH fallback."""
+    """One exact source-lock-scoped fetch, with optional GA-02 policy binding.
+
+    Without GA-02 opt-in the preexisting M4 behavior is preserved. With
+    opt-in, the policy is digest pinned and the observed installation, owner
+    and repository IDs MUST match before any Git network mutation.
+    """
     root = Path(root).resolve()
     slug = github_slug_for_locator(locked_locator)
     if git_remote_locator(root) != locked_locator:
         raise GitHubAppError('APP_FEDERATION_REMOTE_MISMATCH')
-    provider = AppInstallationProvider.from_environment(installed_app_environment())
+    from .github_relationships import (RelationshipRefused, opted_in_registry,
+                                       authorize_federation_source,
+                                       assert_observation)
+    # No-policy M4 fetch remains unchanged; explicitly opted-in GA-02 fetches
+    # must bind the immutable relationship policy to the *actual* local HEAD.
+    opted = bool(os.environ.get('DEVTOOL_GA02_RELATIONSHIPS_FILE') or
+                 os.environ.get('DEVTOOL_GA02_RELATIONSHIPS_SHA256'))
+    source_sha = _local_commit(root) if opted else None
+    registry = opted_in_registry(source_sha=source_sha)
+    if registry is not None:
+        owner = os.environ.get('DEVTOOL_GA02_FEDERATION_OWNER', '')
+        if not owner:
+            raise RelationshipRefused('GA02_FEDERATION_OWNER_EXPLICIT_ENROLLMENT_REQUIRED')
+        node = registry.node(slug)
+        if node.role == 'public':
+            raise RelationshipRefused('GA02_PUBLIC_UPSTREAM_CANNOT_AUTHORIZE_GIT_FETCH')
+        from .github_installations import observe_installed
+        owner_node = registry.node(owner)
+        if owner_node.role == 'public':
+            raise RelationshipRefused('GA02_FEDERATION_PUBLIC_OWNER_NOT_AUTHORIZED')
+        owner_observed = observe_installed(owner, role=owner_node.role,
+            environ=(os.environ if owner_node.role == 'head' else installed_app_environment()))
+        assert_observation(registry, owner_observed)
+        # GA-02 chooses a distinct head installation ONLY when explicitly
+        # enrolled in the policy; base credentials never masquerade as head.
+        live = observe_installed(slug, role=node.role,
+            environ=(os.environ if node.role == 'head' else installed_app_environment()))
+        authorize_federation_source(registry, owner_repository=owner, target=live)
+        provider = AppInstallationProvider.from_environment(
+            os.environ if node.role == 'head' else installed_app_environment(),
+            role=node.role)
+    else:
+        provider = AppInstallationProvider.from_environment(installed_app_environment())
     credential = provider.issue(slug, 'repository_read')
+    if registry is not None:
+        if credential.repository_id != registry.node(slug).repository_id:
+            raise RelationshipRefused('GA02_FEDERATION_ACCESS_REPOSITORY_ID_DRIFT')
+        # Verify source and origin AGAIN after credentials and observations,
+        # immediately before the first Git network side effect.
+        if _local_commit(root) != source_sha:
+            raise RelationshipRefused('GA02_POLICY_SOURCE_SHA_DRIFT')
+        if git_remote_locator(root) != locked_locator:
+            raise RelationshipRefused('GA02_FEDERATION_REMOTE_CHANGED_BEFORE_FETCH')
     return run_git_authenticated(root, ['fetch', '--prune', 'origin'], credential, timeout=120)

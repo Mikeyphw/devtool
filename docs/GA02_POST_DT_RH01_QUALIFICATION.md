@@ -1,0 +1,7 @@
+# GA-02 — qualification against merged GA-01
+
+Original GA-02 PR #48 source `c7b6930f822c45a232f319b3d22d8c09094a676b`; owner-merged GA-01 PR #46 head `6c4dea4de63e954ce1832ce01cc5c49da21329e2`, merged main `175229867e2de43737a1451617b282779ae9768e` (tree `562bdaa56e577dc36767ca53e24a0607067cd0d0`). The exact reconciliation retains both histories and the GA-01 P16 managed-write repair. Preserve old GA-02 native sessions and CI as historical evidence, never replay their mutation or reuse their CI for the new head.
+
+The two-file native qualification overlay binds the exact reconciled tree, its real Git commit, current main base, preimages and postimages. Required regression inventory includes all GA-02 security modules and GA-01 M8 managed-write, native push, CI24 observation and native delivery checks. No local Gradle. Deliver only through the original PR #48, with no PR creation approval. Required CI and CI24 are new-source-bound; the latter must correlate to one persisted dispatch.
+
+Actual live GA-02 registry catalog and scoped App issuance require an owner-approved digest-pinned policy bound to the final native commit. Account visibility and declared relations do not grant writes. Actual fork/owner/installation adversarial qualification is separate. Owner elected not to run shared installation-selection revocation in GA-01; do not infer that test passed, or extend permission to production grants. Merge and formal release are separate decisions.
