@@ -94,3 +94,16 @@ retry. The observed worktree, session and PR must be requalified before any
 subsequent authorized action. Source tests cover preimage drift, cross-repo,
 unknown write, token exposure and provider error categories. Applicable live
 App hostile tests remain a separate security-acceptance obligation.
+
+### P16 managed-write completion defect
+
+Live sandbox PATCH exposed a circular dependency: the ordinary M8 session
+check required `resumable=True` even after its own intent made the session
+non-resumable, preventing native confirmation. All five managed write routes
+now use a confirmation-only native identity check, never general resume
+permission. The existing journal blocks unrelated writes while unresolved.
+Read-only reconciliation of interrupted PATCH/PUT is available using the
+original immutable policy and exact postimage; see M8's operator guide.
+Regression tests use real Git repositories and native journals, substituting
+only HTTP transport. Live revocation, hosted qualification and actual sandbox
+reconciliation remain separate gates.
