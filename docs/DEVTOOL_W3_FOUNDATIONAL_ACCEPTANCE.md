@@ -1,0 +1,67 @@
+# W3 foundational acceptance and recovery
+
+Baseline: `Mikeyphw/devtool`, exact merged main `093a6a927ca1438d9b30208fc9706c9326769868`, tree `707f0b8ca6aeefa90c8b6c77738ceab42867794c`. W3 is a maintenance wave of the existing roadmap, not a new original overlay. Contract v1.25, SHA-256 `850a858e863bb2715da7f9e09bd26ede3d7f81231f7da05db3b381b6cfb7df76`. The candidate is not a receipt of its own hosted or device acceptance. Original source labels merged: 13/24. Full independent acceptance count remains inconclusive.
+
+## Current implementation and independent gates
+
+The 110-module explicit `tests/w3_native_validate.py` inventory retains the full GA00/GA01/GA02 and W2 validators, M0 invariant references and native runtime/transaction/delivery/credential/recovery suites. The native manifest runs this same inventory as a required step; the existing GA source acceptance workflow independently runs it at the reviewed head. CI24 remains a separate explicit exact-attempt gate. No local Gradle is part of W3.
+
+| Existing overlay / promise group | Production authority and maintained tests | Evidence boundary |
+|---|---|---|
+| M0 I01–I24 | Original `DEVTOOL_NATIVE_DELIVERY_V3_M0_TEST_MATRIX.md`; all referenced maintained tests in W3 inventory, native structural check, exact-tree apply | Retain per-invariant requirements; source fixtures and actual native transaction do not imply current hosted, Android or release acceptance |
+| M1 schema, inventory, compatibility, refusal | `native_delivery_contract_v3`, `artifacts`, `launcher_contract_v3`; artifact-v2, native-contract-v3 and executable-overlay tests | No legacy artifact repin; archive validation of actual W3 bytes required |
+| M2 runtime pin, dirty/wrong repo/source/ABI, ZIP/PYZ parity | `native_runtime_preflight`, launcher runtime/contract tests, validation-delivery and G0C3 | Actual separate runtime and target; real Termux remains distinct |
+| M3 transaction, rollback, history, commit/adoption and unknown outcomes | `transactions`, `delivery_adoption`, `delivery_session`, `delivery_push_recovery`; transaction closure, native continuity, recovery, DT25 and W2 PR tests | Exact real transaction and adoption; unresolved native state never retried by an operator; W3 permits at most one explicit successor only after durable prelaunch absence and repeated negative evidence |
+| M4 scoped auth, branch/base/head, push/PR intents, CI policy/attempt | `github_app`, `ga01_scoped_auth`, `delivery_github`, `delivery_ci_*`, `qualification_workflows`; M4 integration, registrar/policy/source recheck, W2 recovery | Historical PR53 required CI + CI24 accepted for that head only; new W3 native delivery and hosted checks required |
+| M5 native migration, original exit/TTY, machine/report parity | `native_delivery_m5`, launcher compatibility, clipboard, storage, generated surfaces, operator foreground route tests | Linux PTY and actual Termux are distinct. W4/W9 UI obligations retained |
+| M7 credential diagnosis, installation/permission drift | `github_app`, `github_installations`, M7 credentials/CLI, native credential boundary and GA02 live registry tests | Actual owner campaign needed for selection revocation; no automatic escalation |
+| GA-01 operation-scoped capability, safe token/Git/PR writes and adverse handling | Central M4 issuer, `ga01_scoped_auth`, managed PR writes, federation auth, source-bound delivery tests | Earlier real sandbox write/token-revoke campaign preserved; W3 exact returned-grant negative locally tested; fresh selection denial/restoration required |
+| GA-02 numeric install/repo/owner, fork ancestry, catalog/relationship/policy, drift | `github_installations`, `github_relationships`, GA02 live registry and source guards, FRX02/03 | Earlier personal account live catalog retained; actual revoked selection requires P16; multi-owner/private-fork test inapplicable to agreed single-owner fixture, not declared passed |
+| DT-RH01-F01 recovery | Native continuity, `test_dt_hotfix_*`, delivery session/CI source recheck | Historical PR50 evidence retained; no replay of prior transaction/remote intent |
+
+## GA-00 atomic promise register
+
+| ID | Maintained production route / local negative coverage | Actual evidence and remaining independent gate |
+|---|---|---|
+| P01 | M4 issuer + GA01 numeric scoped auth + GA02 registry tests | Actual earlier personal sandbox grant proof; fresh W3 scope matrix required |
+| P02 | Effective push URL checks in M4 / `test_dt_hotfix_push_scope`, `test_ga01_scoped_auth` | Earlier disposable push proof; new native push rechecks exact destination |
+| P03 | Rewrite/pushInsteadOf rejection in the same native Git guard | Earlier/source fixture negatives retained; actual target config rechecked before write |
+| P04 | Credential helper trusted prompt and host binding / GA00, M4 and native credential-boundary tests | Historical controlled runtime tests; actual host prompt boundary remains separately evidenced |
+| P05 | Token transport isolation and sanitized logs / GA00/GA01/M4 tests | Actual token issuance/read/write evidence historical; current operator transcript/Termux leakage boundary separate |
+| P06 | Authenticated redirect refusal / GA00, Actions provider and M4 tests | Transport negatives source-fixture evidence; no live provider redirect claimed |
+| P07 | Hosted debug vs protected-release workflow separation / ACTIONS08/09 and GA00 followup | Source isolation retained; actual release run proves protected route, does not prove every negative debug/secret case |
+| P08 | Unsigned/local signing authority distinct from hosted production secrets / ACTIONS10, Android unsigned hotfix, LIFE and AAB tests | Source fixtures; applicable hosted unsigned/negative evidence independently reaudited before blanket acceptance |
+| P09 | ACTIONS09 and canonical owner projection / P09 integration and W2 profile tests | Accepted exact PR53 merged source, setup exit0 and readiness 8/8, actual protected run and certificate |
+| P10 | Typed secret intents and reconciliation / GA00 Actions secret integration, ACTIONS09 and W2 tests | Actual four environment writes succeeded; simulated partial failure/unknown-write paths remain distinct from live failures |
+| P11 | Metadata-only readiness vs independent cryptographic proof / ACTIONS08/09 | Actual P09 readiness and subsequent native P17 release proof kept separate |
+| P12 | Typed LIFE refs / GA00 security baseline and LIFE lifecycle tests | Actual durable private-file identity; adverse inputs tested locally |
+| P13 | Secret-safe receipts / GA00 followup, Actions provider, native credential boundary and operator finalizer | No secret values retrieved; original sanitized logs and host evidence needed for current release |
+| P14 | Canonical committed CI policy and ruleset preview / GA00 governance and CI policy tests | Independently observed active ruleset 26646485, exact six contexts, Actions integration 15368, no bypass actors; no new settings change |
+| P15 | Separate explicit governance plan/approval/readback / GA00 followup and security tests | Historical owner-approved ruleset readback retained; no new governance mutation needed |
+| P16 | Existing negative campaign, exact returned grants, `ga00_p16_selection` and real issuer fixture tests | Earlier real sandbox managed writes and scoped token revoke/reissue accepted; owner skipped installation selection removal; complete below with real owner/installation |
+| P17 | Native and hosted evidence; ACTIONS08 release verifier; exact CI/CI24 gates | Release-specific scope accepted on PR53/run45713177754; broader W3 native/live App/device gates pending |
+
+## Exact recovery repairs
+
+DT-20261125-02: an explicit `stage-01.zip` must never resolve to `stage-04.zip`. Native resolver keeps exact regular archive paths; missing exact names consider only literal-stem `(N)` downloads without a pin, reject conflicting digests, and allow legacy suffix aliases only with independently supplied SHA-256. No mtime selection. A mismatching exact-file pin is a refusal, not sibling substitution. Native transaction/consumed-source integrity remains the deletion authority. Operator recovery records the first prelaunch absence before apply; two fresh matching observations, exact owner attestation of prior process termination, no native transaction/history/session or active lock, exact branch/base and no remote branch or PR permit one explicit successor. Any observed actual transaction, inconsistent source, unavailable proof or consumed retry budget is fail-closed; use existing native recovery for actual transactions.
+
+Consumer OP-20261125-11 (Aurora `os.link`) and OP-20261125-13 (VLC orphan apply) have independent consumer repairs and are not replayed into this repository. Devtool's native exclusive publication uses its existing portable mechanisms, not `os.link`. The new W3 operator recovery applies to newly recorded W3 intents only; old records without prelaunch evidence are not silently reclassified.
+
+DT-20261125-CI-GATEWAY-READ: native CI observation now uses a shared bounded GitHub GET retry for HTTP 502/503/504 (initial attempt plus two retries, 0.25/0.5-second backoff, existing per-request timeout). The same request, origin, repository, run/attempt and credential scope remain bound. Required workflow metadata, remote head, PR and merge ref, registration pages, exact run and jobs, branch protection and effective rules all use the shared client or provider read. On exhaustion, source/registration/final recheck failures checkpoint a non-qualified provider-unavailable observation, preserving prior poll history, session events and all intents; continue only inside the existing bounded poll budget. Unavailable exact job/rules evidence remains non-qualified. CI24 records a fixed gateway-unavailable diagnostic and preserves its prior verification and dispatch identity. There is no retry of dispatch, rerun, PR creation, PATCH, push or secret writes. Regression tests inject HTTP faults at the opener beneath the real shared client and native CI journal; actual upstream outage is not claimed. No HookLab source change is involved.
+
+## P16 selection-revocation qualification (external owner)
+
+Use the installed cumulative W3 operator after W3 native delivery, exact required CI and CI24, explicit owner merge, and clean updated main. The operator verifies the exact merged postimage and uses the native module at that tree. It never changes installation selection. Existing installation must be selected-repositories mode, numeric App 5853103 / installation 184133864 / personal owner 209842110; sandbox 1470941412 is distinct from production 1276037219. Run each stage separately:
+
+1. `devop-devtool overlay M3 qualify --w3 --p16-phase baseline --repo "$HOME/Code/devtool" --auth app --yes` — two fresh production and sandbox scoped controls; record baseline.
+2. Only after baseline PASS, owner opens `https://github.com/settings/installations/184133864`, removes **only** `Mikeyphw/devtool-security-sandbox` from selected repositories, preserving `Mikeyphw/devtool` and all other selections, and saves explicitly. Never switch to all repositories, suspend or uninstall the shared App.
+3. `devop-devtool overlay M3 qualify --w3 --p16-phase denied --repo "$HOME/Code/devtool" --auth app --yes` — requires fresh positive production controls and two genuine sandbox repository-installation 404s with no sandbox token mint. Any other failure does not qualify. Restore only the sandbox even if this stage fails.
+4. Owner restores the exact sandbox selection; do not alter anything else.
+5. `devop-devtool overlay M3 qualify --w3 --p16-phase restored --repo "$HOME/Code/devtool" --auth app --yes` — independent fresh positive scopes for both repositories.
+6. `devop-devtool overlay M3 qualify --w3 --p16-phase status --repo "$HOME/Code/devtool" --auth app` — read-only checksummed receipt; selection-specific verdict only. If source changes during campaign, restore sandbox and stop; do not rewrite the receipt or reuse an old proof on new source.
+
+Do not send signing keys, App private keys, tokens or secret values. The owner performs the two selection mutations; no remote administration automation is supplied. Source tests use disposable RSA keys and fixture HTTP, not a live permission claim.
+
+## Retained release evidence
+
+PR53 repair head `d9bcf8ceda0b267004373fa5e662741cd4f6913b`; required 6/6, CI24 run 45710436477 attempt 1, 9575 tests / 763 modules. Merged tree as above. Protected release run 45713177754 attempt 1, artifact 15068442281, archive SHA256 `5d20caf4beb29fbf8146de76db455265c9b71f7b80ec2e0fb634173918643fb7`; native qualification `ec82519ba2d24e65bc2830ba1bf735e7`, outer qualified_release true. APK SHA256 `8c7939e4b0973f7e2527771738506caa14add1bfa96ba0f269c17be428024650`, signer `a167f33d8781c5675464011c9f975b343d938632db8b4dfc414e8322e890e99c`, app `io.github.mikeceead.devtoolhud` v1.17.0 (31). No signing remediation, reprovisioning, new release or device installation is included in W3. Earlier PR49 CI24 failure remains historical, PR52 correction accepted separately. All new source, actual host and live gates require their own receipts. W4–W10 retain their original dependencies.

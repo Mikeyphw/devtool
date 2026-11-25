@@ -906,8 +906,14 @@ def record_ci_observation(identity: str, observation: Mapping[str, Any], *,
             raise DeliverySessionError('CI observation source SHA differs from session')
         record['ci'] = obs
         record['updated_at'] = _utc()
-        record['events'].append({'kind':'ci_observed','at':record['updated_at'],
-                                 'state':obs['state'],'runs':len(obs['runs'])})
+        event = {'kind':'ci_observed','at':record['updated_at'],
+                 'state':obs['state'],'runs':len(obs['runs'])}
+        registration = obs.get('registration')
+        if isinstance(registration, dict) and registration.get('gateway_http_status') in (502,503,504):
+            # Only fixed numeric transport evidence enters the bounded journal.
+            if obs['state'] == 'REGISTRATION_PROVIDER_UNAVAILABLE' and registration.get('read_attempts') == 3:
+                event.update(gateway_http_status=registration['gateway_http_status'], read_attempts=3)
+        record['events'].append(event)
         if len(record['events']) > 500:
             # Observational progress is expendable; preserve durable mutation
             # intent/confirmation events and the most recent CI observations.

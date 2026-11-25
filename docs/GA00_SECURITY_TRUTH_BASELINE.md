@@ -138,3 +138,23 @@ LIFE identity `devtool-android-release` registered with certificate SHA-256
 Preserve that identity. Provision only after this source repair is merged and the
 actual Actions preview agrees with the standalone verdict. P17 release acceptance
 remains separate, requiring actual protected deployment and signed provenance.
+
+## W3 reconciliation — retained security evidence (2026-11-25)
+
+PR #53 merged at `093a6a927ca1438d9b30208fc9706c9326769868`. The owner
+completed ACTIONS-09 provisioning and all eight readiness gates. Native
+ACTIONS-08 verification returned outer `qualified_release=true` on run
+45713177754 attempt 1, artifact 15068442281, with the exact private policy,
+owner approval history, expected LIFE certificate and SLSA v1 attestation.
+This accepts P09 and the release-specific P17 scope; it is not blanket W3
+acceptance or physical-device evidence.
+
+W3 adds exact returned-token permission validation (implicit Metadata:read
+allowed, unrelated/stronger grants denied) and a native P16 selection
+observer. The owner must separately remove and then restore only the disposable
+security sandbox in the selected-repository installation. The observer uses
+fresh operation-scoped tokens, proves numeric scope and production positive
+controls on each phase, requires the exact denied endpoint without a token
+mint, and preserves a checksummed private receipt. It never edits the
+installation, revokes a production credential or publishes a release. See
+`DEVTOOL_W3_FOUNDATIONAL_ACCEPTANCE.md` for the exact procedure and gate matrix.

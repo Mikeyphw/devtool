@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -304,59 +305,88 @@ def _artifact_family_variants(path: Path) -> list[ArtifactVariant]:
     return variants
 
 
-def _artifact_mtime(path: Path) -> float:
-    try:
-        return path.stat().st_mtime
-    except OSError:
-        return 0.0
+def _candidate_digest(path: Path) -> str:
+    """Hash a download candidate without following a replaced leaf symlink."""
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError("artifact candidate is not a regular file")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(path, flags)
+    with os.fdopen(fd, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        def identity(info: os.stat_result) -> tuple[int, ...]:
+            return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        if not stat.S_ISREG(opened.st_mode) or identity(before) != identity(opened):
+            raise ValueError("artifact candidate changed before hashing")
+        digest = hashlib.sha256()
+        remaining = opened.st_size
+        while remaining:
+            block = stream.read(min(1024 * 1024, remaining))
+            if not block:
+                raise ValueError("artifact candidate changed during hashing")
+            digest.update(block)
+            remaining -= len(block)
+        if (stream.read(1) or identity(opened) != identity(os.fstat(stream.fileno())) or
+                identity(opened) != identity(path.lstat())):
+            raise ValueError("artifact candidate changed during hashing")
+        return digest.hexdigest()
 
 
-def _select_artifact_variant(path: Path, variants: list[ArtifactVariant]) -> Path:
-    if not variants:
-        return path
+def resolve_artifact_path(artifact: str | Path, *, expected_sha256: str | None = None) -> Path:
+    """Preserve an explicitly selected archive; never rank it against siblings.
 
-    split = _split_artifact_archive_name(path.name)
-    requested_stem = split[0] if split else path.stem
-    root_order = {root: index for index, root in enumerate(dict.fromkeys([requested_stem, *(variant.root for variant in variants)]))}
-
-    selected_by_root: list[ArtifactVariant] = []
-    for root in dict.fromkeys(variant.root for variant in variants):
-        family = [variant for variant in variants if variant.root == root]
-        unsuffixed = [variant for variant in family if variant.number == 0]
-        suffixed = [variant for variant in family if variant.number > 0]
-        if suffixed:
-            highest_number = max(variant.number for variant in suffixed)
-            highest = max((variant for variant in suffixed if variant.number == highest_number), key=lambda variant: _artifact_mtime(variant.path))
-            if unsuffixed:
-                plain = max(unsuffixed, key=lambda variant: _artifact_mtime(variant.path))
-                selected_by_root.append(plain if _artifact_mtime(plain.path) > _artifact_mtime(highest.path) else highest)
-            else:
-                selected_by_root.append(highest)
-        elif unsuffixed:
-            selected_by_root.append(max(unsuffixed, key=lambda variant: _artifact_mtime(variant.path)))
-
-    exact = path.resolve()
-    for selected in selected_by_root:
-        if selected.path == exact:
-            return selected.path
-    selected_by_root.sort(key=lambda variant: (root_order.get(variant.root, 999), -variant.number, -_artifact_mtime(variant.path)))
-    return selected_by_root[0].path if selected_by_root else path
-
-
-def resolve_artifact_path(artifact: str | Path) -> Path:
-    """Resolve a CLI artifact path, accepting common duplicate-download suffixes.
-
-    ``overlay.zip`` may resolve to ``overlay(1).zip``, ``overlay_1.zip``,
-    ``overlay1.zip`` or ``overlay-1.zip``.  The highest numeric duplicate suffix
-    wins, unless the unsuffixed archive exists and has a newer modification time.
+    Android's parenthesized download duplicates may be resolved if the named
+    path is absent and the choice is unambiguous. Legacy separator/bare-number
+    aliases require an independently supplied digest: those names may be
+    different source-bound stages. A digest mismatch for an existing exact
+    path is a hard error, not permission to substitute another archive.
     """
     path = resolve_cli_path(str(artifact), preserve_leaf=True)
+    if expected_sha256 is not None and (not isinstance(expected_sha256, str) or not _is_sha256(expected_sha256)):
+        raise ValueError("invalid expected artifact SHA-256")
+    expected = expected_sha256.strip().lower() if expected_sha256 is not None else None
     if path.is_symlink():
         raise ValueError("artifact source symlinks are not accepted")
-    chosen = _select_artifact_variant(path, _artifact_family_variants(path))
-    if chosen.is_symlink():
-        raise ValueError("selected artifact variant is a symlink")
-    return chosen
+    if path.exists():
+        if expected is not None and (not path.is_file() or _candidate_digest(path) != expected):
+            raise ValueError("exact artifact SHA-256 mismatch")
+        return path
+    split = _split_artifact_archive_name(path.name)
+    if split is None or not path.parent.is_dir():
+        if expected is not None:
+            raise FileNotFoundError("no artifact matching the expected SHA-256")
+        return path
+    stem, suffix = split
+    # Never strip the literal requested stem, even when it ends in digits.
+    # stage-01.zip is not a request for stage-04.zip.
+    pattern = re.compile(re.escape(stem) + r"\(([1-9][0-9]*)\)(?i:" + re.escape(suffix) + ")")
+    candidates: list[tuple[int, Path]] = []
+    for item in path.parent.iterdir():
+        if item.is_symlink() or not item.is_file():
+            continue
+        match = pattern.fullmatch(item.name)
+        number = int(match.group(1)) if match else None
+        if number is None and expected is not None and item.name.lower().endswith(suffix.lower()):
+            number = _artifact_variant_number(item.name[:-len(suffix)], stem)
+        if number is not None and number > 0:
+            candidates.append((number, item))
+            if len(candidates) > 256:
+                raise ValueError("artifact duplicate search limit exceeded; select an exact path")
+    if not candidates:
+        if expected is not None:
+            raise FileNotFoundError("no artifact matching the expected SHA-256")
+        return path
+    candidates.sort(key=lambda row: (row[0], row[1].name))
+    matches: list[tuple[str, Path]] = []
+    for _, candidate in candidates:
+        digest = _candidate_digest(candidate)
+        if expected is None or digest == expected:
+            matches.append((digest, candidate))
+    if not matches:
+        raise ValueError("no artifact duplicate matches the expected SHA-256")
+    if len({digest for digest, _ in matches}) != 1:
+        raise ValueError("ambiguous artifact download variants; select an exact path or supply a SHA-256")
+    return matches[0][1]
 
 
 def artifact_cleanup_paths(artifact: str | Path) -> list[Path]:

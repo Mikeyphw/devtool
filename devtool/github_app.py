@@ -149,6 +149,18 @@ def _permission_ok(actual: Mapping[str, Any], need: Mapping[str, str]) -> bool:
     return all(rank.get(str(actual.get(k, '')).lower(), 0) >= rank[v] for k,v in need.items())
 
 
+def _token_permissions_exact(actual: Mapping[str, Any], need: Mapping[str, str]) -> bool:
+    """A token is a grant, not installation capability metadata.
+
+    GitHub may include implicit Metadata:read. Reject any stronger or unrelated
+    effective grant instead of silently admitting a broader credential.
+    """
+    allowed = {**need, 'metadata': 'read'}
+    return (all(actual.get(k) == v for k, v in need.items()) and
+            all(isinstance(k, str) and isinstance(v, str) and
+                (v == 'none' or allowed.get(k) == v) for k, v in actual.items()))
+
+
 class _ProviderHTTP:
     """Bounded GitHub API transport, no redirects or credential-bearing error details."""
     def __init__(self, opener: Any = None, timeout: float = 15.0):
@@ -271,7 +283,7 @@ class AppInstallationProvider:
              {'repositories':[repository.split('/',1)[1]],'permissions':need})
         permissions = issued.get('permissions')
         repositories = issued.get('repositories')
-        if (not isinstance(permissions,dict) or not _permission_ok(permissions,need)
+        if (not isinstance(permissions,dict) or not _token_permissions_exact(permissions,need)
             or not isinstance(repositories,list) or len(repositories)!=1
             or not isinstance(repositories[0],dict)
             or str(repositories[0].get('full_name','')).casefold()!=repository.casefold()
@@ -491,7 +503,7 @@ def make_app_client(repository: str, capability: str, *, role: str = 'base'):
                     or type(number) is not int or number < 1):
                 raise GitHubAppError('APP_CLIENT_PR_WRITE_NOT_ADMITTED')
 
-        def _request(self, path):
+        def _request(self, path, *, expect_list=False):
             # Pagination and internal raw GET adapters must never escape the
             # chosen installation repository, even before the provider does a
             # real GitHub permission check.
@@ -501,7 +513,7 @@ def make_app_client(repository: str, capability: str, *, role: str = 'base'):
                     or not (parsed.path.casefold()==prefix.casefold() or
                             parsed.path.casefold().startswith(prefix.casefold()+'/'))):
                 raise GitHubAppError('APP_CLIENT_CROSS_REPOSITORY_REFUSED')
-            return super()._request(path)
+            return super()._request(path, expect_list=expect_list)
         def dispatch(self, slug, workflow_id, ref, inputs):
             self._assert_repository(slug)
             if capability!='actions_dispatch':
