@@ -1682,3 +1682,18 @@ Eight source-fix **candidates**: DT-19, DT-20, DT-21, DT-23, DT-28, DT-29, DT-33
 Production changes: App workflow-scope push authorization, exact branch-range detection, two-attempt durable push reconciliation, postcommit controller drift refusal, Rich CI credential/event projection and test-count/static validation safeguards.
 
 **Acceptance at source handoff: PENDING.** New native commit/PR, required CI, CI24, live denial/write, GA-00 and release/device gates NOT YET QUALIFIED. Never reapply a committed source or retry an unresolved push automatically.
+
+
+### 2026-11-26 UTC — W3 selection and operator evidence repairs
+
+- DT-20261126-01: positive P16 scoped-read refusal during restoration was incorrectly labeled expected denial not proven. Role-specific sanitized diagnostics and unchanged receipt-on-failure regression; actual owner selection restoration remains independent.
+- DT-20261124-29: current-poll native CI journal readback replaces stale initial event snapshot; exact source guard and explicit unavailable presentation; no additional remote polling. DT-20261124-28 read health is integrated and tested separately from write authorization.
+- Source base PR54 merge `2e1cbe46f03e133fb424a8a22f74773733b65b99` / `c4decff69accb08247f721c1a5fd64dcdaabcb3e`. No historical campaign/session receipt rewritten. New hosted CI, CI24, physical Termux and new-source selection campaign pending until independently proven.
+
+### W3 validation performance and force-interruption recovery
+
+Replace the redundant all-module local run with required dependency-aware selection plus private exact-input checkpoints; expand on unknown changes. Explicit rollback remains native authority, and successor admission requires verified transaction closure and unchanged remote state. Consolidate overlapping hosted GA source steps without dropping test modules; preserve separate exhaustive CI24. Physical Termux timing and new-source hosted acceptance remain pending.
+
+### DT-20261126-03 — W3 native validator bootstrap
+
+Remove the native validator dependency on a namespace-sensitive hosted CI helper, validate JUnit with the standard library, reproduce shadowed import and failure/skip counts. Preserve the abandoned-kept-changes transaction rather than calling it a rollback. Require exact predecessor retained evidence and separate clean successor; new native validation failure action explicitly rolls back. Production pending.

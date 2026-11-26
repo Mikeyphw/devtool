@@ -166,3 +166,39 @@ def test_post_apply_path_drift_keeps_retry_blocked(tmp_path, monkeypatch):
     row = overlay_recovery_plan(repo)["active_transactions"][0]
     assert any("no longer matches" in item for item in row["blockers"])
     assert row["classification"] == "blocked"
+
+
+def test_interrupted_isolated_backup_ready_offers_only_explicit_rollback(tmp_path, monkeypatch):
+    from devtool.transactions import _path_identity, _capture_git_state
+    repo = _repo(tmp_path, monkeypatch)
+    subprocess.run(['git','init','-q',str(repo)],check=True)
+    subprocess.run(['git','-C',str(repo),'config','user.name','Fixture'],check=True)
+    subprocess.run(['git','-C',str(repo),'config','user.email','fixture@invalid.example'],check=True)
+    target=repo/'a.txt';target.write_text('preimage')
+    subprocess.run(['git','-C',str(repo),'add','a.txt'],check=True)
+    subprocess.run(['git','-C',str(repo),'commit','-qm','base'],check=True)
+    journal,marker=_marker(repo,'backup-ready01',status='backup-ready',entries=[])
+    backup=journal.parent/'backup';backup.mkdir();(backup/'a.txt').write_bytes(target.read_bytes())
+    state=json.loads(journal.read_text())
+    state.update(backup_dir=str(backup),git_state=_capture_git_state(repo,journal.parent),
+                 isolation={'effective':'worktree','primary_root':str(repo),'execution_root':str(journal.parent/'worktree')},
+                 affected_paths=[{'path':'a.txt','existed':True,'backup_identity':_path_identity(backup/'a.txt'),'restore_state':'pending'}])
+    journal.write_text(json.dumps(state));before=journal.read_bytes()
+    row=overlay_recovery_plan(repo)['active_transactions'][0]
+    assert row['classification']=='explicit_rollback_preflight_clear',row
+    assert row['existing_command']=='devtool rollback --transaction backup-ready01'
+    assert not row['automatic_recovery_authorized'] and journal.read_bytes()==before
+    import fcntl, hashlib, os
+    from devtool.xdg import state_dir
+    worker=state_dir()/"w3-module-validation"/hashlib.sha256(os.fsencode(str(repo))).hexdigest()/"worker.lock"
+    worker.parent.mkdir(parents=True)
+    with worker.open("w") as lease:
+        fcntl.flock(lease.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+        row=overlay_recovery_plan(repo)["active_transactions"][0]
+        assert row["classification"]=="blocked" and any("validation worker lease held" in b for b in row["blockers"])
+        assert row["existing_command"]==""
+    assert overlay_recovery_plan(repo)["active_transactions"][0]["classification"]=="explicit_rollback_preflight_clear"
+    target.write_text('user edit')
+    row=overlay_recovery_plan(repo)['active_transactions'][0]
+    assert row['classification']=='blocked' and row['existing_command']==''
+    assert target.read_text()=='user edit' and journal.read_bytes()==before

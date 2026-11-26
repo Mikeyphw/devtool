@@ -157,3 +157,42 @@ def test_wrong_sandbox_cannot_alias_production(fixture):
     _,pins,_,_=fixture
     with pytest.raises(p16.SelectionRefusal,match='DISTINCT'):
         p16.SelectionPins(**{**asdict(pins),'sandbox_id':pins.repository_id})
+
+
+@pytest.mark.parametrize('role,code,reason', [
+    ('sandbox', p16._UNAVAILABLE, 'P16_SANDBOX_SELECTION_UNAVAILABLE'),
+    ('production', p16._UNAVAILABLE, 'P16_PRODUCTION_SELECTION_UNAVAILABLE'),
+    ('sandbox', 'APP_AUTHENTICATION_FAILED', 'P16_SANDBOX_SCOPED_READ_REFUSED'),
+    ('sandbox', 'APP_PROVIDER_UNAVAILABLE', 'P16_SANDBOX_SCOPED_READ_REFUSED'),
+    ('sandbox', 'UNTRUSTED_SECRET_VALUE', 'P16_SANDBOX_SCOPED_READ_REFUSED'),
+])
+def test_restoration_refusal_identifies_positive_scope_and_retains_campaign(fixture,role,code,reason):
+    root,pins,t,state=fixture
+    p16.campaign(root,pins,'baseline',state=state)
+    t.removed=True
+    denied=p16.campaign(root,pins,'denied',state=state)
+    path=Path(denied['receipt']); raw=path.read_bytes()
+    t.removed=False
+    setattr(t, 'error' if role=='sandbox' else 'control_error', code)
+    with pytest.raises(p16.SelectionRefusal,match='^'+reason+'$') as info:
+        p16.campaign(root,pins,'restored',state=state)
+    diagnostic=info.value.diagnostic
+    assert diagnostic == {'repository_role':role,'endpoint':'repository-installation',
+                          'cause_code':code if code.startswith('APP_') else 'APP_REFUSAL_UNCLASSIFIED',
+                          'mint_attempted':False}
+    assert path.read_bytes()==raw
+    assert p16.campaign(root,pins,'status',state=state)['selection_revocation_qualified'] is False
+    t.error=t.control_error=None
+    assert p16.campaign(root,pins,'restored',state=state)['selection_revocation_qualified'] is True
+
+
+def test_new_source_cannot_reuse_old_campaign(fixture):
+    root,pins,t,state=fixture
+    record=p16.campaign(root,pins,'baseline',state=state)
+    old=Path(record['receipt']); raw=old.read_bytes()
+    new=p16.SelectionPins(**{**asdict(pins),'source_sha':'a'*40})
+    with pytest.raises(p16.SelectionRefusal,match='RECEIPT_MISSING'):
+        p16.campaign(root,new,'status',state=state)
+    with pytest.raises(p16.SelectionRefusal,match='EXACT_NEXT_PHASE'):
+        p16.campaign(root,new,'restored',state=state)
+    assert old.read_bytes()==raw

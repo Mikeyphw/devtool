@@ -31,7 +31,10 @@ _UNAVAILABLE = 'APP_INSTALLATION_OR_REPOSITORY_UNAVAILABLE'
 
 
 class SelectionRefusal(RuntimeError):
-    """Only fixed diagnostic codes leave the security boundary."""
+    """Only fixed diagnostic codes and allowlisted facts leave the boundary."""
+    def __init__(self, reason: str, *, diagnostic: dict | None = None):
+        super().__init__(reason)
+        self.diagnostic = diagnostic or {}
 
 
 def _require(condition: Any, reason: str) -> None:
@@ -155,11 +158,36 @@ def _probe(pins: SelectionPins, repository: str, rid: int, *, denied: bool) -> d
         access = issue_for_operation(repository, 'federation.source.fetch',
                                      expected_repository_id=rid, provider=provider)
     except AppOperationRefused as exc:
-        _require(denied and str(exc) == _UNAVAILABLE and trace.posts == 0 and
-                 trace.last_failure == ('GET', '/repos/' + repository + '/installation', _UNAVAILABLE),
-                 'P16_EXPECTED_REPOSITORY_SELECTION_DENIAL_NOT_PROVEN')
-        return {'repository': repository, 'repository_id': rid, 'result': 'SELECTION_DENIED',
-                'endpoint': 'repository-installation', 'http_status': 404, 'token_mint_attempted': False}
+        selection_denied = (str(exc) == _UNAVAILABLE and trace.posts == 0 and
+                            trace.last_failure == ('GET', '/repos/' + repository + '/installation', _UNAVAILABLE))
+        if denied and selection_denied:
+            return {'repository': repository, 'repository_id': rid, 'result': 'SELECTION_DENIED',
+                    'endpoint': 'repository-installation', 'http_status': 404, 'token_mint_attempted': False}
+        role = 'sandbox' if repository == pins.sandbox else 'production'
+        # Never emit provider response bodies or arbitrary exception strings.
+        code = str(exc)
+        known = {'APP_INSTALLATION_OR_REPOSITORY_UNAVAILABLE', 'APP_AUTHENTICATION_FAILED',
+                 'APP_PERMISSION_DENIED_OR_RATE_LIMIT', 'APP_PROVIDER_UNAVAILABLE',
+                 'APP_HTTP_REDIRECT_REFUSED', 'APP_HTTP_STATUS_UNEXPECTED',
+                 'APP_HTTP_RESPONSE_OVERSIZE', 'APP_HTTP_RESPONSE_INVALID', 'APP_HTTP_RESPONSE_SHAPE',
+                 'APP_INSTALLATION_IDENTITY_UNVERIFIED', 'APP_INSTALLATION_PERMISSION_MISSING',
+                 'APP_TOKEN_REPOSITORY_OR_PERMISSION_UNVERIFIED', 'APP_TOKEN_EXPIRY_INVALID',
+                 'APP_TOKEN_INVALID_OR_EXPIRED', 'APP_TOKEN_REPOSITORY_ACCESS_UNVERIFIED',
+                 'GA01_APP_ISSUANCE_IDENTITY_MISMATCH', 'GA01_REPOSITORY_NUMERIC_ID_DRIFT'}
+        endpoint = 'not-established'
+        if trace.last_failure:
+            method, path, _ = trace.last_failure
+            endpoint = {('GET', f'/app/installations/{pins.installation_id}'): 'app-installation',
+                        ('GET', f'/repos/{repository}/installation'): 'repository-installation',
+                        ('POST', f'/app/installations/{pins.installation_id}/access_tokens'): 'token-issuance',
+                        ('GET', f'/repos/{repository}'): 'scoped-repository'}.get((method,path), endpoint)
+        reason = ('P16_EXPECTED_REPOSITORY_SELECTION_DENIAL_NOT_PROVEN' if denied else
+                  'P16_' + role.upper() + ('_SELECTION_UNAVAILABLE' if selection_denied else '_SCOPED_READ_REFUSED'))
+        raise SelectionRefusal(reason, diagnostic={
+            'repository_role': role, 'endpoint': endpoint,
+            'cause_code': code if code in known or re.fullmatch(r'APP_HTTP_[1-5][0-9]{2}', code) else 'APP_REFUSAL_UNCLASSIFIED',
+            'mint_attempted': trace.posts > 0,
+        }) from None
     _require(not denied, 'P16_SANDBOX_STILL_SELECTED')
     _require((access.app_id, access.installation_id, access.repository_id) ==
              (pins.app_id, pins.installation_id, rid) and trace.posts == 1, 'P16_SCOPED_CREDENTIAL_DRIFT')
@@ -289,9 +317,12 @@ def main() -> int:
         reason = str(exc)
         if not isinstance(exc, (SelectionRefusal, GitHubAppError, AppOperationRefused)) or not re.fullmatch(r'[A-Z0-9_]{1,100}', reason):
             reason = 'P16_OBSERVATION_UNVERIFIED'
-        print(json.dumps({'status': 'BLOCKED', 'reason': reason, 'phase': args.phase,
-                          'remote_configuration_mutated': False,
-                          'next_action': 'If sandbox selection was removed, restore only that sandbox using the owner installation settings; do not alter production access.'}, sort_keys=True))
+        result = {'status': 'BLOCKED', 'reason': reason, 'phase': args.phase,
+                  'remote_configuration_mutated': False,
+                  'next_action': 'If sandbox selection was removed, restore only that sandbox using the owner installation settings; do not alter production access.'}
+        if isinstance(exc, SelectionRefusal) and exc.diagnostic:
+            result['diagnostic'] = exc.diagnostic
+        print(json.dumps(result, sort_keys=True))
         return 2
 
 

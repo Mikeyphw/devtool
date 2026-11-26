@@ -118,10 +118,19 @@ TESTS = (
     'tests/test_validation_sessions.py',
     'tests/test_w2_pr_recovery.py',
     'tests/test_w2_signing_profile.py',
+    'tests/test_overlay_r06d_recovery_plan.py',
+    'tests/test_w3_native_validation.py',
 )
 
 if __name__ == '__main__':
     if any(not (ROOT / p).is_file() for p in TESTS):
         raise SystemExit('W3_NATIVE_REQUIRED_TEST_MISSING')
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--profile', choices=('targeted', 'standard', 'full'), default='full')
+    args = parser.parse_args()
+    if args.profile != 'full':
+        from tests.w3_validation_support import run_local
+        raise SystemExit(run_local(ROOT, TESTS, standard=args.profile == 'standard'))
     import pytest
     raise SystemExit(pytest.main(['-q', *TESTS]))
