@@ -146,13 +146,23 @@ def run_delivery_command(args: Any) -> int:
                                                   ('session_id','id')):
                             if display not in view and bound.get(canonical) is not None:
                                 view[display]=bound[canonical]
-                        # S6's validated session journal is the only authority
-                        # for *historical* events; don't fabricate live events.
-                        stream = bound.get('event_stream')
-                        if isinstance(stream, dict) and stream.get('source_sha') == bound.get('head_sha'):
-                            events = stream.get('events')
-                            if isinstance(events, list) and len(events) <= 160:
-                                view.setdefault('events', events)
+                        # The observer has already durably recorded this poll.
+                        # Re-read only that local journal, never poll GitHub a
+                        # second time or project a stale initial snapshot as live.
+                        view['event_stream_state'] = 'UNVERIFIED'
+                        try:
+                            current = status(identity, inspect_git=False)
+                            if all(current.get(k) == bound.get(k) for k in
+                                   ('id', 'repo_root', 'head_sha', 'head', 'base', 'base_repository')):
+                                stream = current.get('event_stream')
+                                if isinstance(stream, dict) and stream.get('source_sha') == bound.get('head_sha'):
+                                    events = stream.get('events')
+                                    if isinstance(events, list) and len(events) <= 160:
+                                        view['events'] = events
+                                        view['event_stream_state'] = 'JOURNAL_READBACK'
+                        except (DeliverySessionError, OSError, ValueError):
+                            # Presentation failure does not change a native CI verdict.
+                            pass
                         if isinstance(credential_health, dict):
                             view.setdefault('credential_health', credential_health)
                         rich_monitor.observe(view)

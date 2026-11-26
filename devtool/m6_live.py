@@ -295,7 +295,12 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
         line = _facts(row,'message','name','phase','type','kind')
         if row.get('historical') is True:
             line = 'saved: ' + str(line or 'event')
+        detail_state = _facts(row, 'state', 'status', 'conclusion')
+        if detail_state is not None:
+            line = str(line or 'event') + ' · ' + safe(detail_state)
         events.append(_row(safe(stamp) if stamp else 'time unrecorded',safe(line)))
+    if source.get('event_stream_state') == 'UNVERIFIED':
+        events.insert(0, _row('Native journal readback unavailable',style='yellow'))
     if kind=='ci' and state=='CHECKS_FAILED':
         diagnosis = source.get('diagnosis') if isinstance(source.get('diagnosis'),Mapping) else {}
         failures = _as_rows(diagnosis.get('failures'))

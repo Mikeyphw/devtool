@@ -1,14 +1,22 @@
 # Devtool — One integrated execution roadmap
 
-**Roadmap:** `DEVTOOL-UNIFIED/1.0` · **Planning revision:** `1.8` · **As of:** 2026-11-25 UTC  
-**Repository:** `Mikeyphw/devtool` · **Verified base main:** `093a6a927ca1438d9b30208fc9706c9326769868`  
-**Status:** **W1/W2 MERGED; GA-00 P09 AND P17 RELEASE ACCEPTED / W3 FOUNDATIONAL SOURCE CANDIDATE**. It supersedes the **execution ordering and presentation** of the v1.1 Library design, **not** its original 24 overlay IDs, promise inventory, acceptance history, or Git commits.  
+**Roadmap:** `DEVTOOL-UNIFIED/1.0` · **Planning revision:** `1.10` · **As of:** 2026-11-25 UTC
+**Repository:** `Mikeyphw/devtool` · **Verified base main:** `2e1cbe46f03e133fb424a8a22f74773733b65b99`
+**Status:** **W1/W2 MERGED; GA-00 P09 AND P17 RELEASE ACCEPTED / W3 SOURCE MERGED / CONSOLIDATED P16 / VALIDATION / RECOVERY REPAIR CANDIDATE**. It supersedes the **execution ordering and presentation** of the v1.1 Library design, **not** its original 24 overlay IDs, promise inventory, acceptance history, or Git commits.
 **Authoritative committed roadmap:** `docs/DEVTOOL_NATIVE_OVERLAY_DELIVERY_V3_ROADMAP.md` on `main` (historical milestone statuses may be stale). Revision 1.5 was adopted through merged PR #49. Revision 1.6 records the forward-only guide correction. Revision 1.7 recorded PR #52 and the pending P09 repair. Revision 1.8 reconciles the subsequent PR #53 merge and qualified protected release; introduces the W3 exact-archive, credential-scope and shared read-only CI gateway retry corrections and P16 selected-repository denial/restoration observer. See `docs/DEVTOOL_W3_FOUNDATIONAL_ACCEPTANCE.md` for per-promise evidence and remaining gates.  
 **User operating contract:** `AGENT-OPERATIONS-DEVTOOL` v1.25, SHA-256 `850a858e863bb2715da7f9e09bd26ede3d7f81231f7da05db3b381b6cfb7df76` (read in full and byte-verified).  
 **Canonical bug ledger:** `/Devtool/DEVTOOL_BUG_LEDGER_cg.md`, SHA-256 `f90e6a719b794ba86adad72c6b4675af6fa5901aa51dee6333f3b3e3e2782c32` (read in full; historical dispositions require current-source retriage).  
 **Prior Library revision:** `DEVTOOL_UNIFIED_FINAL_ROADMAP_20261123_cg(1).md`, revision 1.1, SHA-256 `88ffd2c8636df386c15931f944da9429cac11379152a855e01a3c2043f6dfcaa`; this revision retains their complete promise wording and IDs in Appendix A.
 
 > **Core change:** Do not deliver 'core', then 'GitHub App', then 'Rich UI' as three independent products. Each **vertical bundle** must expose one coherent user task through **one Devtool native engine**, **one operation-scoped App/credential boundary**, and **one shared Rich/operator interface** (with plain/JSON and optional Textual parity). This is sequencing and ownership reform, **not** permission to merge incomplete overlays or substitute UI mocks for production integration.
+
+## Revision 1.9 — W3 bug repair
+
+PR54 merged source `2e1cbe46f03e133fb424a8a22f74773733b65b99`, tree `c4decff69accb08247f721c1a5fd64dcdaabcb3e`; owner native transaction `20261125T230414Z-988571c372a3`, session `d34172fb44404844b4cdb0ce0693f18c`, required CI 6/6 and CI24 run 45721149987. Original W3 selection campaign `77ebddac508a02281b993e178edefe8d8305fa798a97799a7530e23b6c0a29cf` baseline and denied phases passed; restored exited 2 with a misleading denial-specific diagnostic. Preserve that receipt at its original source. New source requires a new campaign; no transfer of live proof, no automated installation selection mutation. W3 repair source adds role-specific safe positive refusal diagnostics and current-poll native event readback for DT-20261124-29. DT-20261124-28 credential health already exists; integration regression verifies read health is not write authorization. Other original W4–W10 promises retain their original gates; no new original overlay IDs. See W3 acceptance documentation and improvements ledger.
+
+## Revision 1.10 — validator bootstrap and retained-failure recovery
+
+W3 performance candidate failed before collecting tests on Termux (DT-20261126-03). Native local JUnit parsing is independent of the hosted `tools` namespace; a separate exact-base successor preserves and verifies the failed retained worktree and original transaction. Native rollback policy is explicit for future validation failures. Original overlay inventory and required full W3 / CI24 gates remain unchanged. Production and physical Termux qualification pending.
 
 ## Current execution waves and gates (supersedes historical queue)
 
@@ -365,3 +373,7 @@ This section retains every currently identified atomic **GA-00**, **M6**, **U01*
 - Verified GitHub `main`: `05e120d185ce8e81287b591bac6a221054abe94e` and merged-source repo baseline; PR #46 `f4290fb...` draft, PR #48 `b6e6550...` draft (observed 2026-11-24 UTC). Both on `main` as branch ancestor (behind 0); PR #48 also includes GA-01 head as ancestor. GitHub Actions required 6/6 and GA source steps observed successful on exact heads, but independent native CI24 and real App acceptance missing.
 - Authority boundary: this document is a **design artifact** prepared externally; no exact Termux Git worktree, installed interpreter/launcher, native overlay check/apply/commit, GitHub write, CI24 dispatch, real App installation, device test, or roadmap Git adoption was performed by generating it.
 - Next gate: source-bound native review and adoption of this v1.2 roadmap through the ONE cumulative Devtool operator, then B0 receipt and actual GA-01/02 closure. Never turn this plan into a 'verified applied overlay' merely because its Markdown integrity is valid.
+
+### W3 validation budget and recovery
+
+Revision 1.9 candidate incorporates the undelivered P16 diagnostics and CI monitor fixes, mandatory dependency-aware local test selection, exact-input module checkpoints, explicit verified rollback recovery and consolidated full W3 hosted source acceptance. CI24 remains exhaustive and independently source-bound; the remaining original 24-overlay inventory and all acceptance obligations are unchanged.

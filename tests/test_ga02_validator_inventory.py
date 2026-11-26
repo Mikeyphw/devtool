@@ -39,4 +39,6 @@ def test_inventory_drops_are_rejected():
 
 def test_hosted_ga_source_acceptance_runs_native_validator():
     workflow=(ROOT/'.github/workflows/devtool-ga-source-acceptance.yml').read_text(encoding='utf-8')
-    assert 'tests/ga02_native_validate.py' in workflow
+    assert 'tests/w3_native_validate.py --profile full' in workflow
+    unified = _names((ROOT/'tests/w3_native_validate.py').read_text(encoding='utf-8'))
+    assert set(_names((ROOT/'tests/ga02_native_validate.py').read_text(encoding='utf-8'))).issubset(unified)

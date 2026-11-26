@@ -13,8 +13,12 @@ import stat
 from pathlib import Path
 from typing import Any
 
+from .. import host_file_lock
+from ..xdg import state_roots
 from ..transactions import (
     _preflight_git_restore,
+    _path_identity,
+    _safe_rel,
     _preflight_live_target_guards,
     _preflight_retry_guards,
     _process_is_alive,
@@ -53,6 +57,22 @@ def _one(repo: Path, tx_path: Path, tx: dict[str, Any]) -> dict[str, Any]:
     live = _process_is_alive(pid, str(tx.get("process_start") or ""))
     if live:
         blockers.append("transaction owner still alive")
+    # A force-killed validator parent can leave its pytest child holding the
+    # same open-file-description lease. Never advertise rollback while it lives.
+    for root in state_roots():
+        worker=root/"w3-module-validation"/hashlib.sha256(os.fsencode(str(repo))).hexdigest()/"worker.lock"
+        if not worker.exists() and not worker.is_symlink():
+            continue
+        try:
+            if any(p.is_symlink() for p in (worker,worker.parent,worker.parent.parent)):
+                raise OSError("unsafe validation worker lease")
+            fd=os.open(worker,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_NONBLOCK",0))
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):raise OSError("invalid validation worker lease")
+                host_file_lock.flock(fd,host_file_lock.LOCK_EX|host_file_lock.LOCK_NB)
+            finally:os.close(fd)
+        except OSError:
+            blockers.append("validation worker lease held or unsafe; stop the original worker before rollback")
     phase = transaction_recovery_diagnostics(tx)
     if status == "rollback-failed" and not entries:
         blockers.append("no affected-path checkpoints recorded for failed rollback")
@@ -77,7 +97,37 @@ def _one(repo: Path, tx_path: Path, tx: dict[str, Any]) -> dict[str, Any]:
         if not backup.exists() and not backup.is_symlink():
             blockers.append("original-file rollback backup is absent")
             break
-    if not blockers and status in {"rollback-failed", "rollback-requested", "rollback-staging", "rollback-restoring", "rollback-verifying"}:
+    # An interrupted isolated apply may still say backup-ready after extraction.
+    # Offer only the existing explicit rollback if primary preimages, Git state
+    # and isolation are demonstrably intact. Never infer validation success.
+    if status == "backup-ready" and not blockers:
+        isolation = tx.get("isolation") or {}
+        if (not isinstance(isolation, dict) or isolation.get("effective") != "worktree"
+                or isolation.get("primary_root") != str(repo)
+                or isolation.get("execution_root") != str(tx_path.parent / "worktree")
+                or not entries or not isinstance(tx.get("git_state"), dict)
+                or tx["git_state"].get("is_git_repo") is not True
+                or tx["git_state"].get("applied_commit")):
+            blockers.append("interrupted apply lacks verified isolated precommit identity")
+        else:
+            try:
+                for entry in entries:
+                    rel = _safe_rel(str(entry.get("path") or ""))
+                    target = repo / rel
+                    if any(parent.is_symlink() for parent in target.parents if repo in parent.parents):
+                        raise RuntimeError("primary path parent is a symlink")
+                    current = _path_identity(target)
+                    if entry.get("existed"):
+                        expected = entry.get("backup_identity")
+                        if not isinstance(expected, dict) or _path_identity(backup_dir / rel) != expected or current != expected:
+                            raise RuntimeError("primary preimage or backup identity drift")
+                    elif current.get("kind") != "missing":
+                        raise RuntimeError("primary added path is no longer absent")
+                _preflight_git_restore(repo, tx)
+                _preflight_live_target_guards(repo, entries)
+            except (RuntimeError, ValueError, OSError) as exc:
+                blockers.append(f"{type(exc).__name__}: {exc}"[:280])
+    elif not blockers and status in {"rollback-failed", "rollback-requested", "rollback-staging", "rollback-restoring", "rollback-verifying"}:
         # Existing canonical guards are read-only; this is diagnostic parity,
         # never a durable permission to mutate on a later invocation.
         for checker in (
@@ -93,7 +143,7 @@ def _one(repo: Path, tx_path: Path, tx: dict[str, Any]) -> dict[str, Any]:
         blockers.append("not an explicitly requested rollback-retry phase; inspect pending validation/publication first")
     if phase.get("missing_checkpoint_paths"):
         blockers.append("missing persisted rollback checkpoint")
-    classification = "live_owner" if live else "blocked" if blockers else "retry_preflight_clear"
+    classification = "live_owner" if live else "blocked" if blockers else "explicit_rollback_preflight_clear" if status == "backup-ready" else "retry_preflight_clear"
     # Only the canonical existing rollback command may make recovery decisions.
     historical_review = {"eligible": False, "command": ""}
     if status == "rollback-failed" and identity:
@@ -200,10 +250,10 @@ def overlay_recovery_plan(repo_root: Path, *, transaction: str = "", limit: int 
         if not rows:
             issues.append({"kind": "transaction_not_found", "name": selector, "detail": "Exact active transaction ID required; archived transactions are not rollback targets"})
     life = _life_runs(repo, limit=max(1, min(int(limit), 50)))
-    disposition = "manual_review" if issues or any(r["classification"] != "retry_preflight_clear" for r in rows) else "inspect_only"
+    disposition = "manual_review" if issues or any(r["classification"] not in {"retry_preflight_clear", "explicit_rollback_preflight_clear"} for r in rows) else "inspect_only"
     return {"schema_version": 1, "producer": "devtool-overlay-r06d-recovery-plan",
             "repo": str(repo), "read_only": True, "mutation_performed": False,
             "safe_to_auto_recover": False, "safe_to_delete_artifact": False,
             "decision": disposition, "active_transactions": rows,
             "marker_issues": issues, "life": life,
-            "next_step": "Review exact durable checkpoints and source identity. Only existing explicit rollback may retry; for ahead-of-HEAD preflight-only rollback failures use `devtool transaction inspect FULL_ID` before considering marker-only retirement. Never auto-retire or delete retained LIFE artifacts."}
+            "next_step": "Review exact durable checkpoints and source identity. Only existing explicit rollback may recover a verified isolated precommit apply or retry rollback; for ahead-of-HEAD preflight-only rollback failures use `devtool transaction inspect FULL_ID` before considering marker-only retirement. Never auto-retire or delete retained LIFE artifacts."}
