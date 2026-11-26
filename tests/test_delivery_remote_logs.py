@@ -91,10 +91,52 @@ class RemoteLogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             path,sha=log_archive(Path(t),{'ok.txt':'hello'})
             with patch('devtool.delivery_remote_logs.remote_logs',return_value={
-                'repository':'Mikeyphw/devtool','run_id':42,'sha256':sha,'archive':str(path)}) as dl:
+                'repository':'Mikeyphw/devtool','run_id':42,'run_attempt':2,'sha256':sha,'archive':str(path)}) as dl:
                 out=fetch_selected_run_logs(Client(),'Mikeyphw/devtool',ROW)
                 self.assertIn('hello',out)
-                dl.assert_called_once()
+                dl.assert_called_once_with(unittest.mock.ANY,"Mikeyphw/devtool",42,attempt=2)
+
+    def test_attempt_receipt_mismatch_refused(self):
+        with tempfile.TemporaryDirectory() as t:
+            path,sha=log_archive(Path(t),{'ok.txt':'safe'})
+            for attempt in (None,1,3,True):
+                with self.subTest(attempt=attempt), patch('devtool.delivery_remote_logs.remote_logs',return_value={
+                    'repository':'Mikeyphw/devtool','run_id':42,'run_attempt':attempt,'sha256':sha,'archive':str(path)}):
+                    with self.assertRaises(GitHubActionsError):
+                        fetch_selected_run_logs(Client(),'Mikeyphw/devtool',ROW)
+
+    def test_exact_attempt_request_and_legacy_request_keep_native_authority(self):
+        from devtool.github_actions import GitHubActionsClient
+        from devtool.actions_runs import remote_logs
+        from urllib.error import HTTPError
+        import io
+        requests=[]
+        url='https://logs.actions.githubusercontent.com/signed?sig=SECRET'
+        with tempfile.TemporaryDirectory() as t:
+            root=Path(t);path,_=log_archive(root,{'run.txt':'safe'});content=path.read_bytes()
+            class Response(io.BytesIO):
+                status=200
+            class Opener:
+                def open(self,request,timeout):
+                    requests.append(request)
+                    if request.full_url.startswith('https://api.github.com/'):
+                        raise HTTPError(request.full_url,302,'redirect',{'Location':url},None)
+                    return Response(content)
+            client=GitHubActionsClient('fixture-token');client._opener=Opener()
+            receipt=remote_logs(client,'Mikeyphw/devtool',42,root=root,attempt=2)
+            self.assertEqual(receipt['run_attempt'],2)
+            self.assertTrue(requests[0].full_url.endswith('/runs/42/attempts/2/logs'))
+            self.assertEqual(requests[0].get_method(),'GET')
+            self.assertIsNone(requests[1].get_header('Authorization'))
+            self.assertIn('-attempt-2-',receipt['archive'])
+            self.assertNotIn('SECRET',str(receipt))
+            requests.clear()
+            legacy=remote_logs(client,'Mikeyphw/devtool',42,root=root)
+            self.assertTrue(requests[0].full_url.endswith('/runs/42/logs'))
+            self.assertNotIn('run_attempt',legacy)
+            for bad in (0,-1,True,'2'):
+                with self.subTest(bad=bad),self.assertRaises(GitHubActionsError):
+                    client.run_log_location('Mikeyphw/devtool',42,attempt=bad)
 
     def test_monitor_no_background_download_and_explicit_log_selection(self):
         called=[]

@@ -107,7 +107,8 @@ def _pres_core_checks() -> dict[str, tuple[tuple[str, ...], str, Callable[[], No
         contract = t.default_tui_backend_contract()
         yes = t.resolve_tui_backend_selection(requested_backend="auto", availability=t.TextualAvailability(True))
         no = t.resolve_tui_backend_selection(requested_backend="auto", availability=t.TextualAvailability(False, reason="missing"))
-        _require(contract["default_backend"] == "textual" and yes.effective_backend == "textual" and no.effective_backend == "unavailable", "PRES-X06")
+        explicit = t.resolve_tui_backend_selection(requested_backend="textual", availability=t.TextualAvailability(False, reason="missing"))
+        _require(contract["default_backend"] == "rich" and yes.effective_backend == "rich" and no.effective_backend == "rich" and explicit.effective_backend == "unavailable" and not explicit.fallback_backend, "PRES-X06")
 
     def x07() -> None:
         hardening = t.textual_replacement_hardening_contract()
@@ -123,7 +124,7 @@ def _pres_core_checks() -> dict[str, tuple[tuple[str, ...], str, Callable[[], No
         "PRES-X03": (("devtool.presentation_surfaces",), "Six consumers share a reference-only parity key", x03),
         "PRES-X04": (source, "Textual spec remains a renderer", x04),
         "PRES-X05": (source, "Textual feature parity and authority are maintained", x05),
-        "PRES-X06": (("devtool.tui_textual",), "Textual is the sole available default", x06),
+        "PRES-X06": (("devtool.tui_textual",), "Rich default; explicitly selected Textual fails closed when unavailable", x06),
         "PRES-X07": (("devtool.tui_textual",), "Legacy fallback is fenced when Textual is missing", x07),
     }
 

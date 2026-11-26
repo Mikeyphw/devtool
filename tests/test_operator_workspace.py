@@ -487,7 +487,9 @@ def test_tui_discovers_local_github_origin_using_native_resolver(tmp_path, monke
     monkeypatch.setattr(mod.Workspace,'maybe_refresh',lambda *a,**k:False)
     import termios, tty
     restored=[]
-    monkeypatch.setattr(termios,'tcgetattr',lambda fd:['old'])
+    old=[0,0,0,termios.ISIG,0,0,[b'\x00']*32]
+    import copy
+    monkeypatch.setattr(termios,'tcgetattr',lambda fd:copy.deepcopy(old))
     monkeypatch.setattr(tty,'setcbreak',lambda fd:None)
     monkeypatch.setattr(termios,'tcsetattr',lambda fd,when,attrs:restored.append(attrs))
     monkeypatch.setattr(mod.select,'select',lambda *a:([19],[],[]))
@@ -495,7 +497,7 @@ def test_tui_discovers_local_github_origin_using_native_resolver(tmp_path, monke
     console=mod.Console(file=io.StringIO(),force_terminal=False)
     assert mod.run_operator_workspace(repo,None,console=console)
     assert called==[('',repo.resolve())]
-    assert restored==[['old']]
+    assert restored[-1]==old
 
 
 def test_ssh_worker_refuses_false_readonly_evidence(tmp_path,monkeypatch):

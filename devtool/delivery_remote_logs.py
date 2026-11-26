@@ -15,6 +15,7 @@ import zipfile
 
 from .github_actions import GitHubActionsClient, GitHubActionsError, _slug
 from .logstore import redact_sensitive_text
+from .display_graphemes import cluster_prefix
 from .actions_runs import remote_logs
 
 MAX_UNCOMPRESSED = 24 * 1024 * 1024
@@ -28,8 +29,8 @@ _ANSI = re.compile(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))')
 def _safe_text(value: str) -> str:
     """Visible, secret-redacted bounded text; not an untrusted Rich markup."""
     redacted = redact_sensitive_text(_ANSI.sub('', value))
-    return ''.join(' ' if (ord(c) < 32 or ord(c) == 127) else c
-                   for c in redacted)[:MAX_LINE]
+    return cluster_prefix(''.join(' ' if (ord(c) < 32 or ord(c) == 127) else c
+                                  for c in redacted), MAX_LINE)
 
 
 def verified_remote_run(client: GitHubActionsClient, slug: str,
@@ -112,8 +113,12 @@ def fetch_selected_run_logs(client: GitHubActionsClient, repository: str,
                             selected: Mapping[str, Any]) -> tuple[str,...]:
     """Fetch once, only for user-selected source-attested run and current attempt."""
     rid = verified_remote_run(client,repository,selected)
-    receipt = remote_logs(client,_slug(repository),rid)
-    if receipt.get('run_id') != rid or receipt.get('repository') != _slug(repository):
+    attempt = selected.get('attempt', selected.get('run_attempt'))
+    # Exact-attempt endpoint prevents a rerun between GET and archive lookup
+    # from substituting another attempt. No fallback to latest-run logs.
+    receipt = remote_logs(client,_slug(repository),rid,attempt=attempt)
+    if (receipt.get('run_id') != rid or receipt.get('repository') != _slug(repository)
+            or type(receipt.get('run_attempt')) is not int or receipt['run_attempt'] != attempt):
         raise GitHubActionsError('Native log download receipt lost run identity')
     return sanitized_archive_lines(Path(str(receipt.get('archive') or '')),
                                    str(receipt.get('sha256') or ''))

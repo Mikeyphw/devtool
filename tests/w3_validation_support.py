@@ -371,7 +371,7 @@ def _run_module(root:Path, name:str, scratch:Path, fd:int, timeout:int=600) -> t
     return rc,junit_summary(xml),round(time.monotonic()-start,3)
 
 
-def run_local(root:Path, inventory:Iterable[str], *, standard=False) -> int:
+def run_local(root:Path, inventory:Iterable[str], *, standard=False, reviewed_changes:Iterable[str]|None=None) -> int:
     primary=primary_root(root)
     folder=checkpoint_root(primary)
     # The state directory is durable. All execution/JUnit scratch is private
@@ -380,7 +380,16 @@ def run_local(root:Path, inventory:Iterable[str], *, standard=False) -> int:
         scratch=Path(tmp)
         source=SourceIdentity(root)
         source_key=source.digest(fresh=True)
-        selected,profile=select_modules(root,inventory,changed_paths(root),standard=standard)
+        changes=changed_paths(root)
+        # A separately reviewed exact package may declare its complete local
+        # regression set. This avoids treating a small CLI routing edit as
+        # touching every CLI consumer on the phone. Unknown/extra changes
+        # retain the original dependency expansion; W3 callers are unchanged.
+        if reviewed_changes is not None and changes and changes==set(reviewed_changes):
+            selected,_=select_modules(root,inventory,(),standard=True)
+            profile='reviewed-exact-package'
+        else:
+            selected,profile=select_modules(root,inventory,changes,standard=standard)
         runtime=runtime_identity(_environment(root,scratch/'identity'))
         campaign=_json_digest({'schema':SCHEMA,'primary':str(primary),'source':source_key,'runtime':runtime,'profile':profile,'modules':selected})
         dest=folder/campaign;_private_dir(dest)

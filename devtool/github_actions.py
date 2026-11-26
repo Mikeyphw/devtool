@@ -548,11 +548,14 @@ class GitHubActionsClient:
         return {"state":"request-accepted", "run_id":identity,"action":action,
                 "execution_complete":False,"outcome":"pending-remote-confirmation"}
 
-    def run_log_location(self, slug: str, identity: int) -> str:
+    def run_log_location(self, slug: str, identity: int, *, attempt: int | None = None) -> str:
         slug = _slug(slug)
         if type(identity) is not int or identity <= 0:
             raise GitHubActionsError("Invalid workflow run ID")
-        req=Request(f"{API_ORIGIN}/repos/{slug}/actions/runs/{identity}/logs",
+        if attempt is not None and (type(attempt) is not int or attempt <= 0):
+            raise GitHubActionsError("Invalid workflow run attempt")
+        suffix = "logs" if attempt is None else f"attempts/{attempt}/logs"
+        req=Request(f"{API_ORIGIN}/repos/{slug}/actions/runs/{identity}/{suffix}",
                     headers={"Accept":"application/vnd.github+json",
                              "X-GitHub-Api-Version":API_VERSION,
                              "User-Agent":"devtool-actions-logs/1",

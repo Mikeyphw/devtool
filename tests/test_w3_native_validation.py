@@ -145,3 +145,15 @@ def test_validator_bootstrap_with_shadowing_regular_tools_package(tmp_path):
         'assert callable(junit_summary)'], cwd=ROOT, env=env,
         capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
+
+
+def test_reviewed_package_scope_requires_exact_changed_set(tmp_path,monkeypatch):
+    repo=_repo(tmp_path);monkeypatch.setenv('DEVTOOL_XDG_DIR',str(tmp_path/'state'));monkeypatch.delenv('DEVTOOL_TRANSACTION_PRIMARY_REPO_ROOT',raising=False)
+    (repo/'source.py').write_text('x=2\n');names=['tests/test_a.py'];calls=[]
+    def select(root,inventory,changes,**kwargs):
+        calls.append(set(changes));return names,'standard-expanded'
+    monkeypatch.setattr(w,'select_modules',select);monkeypatch.setattr(w,'runtime_identity',lambda env:'runtime')
+    monkeypatch.setattr(w,'_run_module',lambda *a:(0,{'tests':1,'failures':0,'errors':0,'skipped':0},.1))
+    assert w.run_local(repo,names,reviewed_changes={'source.py'})==0 and calls[-1]==set()
+    (repo/'extra.py').write_text('x=3\n')
+    assert w.run_local(repo,names,reviewed_changes={'source.py'})==0 and calls[-1]=={'source.py','extra.py'}

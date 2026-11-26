@@ -897,6 +897,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('command', choices=('ci24-start','ci24-resume','g3r-remote-start','g3r-remote-resume', 'g3r-native','g3r-verify','qualify-status','qualify-seal'))
     ap.add_argument('--repo', type=Path, default=_root())
+    ap.add_argument('--auth', choices=('auto','app'), default='auto', help='CI24 native operation-scoped authentication')
     ap.add_argument('--run-id', type=int, default=None, help='Explicit CI run identity (never guessed)')
     ap.add_argument('--candidate',type=Path,default=None,help='G3R evidence archive')
     args = ap.parse_args(argv)
@@ -908,8 +909,16 @@ def main(argv: list[str] | None = None) -> int:
     candidate = args.candidate or (Path(os.environ['DEVTOOL_G3R_CANDIDATE'])
                                    if os.environ.get('DEVTOOL_G3R_CANDIDATE') else None)
     try:
-        if args.command == 'ci24-start': output = ci24_start(root)
-        elif args.command == 'ci24-resume': output = ci24_resume(root, explicit_run_id=run_id)
+        kwargs={}
+        if args.auth=='app':
+            if args.command not in ('ci24-start','ci24-resume','qualify-status'):
+                raise GitHubActionsError('App authentication is admitted here only for CI24')
+            if args.command!='qualify-status':
+                from .github_app import make_app_client
+                slug=resolve_repository('',root)
+                kwargs={'client':make_app_client(slug,'actions_dispatch' if args.command=='ci24-start' else 'actions_read'),'slug':slug}
+        if args.command == 'ci24-start': output = ci24_start(root, **kwargs)
+        elif args.command == 'ci24-resume': output = ci24_resume(root, explicit_run_id=run_id, **kwargs)
         elif args.command == 'g3r-remote-start': output = g3r_remote_start(root)
         elif args.command == 'g3r-remote-resume': output = g3r_remote_resume(root, explicit_run_id=run_id)
         elif args.command == 'g3r-native': output = g3r_native(root)

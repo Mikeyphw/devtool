@@ -102,8 +102,8 @@ def test_g2r_historical_spec_claims_are_backed_by_concrete_runtime_surfaces() ->
 def test_g2r_tui_default_and_normal_execution_selection_are_truthful() -> None:
     available = TextualAvailability(True, "textual", "available")
     selected = resolve_tui_backend_selection(requested_backend="auto", availability=available)
-    assert selected.effective_backend == "textual"
-    assert selected.default_backend == "textual"
+    assert selected.effective_backend == "rich"
+    assert selected.default_backend == "rich"
 
     args = type("Args", (), {
         "command": "invoke", "quiet": False, "verbose": False, "trace": False,

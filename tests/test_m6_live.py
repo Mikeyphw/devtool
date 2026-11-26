@@ -106,9 +106,11 @@ def test_failed_skipped_unknown_never_turn_green():
         out=render('ci',{'state':state,'runs':[]},52)
         assert 'Native CI NOT QUALIFIED' in out
         assert 'Native required checks passed' not in out
-    out=render('ci',{'state':'REQUIRED_CHECKS_PASSED','runs':[]},52)
+    out=render('ci',{'state':'REQUIRED_CHECKS_PASSED','checks_qualified':True,'runs':[]},52)
     assert 'Native required checks passed' in out
     assert 'release NOT qualified' in out
+    for missing_proof in ({}, {'checks_qualified':False}):
+        assert 'Native CI NOT QUALIFIED' in render('ci',{'state':'REQUIRED_CHECKS_PASSED','runs':[],**missing_proof},60)
 
 
 def test_logs_only_display_provided_sanitized_data():
@@ -306,17 +308,16 @@ def test_m6_v4_full_width_and_responsive_mode(width):
     assert 'Log page 2/' in output
     assert 'Lines ' in output
     assert 'Attempt 2' in output
-    if width < 100:
-        assert 'STAGES' not in output, 'compact log-focus should keep logs visible'
-        assert len(lines) <= 22
-    else:
-        assert 'STAGES' in output
-        assert 'EVIDENCE' in output
-        assert 'VERBOSE DETAILS' in output
-        assert 'LOCAL_LINE_09' in output
-        # The responsive grid puts identity and output in the same row.
-        assert 'IDENTITY' in output and 'VERBOSE DETAILS' in output
-        assert output.index('OUTPUT') < output.index('VERBOSE DETAILS')
+    # W4 supersedes the old two-column layout: log focus is vertical at
+    # every width. Retained overview/evidence are reachable on their pages.
+    assert 'STAGES' not in output, 'log-focus should keep requested logs visible'
+    assert len(lines) <= 22
+    overview=render('run',sample,width,verbose=True,detail=True)
+    labels=('IDENTITY','STAGES','EVENTS','OUTPUT','EVIDENCE','VERBOSE DETAILS')
+    assert [overview.index(label) for label in labels]==sorted(overview.index(label) for label in labels)
+    assert all(sum(label in line for label in labels)<=1 for line in overview.splitlines())
+    expected=5 if width<60 else 9
+    assert 'LOCAL_LINE_%02d'%expected in output
 
 
 @pytest.mark.parametrize('width',[40,52,82,106])

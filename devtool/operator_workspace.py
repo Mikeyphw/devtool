@@ -23,7 +23,8 @@ import time
 from typing import Any
 
 from rich.console import Console, Group
-from rich.live import Live
+from .inline_live import InlineLive, terminal_geometry
+from .posix_input import PosixInput
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -536,12 +537,11 @@ class SSHReadObserver:
 
 def run_operator_workspace(root: Path, slug: str | None, *, initial: Mapping[str,Any] | None = None,
                            args: Any = None, console: Console | None = None,
-                           readers: Mapping[str,Callable[[],Mapping[str,Any]]] | None = None) -> bool:
+                           readers: Mapping[str,Callable[[],Mapping[str,Any]]] | None = None,
+                           initial_tab: str | None = None) -> bool:
     """Rich.Live inline, foreground, durable UI tab only; never alternate screen."""
     if not operator_enabled(args=args):return False
     if os.name!='posix' or not sys.stdin.isatty() or not sys.stdout.isatty():return False
-    import termios
-    import tty
     root=_safe_root(root)
     head=_source_head(root)
     if not slug:
@@ -549,7 +549,7 @@ def run_operator_workspace(root: Path, slug: str | None, *, initial: Mapping[str
         from .github_actions import resolve_repository, GitHubActionsError
         try:slug=resolve_repository('',root)
         except GitHubActionsError:slug=None
-    ws=Workspace(root,head,slug=slug,tab=load_ui_state(root,head))
+    ws=Workspace(root,head,slug=slug,tab=initial_tab or load_ui_state(root,head))
     if initial is not None and isinstance(initial,Mapping):
         ws.snapshots['actions']=initial
         ws.refreshed_at['actions']=time.monotonic()
@@ -563,17 +563,17 @@ def run_operator_workspace(root: Path, slug: str | None, *, initial: Mapping[str
     ssh_last_request=float('-inf')
     out=console or Console()
     fd=sys.stdin.fileno()
-    old=termios.tcgetattr(fd)
     try:
-        tty.setcbreak(fd)
-        with Live(ws.current_view(width=out.width),console=out,
-                  screen=False,transient=False,auto_refresh=False) as live:
+        out.width,out.height=terminal_geometry(out,fd)
+        with PosixInput(fd) as keys, InlineLive(ws.current_view(width=out.width),console=out) as live:
             while True:
                 # Continuous local projection refresh, never run/SSH command execution.
-                ready,_,_=select.select([fd],[],[],0.2)
+                key=keys.read(.2)
+                if key=='':break
+                resized=live.resize(fd)
                 now=time.monotonic()
                 changed=ws.maybe_refresh(now=now,readers=readers,
-                                         include_ssh=False,include_events=False)
+                                         include_ssh=False,include_events=False) or resized
                 changed=events_observer.consume(ws,now=now) or changed
                 if (ws.automatic and not ws.source_drift and not ws.source_issue
                     and now-events_last_request>=_MIN_LOCAL_REFRESH):
@@ -588,14 +588,8 @@ def run_operator_workspace(root: Path, slug: str | None, *, initial: Mapping[str
                         ws.ssh_pending=True
                         ssh_last_request=now
                         changed=True
-                if ready:
-                    raw=os.read(fd,1)
-                    if not raw:break
-                    key=raw.decode('utf-8','ignore')
-                    if key=='\x1b':
-                        more,_,_=select.select([fd],[],[],0.025)
-                        key=os.read(fd,2).decode('utf-8','ignore') if more else ''
-                        key='j' if key=='[B' else 'k' if key=='[A' else '\x1b'
+                if key is not None:
+                    key={'up':'k','down':'j'}.get(key,key)
                     if key=='r' and ws.tab=='events' and not ws.source_drift:
                         if ws.check_source(now=now) and events_observer.request(events_reader):
                             ws.events_pending=True
@@ -616,8 +610,11 @@ def run_operator_workspace(root: Path, slug: str | None, *, initial: Mapping[str
                     changed=True
                 if changed:
                     live.update(ws.current_view(width=out.width),refresh=True)
-    finally:
-        termios.tcsetattr(fd,termios.TCSADRAIN,old)
+    except KeyboardInterrupt:
+        return True
+    except Exception as exc:
+        print("Devtool workspace presentation unavailable ("+type(exc).__name__+")",file=sys.stderr,flush=True)
+        return False
     return True
 
 

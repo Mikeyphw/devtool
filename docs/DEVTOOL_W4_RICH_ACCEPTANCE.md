@@ -1,0 +1,66 @@
+# W4 — consolidated native Rich acceptance (RICH-U-C01)
+
+Exact base: merged PR55 `f5b02e22691c39dd9500de5b766659156336b6c6`, tree `4f034b4c04c2a674a5968d06f562463600a7a3d8`. No new original overlay IDs. W3 native, CI24 and selection evidence retained at original scope. W4 is eligible without inferring full W3 acceptance.
+
+`inline_live.py` owns the only Rich Live constructor; `posix_input.py` owns the shared keyboard/terminal lease. Overlay, CI, saved-operation browser and operator workspace delegate to these modules. Source/attempt changes invalidate log data; no additional GitHub query occurs on selection or refresh. Native execution and its original status remain independent of display. Rich is the default read-only native workspace; Textual is explicitly selectable for its existing action surfaces. Machine one-shot output retains canonical snapshot schema.
+
+Explicit log authorization is bound at keypress to the exact repository, source, workflow, run and attempt. Reordering retains the selected run; navigating, refreshing, closing or detaching cannot silently issue another GET. Closing or changing an in-flight selection discards its returned display data; it does not cancel a native download. The native download adapter uses `/runs/{id}/attempts/{attempt}/logs` and includes the attempt in its receipt and private archive name. Legacy explicit non-Rich `actions logs` retains its existing latest-attempt semantics. Local callback observation time is distinguished from native journal timestamps.
+
+Native required validation: `python3 -B -u tests/w4_native_validate.py`. W3 full hosted inventory stays unchanged; W4 hosted complement contains only new/nonoverlapping modules. CI24 remains independent and exhaustive. Real physical Termux/SSH/tmux behavior and authenticated provider observations cannot be inferred from local PTY fixtures.
+
+| Original ID | Requirement | Source/fixture scope and remaining evidence |
+|---|---|---|
+| M6-01 | Overlay and CI share one Rich Live host | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| M6-02 | Operator workspace read-only view shares same terminal owner | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| M6-03 | Overlay presentation consumes canonical native apply/events | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-04 | No duplicate GitHub/CI/apply engine | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-05 | One column even at wide widths | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| M6-06 | Compact repo/branch/source/runtime/artifact identity | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| M6-07 | Ordered actual stages and source-derived counters | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-08 | Timestamped real events and bounded viewport | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-09 | Original native stdout/stderr remain visible | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-10 | Durable logs separate from bounded display | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-11 | Determinate progress only with real completed/total | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-12 | No fabricated required CI or release success | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-13 | CI observer uses same shared Rich, not second dashboard | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-14 | Exact PR HEAD/workflow/run/attempt/job/step preserved | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-15 | Keyboard j/k/arrows/Enter/v retained | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| M6-16 | Explicit source-bound log GET and [`[`/`]`] paging | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-17 | Manual refresh preserves CI polling budget | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-18 | Detach never cancels/reruns/falsely qualifies | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-19 | App identity, installation/capability status visible | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-20 | Auth, operation approval, remote verification, CI are distinct | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-21 | Fork/base access, expiry, drift visible | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-22 | Approval guidance, never implicit install or permission increase | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-23 | Nerd/Unicode/ASCII icons with graceful fallback | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| M6-24 | Unicode/emoji/grapheme display width safe | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| M6-25 | Status discernible without color | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| M6-26 | Inline `screen=False`, `transient=False`, no alt-screen | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| M6-27 | Terminal restored on exception/SIGINT/resize | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| M6-28 | Plain/non-TTY/JSON/CI behavior remains faithful | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-29 | No untrusted ANSI/markup or credential leakage | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-30 | Clipboard only on explicit collection/copy | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-31 | Test updates retain security and current-behavior invariants | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-32 | Termux portrait 40/60/80, SSH/tmux and resize | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| M6-33 | ZIP/PYZ native check/apply/commit/session plus CI | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-34 | Rich primary default, Textual explicitly selectable | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| M6-35 | Canonical docs/CLI/schema/workflow filters up to date | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| U01-P01 | Extract shared inline Rich Live host | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| U01-P02 | OverlayLiveProjection uses shared host | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| U01-P03 | Always-vertical 28–120-column layout | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| U01-P04 | Remove width floor; live geometry/resize | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| U01-P05 | Focus/log paging survives all widths | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| U01-P06 | Keep Textual selectable | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| U01-P07 | Presentation cannot mutate verdict/clipboard | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| U01-P08 | Source changes through native apply/commit/session | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| U01-P09 | Full integration, hosted, Termux/device tests | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| U02-P01 | Delivery monitor uses shared Live host | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| U02-P02 | POSIX keyboard extracted to shared input module | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| U02-P03 | Preserve all CI keyboard controls | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| U02-P04 | Explicit source-bound logs/pagination | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| U02-P05 | CI poll/detach/verdict remain native-owned | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| U02-P06 | Restore TTY on all failure/signal/resize paths | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| U02-P07 | Exact-source preflight and idempotent retry | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| U02-P08 | Atomic operation/recovery under Devtool lifecycle | Native source and isolated regression; actual source-bound host/remote evidence pending. |
+| U02-P09 | Focused tests and real PTY evidence | Shared host/input and PTY regressions; actual Termux evidence pending. |
+| U02-P10 | Preserve Textual/JSON/plain/clipboard/release boundaries | Native source and isolated regression; actual source-bound host/remote evidence pending. |

@@ -494,3 +494,18 @@ def test_ci24_gateway_exhaustion_preserves_dispatch_and_verification(tmp_path,mo
     monkeypatch.setattr(api,'get_run',original)
     again=q.ci24_resume(root,client=api,slug=SLUG)
     assert again['state']=='WAITING_REMOTE' and requests==[1]
+
+
+def test_ci24_cli_explicit_app_operation_scope(tmp_path,monkeypatch,capsys):
+    from devtool import github_app
+    calls=[];client=object()
+    monkeypatch.setattr(q,'resolve_repository',lambda *a:SLUG)
+    monkeypatch.setattr(github_app,'make_app_client',lambda slug,capability:calls.append((slug,capability)) or client)
+    monkeypatch.setattr(q,'ci24_start',lambda root,**kw: {'client_bound':kw['client'] is client})
+    monkeypatch.setattr(q,'ci24_resume',lambda root,**kw: {'client_bound':kw['client'] is client})
+    for op in ('ci24-start','ci24-resume'):
+        assert q.main([op,'--repo',str(tmp_path),'--auth','app'])==0
+        assert json.loads(capsys.readouterr().out)['client_bound'] is True
+    assert calls==[(SLUG,'actions_dispatch'),(SLUG,'actions_read')]
+    assert q.main(['qualify-seal','--repo',str(tmp_path),'--auth','app'])==2
+    assert len(calls)==2

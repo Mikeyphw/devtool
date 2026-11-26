@@ -11,17 +11,18 @@ def available(): return TextualAvailability(True)
 def missing(): return TextualAvailability(False, reason="textual package is not importable")
 
 
-def test_auto_selects_textual_without_rich_fallback():
+def test_auto_selects_rich_without_fallback():
     choice = resolve_tui_backend_selection(requested_backend="auto", availability=available(), session_transport="ssh")
-    assert choice.effective_backend == "textual"
+    assert choice.effective_backend == "rich"
     assert choice.fallback_backend is None
-    assert choice.command == ("python", "-m", "devtool.tui_textual_runtime")
+    assert choice.command == ("devtool", "tui", "--backend", "rich")
     assert choice.session_transport == "ssh"
     assert_tui_backend_selection_is_safe(choice)
 
 
-def test_absent_textual_fails_closed_in_auto_and_explicit_modes():
-    for backend in ("auto", "textual"):
+def test_absent_textual_fails_closed_only_when_requested():
+    assert resolve_tui_backend_selection(requested_backend="auto", availability=missing()).effective_backend == "rich"
+    for backend in ("textual",):
         choice = resolve_tui_backend_selection(requested_backend=backend, availability=missing())
         assert choice.effective_backend == "unavailable"
         assert choice.fallback_backend is None
@@ -37,7 +38,7 @@ def test_legacy_backend_and_flag_rejected():
 
 def test_contract_preserves_renderer_only_truth():
     contract = default_tui_backend_contract()
-    assert contract["auto_policy"] == "textual-only-fail-closed"
+    assert contract["auto_policy"] == "rich-default-explicit-textual-fail-closed"
     assert contract["legacy_override"] is None
     assert contract["textual_owns_truth"] is False
     assert contract["machine_output_changed"] is False
@@ -56,13 +57,13 @@ def test_cli_parser_removes_old_backend_entrypoint():
 
 
 def test_tui_entrypoint_reports_missing_textual(tmp_path):
-    args=Namespace(backend="auto",require_textual=False,session_transport="local")
+    args=Namespace(backend="textual",require_textual=False,session_transport="local")
     assert run_tui_entrypoint(args, repo_root=tmp_path, availability=missing()) == 2
 
 
 def test_tui_entrypoint_invokes_textual(tmp_path):
     calls=[]
-    args=Namespace(backend="auto",require_textual=False,session_transport="ssh")
+    args=Namespace(backend="textual",require_textual=False,session_transport="ssh")
     def textual_runner(_args, *, repo_root, console=None):
         calls.append(repo_root)
         return 0

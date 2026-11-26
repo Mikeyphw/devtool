@@ -2079,7 +2079,7 @@ _devtool() {
           (( ${#current_extension_options} )) && _arguments $current_extension_options
           ;;
         tui)
-          _arguments '--page[initial page]:page:(dashboard github runs logs diagnostics history targets workers validation artifacts overlays evidence build run actions github-actions log diagnostic worker ssh artifact overlay)' '--artifact[overlay artifact to preflight]:artifact:_devtool_artifact_path' '--once[render once and exit]' '--width[override terminal width]:columns:' '--backend[TUI backend]:backend:(auto textual)' '--require-textual[require Textual (no fallback)]' '--no-tui-fallback[require Textual]' '--explain-backend[print resolved TUI backend selection and exit]'
+          _arguments '--page[initial page]:page:(dashboard github runs logs diagnostics history targets workers validation artifacts overlays evidence build run actions github-actions log diagnostic worker ssh artifact overlay)' '--artifact[overlay artifact to preflight]:artifact:_devtool_artifact_path' '--once[render once and exit]' '--width[override terminal width]:columns:' '--backend[TUI backend]:backend:(auto rich textual)' '--require-textual[require Textual (no fallback)]' '--no-tui-fallback[require Textual]' '--explain-backend[print resolved TUI backend selection and exit]'
           ;;
         cleanup)
           _arguments '--dry-run[show changes without moving or deleting files]' '--prune-history-days[delete archived backup batches older than this many days]:days:'

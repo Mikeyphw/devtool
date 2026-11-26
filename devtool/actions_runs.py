@@ -195,9 +195,12 @@ def watch(client: GitHubActionsClient, slug: str, identity: int, path: Path | No
 
 
 def remote_logs(client: GitHubActionsClient, slug: str, identity: int,
-                *, root: Path | None = None) -> dict[str, Any]:
+                *, root: Path | None = None, attempt: int | None = None) -> dict[str, Any]:
     # Do not place expiring signed URLs in stdout or persistent metadata.
-    url = client.run_log_location(slug, identity)
+    if attempt is not None and (type(attempt) is not int or attempt <= 0):
+        raise GitHubActionsError("Invalid workflow run attempt")
+    url = (client.run_log_location(slug, identity) if attempt is None else
+           client.run_log_location(slug, identity, attempt=attempt))
     target = urlsplit(url)
     host = (target.hostname or "").lower()
     if (target.scheme != "https" or not host or target.port not in (None, 443)
@@ -227,7 +230,8 @@ def remote_logs(client: GitHubActionsClient, slug: str, identity: int,
     if folder.is_symlink():
         raise GitHubActionsError("Log destination is a symlink")
     digest = hashlib.sha256(content).hexdigest()
-    path = folder / (f"{slug.replace('/','_')}-{identity}-{digest[:12]}.zip")
+    attempt_suffix = "" if attempt is None else f"-attempt-{attempt}"
+    path = folder / (f"{slug.replace('/','_')}-{identity}{attempt_suffix}-{digest[:12]}.zip")
     fd, tmp = tempfile.mkstemp(prefix=".github-log-",dir=folder)
     try:
         with os.fdopen(fd, "wb") as fp:
@@ -241,7 +245,8 @@ def remote_logs(client: GitHubActionsClient, slug: str, identity: int,
     finally:
         if os.path.exists(tmp):os.unlink(tmp)
     return {"repository":slug,"run_id":identity,"archive":str(path),"sha256":digest,
-            "size":len(content),"extracted":False,"qualified_artifact":False}
+            "size":len(content),"extracted":False,"qualified_artifact":False,
+            **({"run_attempt":attempt} if attempt is not None else {})}
 
 
 def control_run(client: GitHubActionsClient, slug: str, identity: int, method: str,

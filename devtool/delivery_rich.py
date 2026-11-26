@@ -13,6 +13,7 @@ import os
 import shutil
 import sys
 import time
+import threading
 from typing import Any, Mapping, Callable
 
 from rich.box import SIMPLE
@@ -20,7 +21,8 @@ from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from rich.live import Live
+from .inline_live import InlineLive
+from .posix_input import KeyboardWorker as _Keyboard
 
 
 _STATES = {
@@ -80,9 +82,9 @@ def _mark(status: object, conclusion: object) -> Text:
 
 def _width(console: Console | None = None) -> int:
     if console is not None:
-        try: return max(40, min(180, int(console.width)))
+        try: return max(1, int(console.width))
         except (ValueError, TypeError): pass
-    return max(40, min(180, shutil.get_terminal_size((80, 24)).columns))
+    return max(1, shutil.get_terminal_size((80, 24)).columns)
 
 
 def ci_snapshot_view(snapshot: Mapping[str, Any], *, width: int = 80,
@@ -90,13 +92,13 @@ def ci_snapshot_view(snapshot: Mapping[str, Any], *, width: int = 80,
                      detail: bool = False, logs: bool = False,
                      log_lines: tuple[str,...] = (), log_page: int = 0,
                      log_error: str = "", focus: str = "overview",
-                     focus_page: int = 0) -> Group:
+                     focus_page: int = 0, height: int | None = None) -> Group:
     """Shared M6 vertical Rich projection of existing CI evidence."""
     from .m6_live import build_live_view
     return build_live_view("ci", snapshot, width=width, selected=selected,
         detail=detail, verbose=verbose, logs=logs, log_lines=log_lines,
         log_page=log_page, log_error=log_error,
-        focus=focus, focus_page=focus_page)
+        focus=focus, focus_page=focus_page, height=height)
 
 
 def actions_run_view(observation: Mapping[str, Any], *, width: int = 80,
@@ -104,13 +106,13 @@ def actions_run_view(observation: Mapping[str, Any], *, width: int = 80,
                      detail: bool = False, logs: bool = False,
                      log_lines: tuple[str,...] = (), log_page: int = 0,
                      log_error: str = "", focus: str = "overview",
-                     focus_page: int = 0) -> Group:
+                     focus_page: int = 0, height: int | None = None) -> Group:
     """Shared M6 vertical Rich projection of an exact provider run."""
     from .m6_live import build_live_view
     return build_live_view("run", observation, width=width, selected=selected,
         detail=detail, verbose=verbose, logs=logs, log_lines=log_lines,
         log_page=log_page, log_error=log_error,
-        focus=focus, focus_page=focus_page)
+        focus=focus, focus_page=focus_page, height=height)
 
 
 def _log_panel(lines: tuple[str,...], page: int, *, width: int, error: str = "") -> Panel:
@@ -156,22 +158,28 @@ class NativeRichMonitor:
         self.focus_before_logs='overview'
         self.focus_page=0
         self._feedback_deadline=0.0
-        self._live: Live | None=None
+        self._live: InlineLive | None=None
         self._keyboard=None
         self.log_fetcher=log_fetcher
         self.log_lines:tuple[str,...]=()
         self.log_page=0
         self.log_error=''
-        self._pending_log_fetch=False
+        self._pending_log_fetch=None
         self._ui_dirty=False
         self._log_identity=None
+        self._log_generation=0
+        self._state_lock=threading.RLock()
 
     def render(self) -> Group:
+        with self._state_lock:
+            return self._render_locked()
+
+    def _render_locked(self) -> Group:
         kwargs={'width':_width(self.console),'selected':self.selected,
                 'verbose':self.verbose,'detail':self.detail,'logs':self.log_requested,
                 'log_lines':self.log_lines,'log_page':self.log_page,
                 'log_error':self.log_error,
-                'focus':self.focus,'focus_page':self.focus_page}
+                'focus':self.focus,'focus_page':self.focus_page,'height':self.console.height if self._live is not None else None}
         presentation = dict(self.last) if self.ui_feedback else self.last
         if self.ui_feedback:
             presentation['m6_ui_feedback'] = self.ui_feedback
@@ -183,68 +191,115 @@ class NativeRichMonitor:
 
     def __enter__(self):
         if self.enabled:
-            self._live=Live(self.render(),console=self.console,refresh_per_second=4,
-                            auto_refresh=False,transient=False,screen=False,
-                            redirect_stdout=False,redirect_stderr=False,
-                            vertical_overflow="ellipsis")
-            self._live.start()
-            # Optional keyboard path; no keyboard hooks when attached to a pipe.
-            self._keyboard=_Keyboard(self)
-            self._keyboard.start()
+            try:
+                self._live=InlineLive(self.render(), console=self.console)
+                if self._live.resize():self._live.frame=self.render()
+                self._live.start()
+                self._keyboard=_Keyboard(self)
+                self._keyboard.start()
+            except Exception as exc:
+                self._presentation_failed(exc)
         return self
 
+    def _close(self):
+        keyboard,self._keyboard=self._keyboard,None
+        live,self._live=self._live,None
+        try:
+            if keyboard is not None:keyboard.stop()
+        finally:
+            if live is not None:live.stop()
+
+    def _presentation_failed(self, exc):
+        self.enabled=False
+        try:self._close()
+        except Exception:pass
+        print('M6_PRESENTATION_WARNING '+type(exc).__name__+'; native execution/result unaffected',file=sys.stderr,flush=True)
+
     def __exit__(self,ex_type,exc,tb):
-        if self._keyboard is not None:self._keyboard.stop()
-        if self._live is not None:
-            self._live.stop()
-            self._live=None
+        try:self._close()
+        except Exception as error:self._presentation_failed(error)
         return False
 
     def observe(self,source:Mapping[str,Any]) -> None:
-        if self.ui_feedback in ('REFRESH_REQUESTED','REFRESH_CONSUMED'):
-            self.ui_feedback='NATIVE_OBSERVATION_RENDERED'
-            self._feedback_deadline=time.monotonic()+1.0
-        elif self.ui_feedback == 'NATIVE_OBSERVATION_RENDERED':
-            self.ui_feedback=''
-        self.last=dict(source)
-        if self.detached:
-            raise MonitorDetached('Foreground UI detached; native session retained; CI NOT qualified')
-        self.selected=max(0,min(self.selected,len((self.last.get('jobs') if self.kind=='run' else self.last.get('runs')) or [])-1))
+        with self._state_lock:
+            if self.ui_feedback in ('REFRESH_REQUESTED','REFRESH_CONSUMED'):
+                self.ui_feedback='NATIVE_OBSERVATION_RENDERED'
+                self._feedback_deadline=time.monotonic()+1.0
+            elif self.ui_feedback == 'NATIVE_OBSERVATION_RENDERED':
+                self.ui_feedback=''
+            prior=self._selection_identity()
+            log_before=self._selected_log_identity()
+            self.last=dict(source)
+            if self.detached:
+                raise MonitorDetached('Foreground UI detached; native session retained; CI NOT qualified')
+            rows=self._selection_rows()
+            matches=[i for i,row in enumerate(rows) if self._row_selection_identity(row)==prior]
+            self.selected=matches[0] if prior is not None and len(matches)==1 else max(0,min(self.selected,len(rows)-1))
+            if self._selected_log_identity()!=log_before:
+                self._invalidate_logs('Source or attempt changed; close and reopen logs to request this run')
         self._consume_log_fetch()
         self.refresh()
+
+    def _selection_rows(self):
+        return (self.last.get('jobs') if self.kind=='run' else self.last.get('runs')) or []
+
+    def _row_selection_identity(self,row):
+        return (row.get('id'),row.get('name'),row.get('attempt',row.get('run_attempt')),row.get('head_sha'))
+
+    def _selection_identity(self):
+        rows=self._selection_rows()
+        return self._row_selection_identity(rows[self.selected]) if 0<=self.selected<len(rows) else None
 
     def _selected_log_row(self):
         if self.kind=='run':
             return self.last.get('remote') or {}
         rows=self.last.get('runs') or []
-        return rows[self.selected] if rows else {}
+        return rows[self.selected] if 0<=self.selected<len(rows) else {}
+
+    def _selected_log_identity(self):
+        row=self._selected_log_row()
+        return (row.get('id'),row.get('attempt',row.get('run_attempt')),
+                row.get('head_sha'),row.get('workflow_id'),row.get('event'),
+                self.last.get('source_sha'),self.last.get('head_sha'),self.last.get('repository'))
+
+    def _invalidate_logs(self,reason=''):
+        # Called under state lock; revokes queued and in-flight publication.
+        self._log_generation+=1
+        self._pending_log_fetch=None
+        self._log_identity=None
+        self.log_lines=();self.log_page=0;self.log_error=reason
 
     def _consume_log_fetch(self)->None:
-        if not self._pending_log_fetch or not self.enabled:
-            return
-        self._pending_log_fetch=False
-        row=self._selected_log_row()
-        identity=(row.get('id'),row.get('attempt',row.get('run_attempt')))
-        if identity==self._log_identity:
-            return
-        self.log_page=0
-        self.log_lines=()
-        self.log_error=''
-        self._log_identity=identity
-        if not row.get('id') or self.log_fetcher is None:
-            self.log_error='No verified run or log provider is available'
-            return
+        with self._state_lock:
+            request=self._pending_log_fetch
+            self._pending_log_fetch=None
+            if request is None or not self.enabled or self.detached or not self.log_requested:
+                return
+            generation,identity,row=request
+            if generation!=self._log_generation or identity!=self._selected_log_identity():
+                return
+            self.log_page=0;self.log_lines=();self.log_error=''
+            if not row.get('id') or self.log_fetcher is None:
+                self.log_error='No verified run or log provider is available'
+                return
+            fetch=self.log_fetcher
+        # The native foreground thread claims exactly the authorized request.
+        # No lock is held across network I/O; keyboard close/detach can revoke
+        # publication, and the provider receives only the immutable selection.
+        values=();error=''
         try:
-            # Invoked only from the native foreground poll/wait thread,
-            # never from keyboard thread and never automatically.
-            values=self.log_fetcher(row)
+            values=fetch(row)
             if not isinstance(values,tuple) or any(not isinstance(v,str) for v in values):
                 raise ValueError('Invalid bounded log result')
-            self.log_lines=values[:50000]
+            values=values[:50000]
         except Exception as exc:
-            self.log_error='Log fetch refused: '+type(exc).__name__+' · check exact source/permissions'
-        # Fetch happens in the native observer thread; redraw its first result
-        # immediately rather than requiring a second visit to this page.
+            error='Log fetch refused: '+type(exc).__name__+' · check exact source/permissions'
+        with self._state_lock:
+            if (generation!=self._log_generation or identity!=self._selected_log_identity()
+                    or not self.log_requested or self.detached or not self.enabled):
+                return
+            self._log_identity=identity
+            self.log_lines=values;self.log_error=error
         self.refresh()
 
     def review_failed(self) -> None:
@@ -265,18 +320,15 @@ class NativeRichMonitor:
 
     def refresh(self)->None:
         if self.enabled and self._live is not None:
-            # Fresh attached-input terminal width, including SSH/Termux resize.
             try:
-                new_width = os.get_terminal_size(sys.stdin.fileno()).columns
+                fd=sys.stdin.fileno()
             except (OSError,AttributeError,ValueError):
-                new_width = shutil.get_terminal_size((80,24)).columns
-            self.console.width = max(40,min(180,new_width))
+                fd=None
             try:
-                # Android zoom/rotation can change the actual PTY height.
-                self.console.height=max(8,min(120,os.get_terminal_size(sys.stdin.fileno()).lines))
-            except (OSError,AttributeError,ValueError):
-                pass
-            self._live.update(self.render(),refresh=True)
+                self._live.resize(fd)
+                self._live.update(self.render(),refresh=True)
+            except Exception as exc:
+                self._presentation_failed(exc)
 
     def wait_interval(self,seconds:float)->None:
         """Native observe_ci sleep callback: bounded manual refresh/detach.
@@ -290,6 +342,10 @@ class NativeRichMonitor:
         deadline=time.monotonic()+max(0.0,float(seconds))
         while time.monotonic()<deadline:
             self._consume_log_fetch()
+            if self._live is not None:
+                try:
+                    if self._live.resize():self.refresh()
+                except Exception as exc:self._presentation_failed(exc)
             if self._ui_dirty:
                 # Only the native main observer renders to the PTY.
                 self._ui_dirty=False
@@ -312,6 +368,15 @@ class NativeRichMonitor:
             raise MonitorDetached('Foreground UI detached; native session retained; CI NOT qualified')
 
     def key(self,key:str)->None:
+        with self._state_lock:
+            self._key_locked(key)
+        # Never render while holding the input state lock.
+        if self._keyboard is None or threading.current_thread() is not self._keyboard.thread:
+            self._ui_dirty=False
+            self.refresh()
+
+    def _key_locked(self,key:str)->None:
+        old_identity=self._selected_log_identity()
         size=len((self.last.get('jobs') if self.kind=='run' else self.last.get('runs')) or [])
         if key in ('j','down'):self.selected=min(max(0,size-1),self.selected+1)
         elif key in ('k','up'):self.selected=max(0,self.selected-1)
@@ -333,86 +398,30 @@ class NativeRichMonitor:
             if self.log_requested:
                 self.focus_before_logs=self.focus
                 self.focus='output'
-                self._pending_log_fetch=True
+                self._invalidate_logs()
+                self._pending_log_fetch=(self._log_generation,self._selected_log_identity(),dict(self._selected_log_row()))
             else:
+                self._invalidate_logs()
                 self.focus=self.focus_before_logs
         elif key=='[':
             if self.log_requested:self.log_page=max(0,self.log_page-1)
             else:self.focus_page=max(0,self.focus_page-1)
         elif key==']':
             if self.log_requested:
-                from .m6_live import log_page_size
-                self.log_page=min(max(0,(len(self.log_lines)-1)//log_page_size(_width(self.console))),self.log_page+1)
+                from .m6_live import log_page_size, log_display_rows
+                width=_width(self.console)
+                fragments=log_display_rows(self.log_lines,width)
+                self.log_page=min(max(0,(len(fragments)-1)//log_page_size(width,self.console.height if self._live is not None else None)),self.log_page+1)
             else:
                 self.focus_page=min(1000,self.focus_page+1)
         elif key=='r':self.refresh_requested=True;self.ui_feedback='REFRESH_REQUESTED'
-        elif key=='q':self.detached=True
-        if self.log_requested and key in ('j','k','up','down'):
-            self._pending_log_fetch=True
+        elif key=='q':
+            self.detached=True;self._invalidate_logs()
+        if old_identity!=self._selected_log_identity():
+            self._invalidate_logs('Selection changed; close and reopen logs to request this run' if self.log_requested else '')
         # Keyboard worker updates state only; never prints/repositions Live.
         # The next bounded native wait/observer cycle owns redrawing.
         self._ui_dirty=True
-        if self._keyboard is None or (
-                __import__('threading').current_thread() is not self._keyboard.thread):
-            self._ui_dirty=False
-            self.refresh()
-
-
-class _Keyboard:
-    """Best-effort local POSIX keys. Always restore terminal attributes."""
-    def __init__(self,monitor:NativeRichMonitor):
-        self.monitor=monitor
-        self.stop_requested=False
-        self.thread=None
-        self.saved=None
-        self.fd=None
-
-    def start(self)->None:
-        if os.name != 'posix':return
-        try:
-            import termios,tty
-            if not sys.stdin.isatty():return
-            fd=sys.stdin.fileno()
-            self.saved=termios.tcgetattr(fd)
-            tty.setcbreak(fd)
-            self.fd=fd
-            from threading import Thread
-            self.thread=Thread(target=self._run,daemon=True,name='devtool-rich-monitor-keys')
-            self.thread.start()
-        except (OSError,ValueError,AttributeError):
-            self.stop()
-
-    def _run(self)->None:
-        import select
-        while not self.stop_requested:
-            try:
-                ready,_,_=select.select([self.fd],[],[],0.15)
-                if not ready:continue
-                value=os.read(self.fd,1).decode('utf-8','ignore')
-                if value=='\x1b':
-                    more,_,_=select.select([self.fd],[],[],0.02)
-                    if more:
-                        nxt=os.read(self.fd,2)
-                        value='up' if nxt==b'[A' else 'down' if nxt==b'[B' else ''
-                if value:
-                    try:
-                        self.monitor.key(value)
-                    except Exception as exc:
-                        # Diagnostic only; preserve the keyboard, especially q.
-                        print("M6_KEYBOARD_CALLBACK_WARNING "+type(exc).__name__+
-                              "; keyboard remains active",file=sys.stderr,flush=True)
-            except (OSError,ValueError):
-                return
-
-    def stop(self)->None:
-        self.stop_requested=True
-        if self.thread is not None:self.thread.join(timeout=0.4)
-        if self.saved is not None and self.fd is not None:
-            try:
-                import termios
-                termios.tcsetattr(self.fd,termios.TCSADRAIN,self.saved)
-            except (OSError,ValueError):pass
-        self.saved=None
 
 
 __all__=['NativeRichMonitor','MonitorDetached','terminal_rich_enabled',

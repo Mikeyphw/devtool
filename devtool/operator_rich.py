@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import os
-import select
 import sys
 from typing import Any
 
@@ -20,6 +19,8 @@ from rich.text import Text
 from rich.tree import Tree
 
 from .delivery_rich import terminal_rich_enabled
+from .inline_live import InlineLive, terminal_geometry
+from .posix_input import PosixInput
 from .logstore import redact_sensitive_text
 
 # Never interpret an absent or unrecognized status as a success.
@@ -57,7 +58,7 @@ def _secure(key: object, value: object, *, limit: int = 150) -> str:
     if value is None:
         return '—'
     raw=redact_sensitive_text(str(value))
-    raw=''.join(' ' if ord(ch)<32 or ord(ch)==127 else ch for ch in raw)
+    raw=''.join(' ' if ord(ch)<32 or 127<=ord(ch)<160 or ord(ch) in (0x202a,0x202b,0x202c,0x202d,0x202e,0x2066,0x2067,0x2068,0x2069) else ch for ch in raw)
     return raw[:limit-1]+'…' if len(raw)>limit else raw
 
 
@@ -112,7 +113,8 @@ def _rows(values: object, *, kind: str, width: int, selected: int = 0,
     if not narrow:
         table.add_column('State',width=12,no_wrap=True,overflow='ellipsis')
         table.add_column('Identity',width=15,no_wrap=True,overflow='ellipsis')
-    for i,item in enumerate(records[:limit]):
+    start=max(0,min(selected,len(records)-1)-limit+1)
+    for i,item in enumerate(records[start:start+limit],start):
         row=_mapping(item)
         if row.get('run') and isinstance(row.get('run'),Mapping):
             row={**_mapping(row['run']),**{k:v for k,v in row.items() if k!='run'}}
@@ -131,9 +133,9 @@ def _rows(values: object, *, kind: str, width: int, selected: int = 0,
         if detail and i==selected:
             remaining={k:v for k,v in row.items() if k not in ('name','label','title','status','state','conclusion','id','run_id','command_id')}
             if remaining:
-                table.add_row(*([Text('    '+', '.join(f'{_secure(k,k,20)}: {_secure(k,v,55)}' for k,v in list(remaining.items())[:5]),style='dim')]+(['',''] if not narrow else [])))
+                table.add_row(*([Text('    '+', '.join(f'{_secure(k,k,limit=20)}: {_secure(k,v,limit=55)}' for k,v in list(remaining.items())[:5]),style='dim')]+(['',''] if not narrow else [])))
     if len(records)>limit:
-        table.add_row(*([f'… {len(records)-limit} additional records (native JSON retains all)']+(['',''] if not narrow else [])))
+        table.add_row(*([f'Rows {start+1}–{min(start+limit,len(records))}/{len(records)}; additional records in native JSON']+(['',''] if not narrow else [])))
     return table
 
 
@@ -201,7 +203,7 @@ def _pipeline_graph(payload: Mapping[str,Any], *, width: int) -> object | None:
                                           if needs else 'none'),style='dim'))
         for key in ('run_id','artifact_id'):
             if node.get(key) is not None:
-                entry.add(Text(key+': '+_secure(key,node[key],60),style='dim'))
+                entry.add(Text(key+': '+_secure(key,node[key],limit=60),style='dim'))
     if len(rows)>35:tree.add(Text(f'{len(rows)-35} more nodes in native JSON',style='dim'))
     return tree
 
@@ -211,7 +213,7 @@ def build_operator_view(kind: str, payload: Mapping[str,Any], *, width: int = 80
     """Pure rendering of structured native receipts. No side effects or polling."""
     if not isinstance(payload,Mapping):
         raise TypeError('Operator view requires a structured mapping')
-    width=max(40,min(180,int(width)))
+    width=max(1,int(width))
     if kind == 'operator_status':
         from .operator_status import render_status_text
         return Panel(Text(render_status_text(payload)), title='Devtool · Operator Status',
@@ -326,25 +328,19 @@ def browse_operator(kind: str, initial: Mapping[str,Any], *, args: Any = None,
     if os.name!='posix' or not sys.stdin.isatty():
         out.print(build_operator_view(kind,initial,width=out.width))
         return True
-    import termios, tty
     fd=sys.stdin.fileno()
-    old=termios.tcgetattr(fd)
     selected=0;detail=False;verbose=False;snapshot=initial;trail=[]
-    from rich.live import Live
     try:
-        tty.setcbreak(fd)
-        with Live(build_operator_view(kind,snapshot,width=out.width),console=out,
-                  screen=False,transient=False,auto_refresh=False) as live:
+        out.width,out.height=terminal_geometry(out,fd)
+        with PosixInput(fd) as keys, InlineLive(build_operator_view(kind,snapshot,width=out.width),console=out) as live:
             while True:
-                ready,_,_=select.select([fd],[],[],0.2)
-                if not ready:continue
-                raw=os.read(fd,1)
-                if not raw:break
-                key=raw.decode('utf-8','ignore')
-                if key=='\x1b':
-                    extra,_,_=select.select([fd],[],[],0.025)
-                    key=os.read(fd,2).decode('utf-8','ignore') if extra else ''
-                    key='j' if key=='[B' else 'k' if key=='[A' else ''
+                key=keys.read(.2)
+                if key=='':break
+                resized=live.resize(fd)
+                if key is None:
+                    if resized:live.update(build_operator_view(kind,snapshot,width=out.width,selected=selected,detail=detail,verbose=verbose))
+                    continue
+                key={'up':'k','down':'j'}.get(key,key)
                 if key=='q': break
                 rows=operator_items(snapshot)
                 if key=='j':selected=min(max(0,len(rows)-1),selected+1)
@@ -385,11 +381,13 @@ def browse_operator(kind: str, initial: Mapping[str,Any], *, args: Any = None,
                     trail.clear()
                     detail=False
                 else:continue
-                width=os.get_terminal_size(fd).columns
+                width=out.width
                 live.update(build_operator_view(kind,snapshot,width=width,selected=selected,
                                                 detail=detail,verbose=verbose),refresh=True)
-    finally:
-        termios.tcsetattr(fd,termios.TCSADRAIN,old)
+    except KeyboardInterrupt:
+        return True
+    except Exception:
+        return False
     return True
 
 __all__=['operator_enabled','render_operator','browse_operator','build_operator_view',

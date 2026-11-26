@@ -27,3 +27,5 @@ jobs:
       # the independent CI24 workflow still enumerates all test modules.
       - name: Unified full W3 source acceptance
         run: python3 -u -B tests/w3_native_validate.py --profile full
+      - name: W4 shared terminal and presentation acceptance (nonduplicated W3 complement)
+        run: python3 -u -B tests/w4_native_validate.py --hosted-extra

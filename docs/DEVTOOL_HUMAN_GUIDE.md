@@ -2408,8 +2408,8 @@ Open the responsive terminal dashboard
 | `--artifact ARTIFACT` | Overlay artifact to preflight on the overlays page |
 | `--once` | Render one frame and exit |
 | `--width WIDTH` | Override terminal width for rendering/debugging |
-| `--backend BACKEND` | Textual dashboard backend (auto or textual) Choices: auto, textual |
-| `--require-textual` | Fail instead of falling back when Textual cannot be launched |
+| `--backend BACKEND` | Inline Rich dashboard (auto/rich) or explicit Textual Choices: auto, rich, textual |
+| `--require-textual` | Require explicit Textual; fail if unavailable |
 | `--no-tui-fallback` | Require Textual; the removed Rich dashboard has no fallback |
 | `--explain-backend` | Print the resolved TUI backend selection and exit |
 

@@ -36225,10 +36225,11 @@
       "metadata": {
         "choices": [
           "auto",
+          "rich",
           "textual"
         ],
         "dest": "backend",
-        "help": "Textual dashboard backend (auto or textual)",
+        "help": "Inline Rich dashboard (auto/rich) or explicit Textual",
         "hidden": false,
         "nargs": null,
         "path": [
@@ -62282,7 +62283,7 @@
       "metadata": {
         "choices": [],
         "dest": "require_textual",
-        "help": "Fail instead of falling back when Textual cannot be launched",
+        "help": "Require explicit Textual; fail if unavailable",
         "hidden": false,
         "nargs": 0,
         "path": [
@@ -101065,13 +101066,14 @@
                 "action": "store",
                 "choices": [
                   "auto",
+                  "rich",
                   "textual"
                 ],
                 "const": null,
                 "default": "auto",
                 "dest": "backend",
                 "group": null,
-                "help": "Textual dashboard backend (auto or textual)",
+                "help": "Inline Rich dashboard (auto/rich) or explicit Textual",
                 "metavar": null,
                 "mutex": null,
                 "nargs": null,
@@ -101088,7 +101090,7 @@
                 "default": false,
                 "dest": "require_textual",
                 "group": null,
-                "help": "Fail instead of falling back when Textual cannot be launched",
+                "help": "Require explicit Textual; fail if unavailable",
                 "metavar": null,
                 "mutex": null,
                 "nargs": 0,

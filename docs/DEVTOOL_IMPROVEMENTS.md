@@ -1697,3 +1697,7 @@ Replace the redundant all-module local run with required dependency-aware select
 ### DT-20261126-03 — W3 native validator bootstrap
 
 Remove the native validator dependency on a namespace-sensitive hosted CI helper, validate JUnit with the standard library, reproduce shadowed import and failure/skip counts. Preserve the abandoned-kept-changes transaction rather than calling it a rollback. Require exact predecessor retained evidence and separate clean successor; new native validation failure action explicitly rolls back. Production pending.
+
+### W4 consolidated shared Rich ownership (DT-20261126-04)
+
+Uncommitted native apply could display PASS/SUCCESS despite absent commit/session. Five separate Live construction sites and separate keyboard loops also prevented one lifecycle owner; the 40-column floor and wide-screen split violated the vertical layout. W4 centralizes presentation and POSIX input, validates exact committed evidence before delivery success, invalidates log caches on source/attempt drift, preserves the native verdict and uses explicit Textual selection. Source, local PTY, hosted and physical acceptance remain separate. No new mutation engine or implicit clipboard action is introduced.
