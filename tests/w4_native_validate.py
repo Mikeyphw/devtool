@@ -91,14 +91,18 @@ NATIVE_MODULES = (
     'tests/test_w3_native_validation.py',
     'tests/test_hf01_fixture_portability.py',
     'tests/test_w4_f04_workspace.py',
+    'tests/test_m6_live.py',
     'tests/test_native_ci24_policy.py',
 )
 
 REVIEWED_CHANGES = (
-    '.github/workflows/devtool-ga-source-acceptance.yml',
+    'devtool/delivery_cli.py',
+    'devtool/delivery_rich.py',
+    'devtool/m6_live.py',
     'docs/DEVTOOL_UNIFIED_ROADMAP.md',
     'docs/DEVTOOL_W4_RICH_ACCEPTANCE.md',
-    'tests/test_w3_native_validation.py',
+    'tests/test_m6_live.py',
+    'tests/test_native_ci24_policy.py',
     'tests/w4_native_validate.py',
 )
 

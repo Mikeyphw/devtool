@@ -691,3 +691,212 @@ def test_m6_closure_missing_credential_proof_stays_explicitly_unverified():
     assert 'UNVERIFIED' in output
     assert 'Credential health' in output
     assert 'REQUIRED_CHECKS_PASSED' not in output
+
+# M6 interactive PR run drill-down: explicit native GETs, stable identity and
+# real keyboard lifecycle. The native CI result remains independent throughout.
+_DRILL_REPO='Mikeyphw/devtool'
+_DRILL_HEAD='a'*40
+_DRILL_RUN={'id':23,'attempt':2,'workflow_id':42,'event':'pull_request',
+            'head_sha':'b'*40,'name':'Source qualification','status':'in_progress'}
+_DRILL_SNAP={'state':'CHECKS_RUNNING','checks_qualified':False,'repository':_DRILL_REPO,
+             'source_sha':_DRILL_HEAD,'session_id':'c'*32,'runs':[_DRILL_RUN]}
+_DRILL_JOB={'id':89,'run_id':23,'run_attempt':2,'name':'Compile job',
+            'status':'completed','conclusion':'failure','steps':[
+                {'number':1,'name':'Prepare step','status':'completed','conclusion':'success'},
+                {'number':2,'name':'Actual failing step','status':'completed','conclusion':'failure'}]}
+
+
+def _drill_fixture(*, width=60,height=24):
+    from copy import deepcopy
+    from devtool.github_actions import GitHubActionsClient
+    from devtool.workspace_actions import run_jobs
+    calls=[]
+    client=GitHubActionsClient('fixture-only')
+    def get(path):
+        calls.append(path)
+        if path.split('?')[0].endswith('/runs/23/attempts/2/jobs'):
+            return {'jobs':[deepcopy(_DRILL_JOB),{**deepcopy(_DRILL_JOB),'id':90,'name':'Other job'}]}
+        if path.endswith('/runs/23'):
+            return {**_DRILL_RUN,'repository':{'full_name':_DRILL_REPO},'run_attempt':2}
+        raise AssertionError(path)
+    client._get=get
+    def load(row):
+        return run_jobs(client,_DRILL_REPO,{**row,'run_attempt':row['attempt']})
+    monitor=NativeRichMonitor(enabled=True,console=Console(file=io.StringIO(),width=width,height=height),
+                             run_fetcher=load)
+    monitor.observe(deepcopy(_DRILL_SNAP))
+    return monitor,client,calls
+
+
+def _drill_render(monitor):
+    stream=io.StringIO()
+    Console(file=stream,width=monitor.console.width,height=monitor.console.height,
+            color_system=None,force_terminal=False).print(monitor.render())
+    return stream.getvalue()
+
+
+@pytest.mark.parametrize('width,height',[(28,16),(40,19),(60,24),(80,30),(120,40)])
+def test_pr_check_enter_opens_actual_run_jobs_steps_and_back(width,height):
+    from copy import deepcopy
+    from rich.cells import cell_len
+    m,client,calls=_drill_fixture(width=width,height=height)
+    original=deepcopy(m.last)
+    m.key('2');m.key('down');m.key('up');_drill_render(m)
+    assert calls==[]
+    m.key('enter');assert calls==[] and m._drill_loading
+    m._consume_drill_fetch()
+    assert len(calls)==3 and '/runs/23/attempts/2/jobs?' in calls[1]
+    assert m._drill_page=='jobs' and m._drill_jobs[0]['id']==89
+    text=_drill_render(m);assert 'Compile job' in text or 'Compile' in text
+    assert 'RUN 23' in text and 'CHECKS_RUNNING' in text
+    m.key('enter');assert m._drill_page=='steps'
+    m.key('down');assert m._drill_step==1
+    m.key('enter');assert m._drill_detail
+    m.key('b');m.key('b');assert m._drill_page=='jobs'
+    m.key('v');assert m._drill_page=='identity'
+    assert 'PR source: '+_DRILL_HEAD in m._drill_identity_lines()
+    assert 'Run source: '+'b'*40 in m._drill_identity_lines()
+    m.key('b');m.key('b');assert m._drill_run is None and m.focus=='stages'
+    assert len(calls)==3 and m.last==original and not m.refresh_requested
+    assert all(cell_len(line)<=width for line in text.splitlines())
+
+
+@pytest.mark.parametrize('drift',['attempt','head_sha','workflow_id','event','source_sha','repository','session_id','missing','duplicate'])
+def test_pr_drilldown_source_drift_revokes_pending_read(drift):
+    from copy import deepcopy
+    m,client,calls=_drill_fixture()
+    m.key('enter')
+    changed=deepcopy(_DRILL_SNAP)
+    if drift=='missing':changed['runs']=[]
+    elif drift=='duplicate':changed['runs']*=2
+    elif drift in ('source_sha','repository','session_id'):changed[drift]='d'*40
+    else:changed['runs'][0][drift]={'attempt':3,'head_sha':'d'*40,'workflow_id':55,'event':'push'}[drift]
+    m.observe(changed)
+    assert calls==[] and m._drill_run is None and 'identity changed' in m._drill_notice
+
+
+def test_pr_drilldown_reorder_preserves_identity_and_refresh_is_not_native_ci_poll():
+    from copy import deepcopy
+    m,client,calls=_drill_fixture()
+    m.key('enter');m._consume_drill_fetch();m.key('j')
+    changed=deepcopy(_DRILL_SNAP)
+    changed['runs'].insert(0,{**_DRILL_RUN,'id':77,'name':'Earlier run'})
+    m.observe(changed)
+    assert m._drill_run['id']==23 and m.selected==1 and m._drill_job==1
+    m.key('r');assert not m.refresh_requested and len(calls)==3
+    m._consume_drill_fetch();assert len(calls)==6 and m._drill_job==1
+    m.key('b');assert m.selected==1 and m.last==changed
+
+
+@pytest.mark.parametrize('failure',['wrong_repository','wrong_attempt','wrong_job','duplicate_job','wrong_step','provider'])
+def test_pr_drilldown_refuses_invalid_native_results(failure):
+    from copy import deepcopy
+    m,client,calls=_drill_fixture()
+    native=m.run_fetcher
+    def bad(row):
+        if failure=='provider':raise RuntimeError('token=DO_NOT_PRINT')
+        result=deepcopy(native(row))
+        if failure=='wrong_repository':result['repository']='Other/repo'
+        elif failure=='wrong_attempt':result['run']['run_attempt']=3
+        elif failure=='wrong_job':result['items'][0]['run_id']=77
+        elif failure=='duplicate_job':result['items'].append(result['items'][0])
+        else:result['items'][0]['steps'][0]['number']=True
+        return result
+    m.run_fetcher=bad
+    m.key('enter');m._consume_drill_fetch()
+    assert m._drill_error.startswith('Read refused') and not m._drill_jobs
+    assert 'DO_NOT_PRINT' not in _drill_render(m)
+    m.key('enter');assert m._drill_page=='jobs'
+    m.key('b');assert m.last['state']=='CHECKS_RUNNING'
+
+
+@pytest.mark.parametrize('action',['b','q','attempt_changed'])
+def test_pr_drilldown_revokes_inflight_result(action):
+    from copy import deepcopy
+    import threading
+    m,client,calls=_drill_fixture();load=m.run_fetcher
+    entered=threading.Event();release=threading.Event()
+    def read(row):
+        entered.set();assert release.wait(3)
+        return load(row)
+    m.run_fetcher=read
+    m.key('enter');t=threading.Thread(target=m._consume_drill_fetch);t.start()
+    try:
+        assert entered.wait(3)
+        if action=='attempt_changed':
+            changed=deepcopy(_DRILL_SNAP);changed['runs'][0]['attempt']=3;m.observe(changed)
+        else:m.key(action)
+    finally:release.set();t.join(3)
+    assert not t.is_alive() and m._drill_run is None and not m._drill_jobs
+
+
+def test_pr_drilldown_job_log_is_explicit_bound_and_all_lines_pageable():
+    from devtool.workspace_viewport import log_page
+    m,client,calls=_drill_fixture(width=40,height=19)
+    got=[]
+    def logs(run,job):
+        got.append((run['id'],run['attempt'],job['id']))
+        return ('x'*1300,'TOKEN=ghp_abcdefghijklmnopqrstuvwxyz1234567890','last source line')
+    m.job_log_fetcher=logs
+    m.key('enter');m._consume_drill_fetch();m.key('j');m.key('enter')
+    assert got==[];m.key('l');assert got==[];m._consume_drill_fetch()
+    assert got==[(23,2,90)] and m._drill_page=='logs'
+    assert len(m._drill_lines[0])==1300 and 'ghp_' not in ''.join(m._drill_lines)
+    seen=[]
+    for i in range(100):
+        old=m._drill_cursor
+        width,height=m._drill_dimensions();capacity=max(1,height-5)
+        parts,nxt=log_page(m._drill_lines,old,width,capacity);seen.extend(parts)
+        m.key(']')
+        if nxt is None:break
+        assert m._drill_cursor==nxt
+    assert ''.join(seen)==''.join(m._drill_lines)
+    m.key('[');m.key('b');assert m._drill_page=='steps' and not m._drill_lines
+    assert got==[(23,2,90)] and m._drill_selected_job()['id']==90
+
+
+def test_pr_drilldown_refuses_incomplete_native_identity_without_provider_read():
+    from copy import deepcopy
+    m,client,calls=_drill_fixture()
+    changed=deepcopy(_DRILL_SNAP);del changed['runs'][0]['attempt']
+    m.observe(changed);m.key('enter');m._consume_drill_fetch()
+    assert not calls and m._drill_run is None and 'lacks exact' in m._drill_notice
+
+
+def test_pr_drilldown_disabled_keeps_json_and_plain_noninteractive():
+    m=NativeRichMonitor(enabled=False,run_fetcher=lambda *_:pytest.fail('unexpected GET'))
+    m.observe(_DRILL_SNAP);m.key('enter');m._consume_drill_fetch()
+    assert m.detail and m._drill_run is None
+
+
+def test_pr_drilldown_real_pty_roundtrip_and_termios():
+    import pexpect,sys
+    from pathlib import Path
+    code='''import sys,termios
+from tests.test_m6_live import _drill_fixture,_DRILL_SNAP
+from devtool.delivery_rich import MonitorDetached
+fd=sys.stdin.fileno();before=termios.tcgetattr(fd)
+m,client,calls=_drill_fixture()
+from rich.console import Console
+m.console=Console(force_terminal=True)
+m.job_log_fetcher=lambda run,job:('EXACT_JOB_LOG_SENTINEL',)
+try:
+    with m:
+        m.observe(_DRILL_SNAP)
+        m.wait_interval(15)
+except MonitorDetached:
+    pass
+assert m.detached and m.last['state']=='CHECKS_RUNNING'
+assert len(calls)==3
+assert termios.tcgetattr(fd)==before
+print('M6_DRILL_TERMINAL_RESTORED',flush=True)
+'''
+    env=os.environ.copy();env.update(TERM='xterm-256color',PYTHONPATH=str(Path(__file__).resolve().parents[1]),PYTHONDONTWRITEBYTECODE='1')
+    for key in ('CI','NO_COLOR','CLICOLOR','COLUMNS','LINES'):env.pop(key,None)
+    child=pexpect.spawn(sys.executable,['-B','-c',code],env=env,encoding='utf-8',timeout=12,dimensions=(24,60))
+    try:
+        child.expect('PR CHECKS');child.send('2');child.expect('WORKFLOW RUNS');child.send('\r');child.expect('Compile job')
+        child.setwinsize(19,40);child.send('\r');child.expect('Prepare step');child.send('l');child.expect('EXACT_JOB_LOG_SENTINEL');child.send('b');child.expect('Prepare step');child.send('b');child.expect('Compile job');child.send('q');child.expect('M6_DRILL_TERMINAL_RESTORED');child.expect(pexpect.EOF)
+        child.close();assert child.exitstatus==0
+    finally:
+        if child.isalive():child.close(force=True)

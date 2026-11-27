@@ -413,6 +413,8 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
     hints = ('j/k navigate · Enter detail · v verbose · l logs · [ prev  ] next · r refresh · q detach'
              if kind!='overlay' else 'Native lifecycle events only · original logs preserved')
 
+    if kind=='ci' and source.get('m6_drilldown_available') is True:
+        hints='j/k select · Enter open run · l run logs · b back · r refresh · q detach'
     output_block = _segment('OUTPUT','logs',mode,output)
     blocks = [title,
               _segment('IDENTITY','repo',mode,
@@ -422,7 +424,7 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
               _segment('EVENTS','events',mode,events),
               output_block,
               _segment('EVIDENCE','evidence',mode,proof[:5 if width<60 else len(proof)]),
-              _segment(hints,'keys',mode,[]) if verbose or width>=60 else _row('j/k · Enter · l · v · r · q')]
+              _segment(hints,'keys',mode,[]) if verbose or width>=60 else _row('j/k · Enter open run · l · r · q' if kind=='ci' and source.get('m6_drilldown_available') is True else 'j/k · Enter · l · v · r · q')]
     feedback_messages = {
         'REFRESH_REQUESTED': 'Refresh requested · native bounded interval only',
         'REFRESH_CONSUMED': 'Refresh shortcut consumed · awaiting native observation',

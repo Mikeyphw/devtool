@@ -393,3 +393,8 @@ Revision 1.9 candidate incorporates the undelivered P16 diagnostics and CI monit
 ### W4 physical-acceptance repair — RICH-U-C01-F04
 
 Hotfix of RICH-U-C01; no new original overlay identity. Continue existing PR56 from d48d98abfceabd38619f1b36e94452465a35a3ed with native validated overlay and exact new-head CI. F04 workspace requirements and user controls are documented in `docs/DEVTOOL_W4_RICH_ACCEPTANCE.md`; device acceptance remains pending.
+
+
+### M6 interactive run navigation — same-PR W4 subordinate repair
+
+`RICH-U-C01-F04-HF05` continues exact HF04 PR #56 head `854126dd622b485dde3dedd7e49d9f096ff6ba23` (GA 46047973864, all 15 observed PR workflows successful, CI24 46048410600 with 24/24 shard jobs and summary successful). Adds real PR check → workflow run → job → step navigation and selected job logs in the existing shared M6 Live observer, with exact identity, explicit read-only GET, back/resize/log paging and stale result revocation. No original milestone or promise is added, retired, or promoted to FULL by this subordinate repair. M6-14/15/16/17/18/26/27/28/29/32/33/35 remain subject to current-source regression and native/hosted/physical acceptance. See the W4 acceptance guide for controls and evidence boundaries.

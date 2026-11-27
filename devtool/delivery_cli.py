@@ -116,6 +116,21 @@ def run_delivery_command(args: Any) -> int:
                             log_client=GitHubActionsClient(token)
                         return fetch_selected_run_logs(log_client,repo_name,run)
                     rich_monitor.log_fetcher=_fetch_logs
+                    # Reuse the native Actions read-only workspace adapter.
+                    # No client or extra provider request is created on mount.
+                    from .workspace_actions import workspace_client, run_jobs, job_logs
+                    def _read_client():
+                        return workspace_client(repo_name,str(getattr(args,'auth','auto') or 'auto'))
+                    def _fetch_run(run):
+                        selected=dict(run)
+                        selected['run_attempt']=selected.get('attempt',selected.get('run_attempt'))
+                        return run_jobs(_read_client(),repo_name,selected)
+                    def _fetch_job_logs(run,job):
+                        selected=dict(run)
+                        selected['run_attempt']=selected.get('attempt',selected.get('run_attempt'))
+                        return job_logs(_read_client(),repo_name,selected,job)['log_lines']
+                    rich_monitor.run_fetcher=_fetch_run
+                    rich_monitor.job_log_fetcher=_fetch_job_logs
                 # Once-only M7 GET/read probe. Never promote a CI verdict from
                 # credential metadata; failure only affects the evidence pane.
                 credential_health = None
@@ -140,6 +155,7 @@ def run_delivery_command(args: Any) -> int:
                         # Reuse identities from the *already read* native
                         # delivery session; never perform a second provider GET.
                         view=dict(s)
+                        view['repository']=repo_name
                         for display,canonical in (('repository','repository'),
                                                   ('branch','head'),
                                                   ('source_sha','head_sha'),
