@@ -1,4 +1,6 @@
 """ACTIONS-09 governed provisioning backed ONLY by existing Devtool signing."""
+
+from tests._compat import fixture_shebang
 import json
 from pathlib import Path
 import subprocess
@@ -226,8 +228,7 @@ def test_release_build_uses_existing_gradle_signing_contract_before_packaging(tm
     assert release['run'].index('export DEVTOOL_RELEASE_STORE_FILE') < release['run'].index('./gradlew')
     # Exercise shell contract using a fake Gradle launcher, not real credentials.
     root=tmp_path/'gradleproj';root.mkdir();
-    gradle=root/'gradlew';gradle.write_text('''#!/bin/bash
-set -eu
+    gradle=root/'gradlew';gradle.write_text(fixture_shebang('bash')+'''set -eu
 test -s "$DEVTOOL_RELEASE_STORE_FILE"
 test "$DEVTOOL_RELEASE_KEY_ALIAS" = release
 test "$DEVTOOL_RELEASE_STORE_PASSWORD" = pw-store

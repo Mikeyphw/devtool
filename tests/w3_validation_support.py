@@ -371,7 +371,32 @@ def _run_module(root:Path, name:str, scratch:Path, fd:int, timeout:int=600) -> t
     return rc,junit_summary(xml),round(time.monotonic()-start,3)
 
 
-def run_local(root:Path, inventory:Iterable[str], *, standard=False, reviewed_changes:Iterable[str]|None=None) -> int:
+def reviewed_native_plan(root: Path, inventory: Iterable[str], changes: Iterable[str],
+                         reviewed_changes: Iterable[str], modules: Iterable[str]) -> list[str]:
+    """Finite, explicitly reviewed owner-side gate; comprehensive CI24 stays pending."""
+    expected, actual = tuple(reviewed_changes), set(changes)
+    selected, full = tuple(modules), tuple(inventory)
+    if (not expected or len(set(expected)) != len(expected) or not actual
+            or actual != set(expected)):
+        raise RuntimeError('NATIVE_CI24_REVIEWED_CHANGE_SET_MISMATCH')
+    if (not selected or len(set(selected)) != len(selected) or len(selected) > 24
+            or len(set(full)) != len(full) or not full or not set(selected) < set(full)
+            or not set(MANDATORY) <= {Path(name).stem for name in selected}):
+        raise RuntimeError('NATIVE_CI24_BOUNDED_INVENTORY_INVALID')
+    for name in selected:
+        rel = Path(name)
+        path = root / rel
+        if (rel.is_absolute() or '..' in rel.parts or len(rel.parts) < 2
+                or rel.parts[0] != 'tests' or not rel.name.startswith('test_')
+                or rel.suffix != '.py' or not path.is_file()
+                or any(parent.is_symlink() for parent in (path, *path.parents) if parent == root or root in parent.parents)):
+            raise RuntimeError('NATIVE_CI24_REQUIRED_MODULE_MISSING_OR_UNSAFE: ' + name)
+    return sorted(selected)
+
+
+def run_local(root:Path, inventory:Iterable[str], *, standard=False,
+              reviewed_changes:Iterable[str]|None=None,
+              reviewed_native_modules:Iterable[str]|None=None) -> int:
     primary=primary_root(root)
     folder=checkpoint_root(primary)
     # The state directory is durable. All execution/JUnit scratch is private
@@ -385,7 +410,12 @@ def run_local(root:Path, inventory:Iterable[str], *, standard=False, reviewed_ch
         # regression set. This avoids treating a small CLI routing edit as
         # touching every CLI consumer on the phone. Unknown/extra changes
         # retain the original dependency expansion; W3 callers are unchanged.
-        if reviewed_changes is not None and changes and changes==set(reviewed_changes):
+        if reviewed_native_modules is not None:
+            if standard or reviewed_changes is None:
+                raise RuntimeError('NATIVE_CI24_REVIEWED_PROFILE_CONFLICT')
+            selected = reviewed_native_plan(root, inventory, changes, reviewed_changes, reviewed_native_modules)
+            profile = 'reviewed-native-ci24'
+        elif reviewed_changes is not None and changes and changes==set(reviewed_changes):
             selected,_=select_modules(root,inventory,(),standard=True)
             profile='reviewed-exact-package'
         else:

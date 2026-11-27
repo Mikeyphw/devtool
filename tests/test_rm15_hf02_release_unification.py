@@ -1,5 +1,7 @@
 """RM15-HF02 behavioral acceptance; no actual Gradle code is executed by default."""
 from __future__ import annotations
+
+from tests._compat import fixture_shebang
 import json,os,subprocess
 from pathlib import Path
 import pytest
@@ -61,8 +63,7 @@ def test_invalid_dimension_and_matrix_explosion_refused(tmp_path):
 def test_explicit_gradle_runtime_accepts_reviewed_convention_plugin(tmp_path,monkeypatch):
     root=project(tmp_path)
     gradle=root/'app/build.gradle.kts';gradle.write_text('plugins { id("unresolvable.dynamic.convention") }')
-    wrapper=root/'gradlew';wrapper.write_text('''#!/bin/sh
-set -eu
+    wrapper=root/'gradlew';wrapper.write_text(fixture_shebang()+'''set -eu
 [ -z "${GH_TOKEN:-}" ] || exit 47
 printf '%s' '{"app":{"module":"app","application_id":"org.example.app","project_path":"app","variants":{"paidEuStaging":{"build_type":"staging","flavor":"paidEu","flavors":["paid","eu"]}}}}' > "$DEVTOOL_ANDROID_DISCOVERY_OUTPUT"
 ''');wrapper.chmod(0o755)
@@ -83,8 +84,7 @@ printf '%s' '{"app":{"module":"app","application_id":"org.example.app","project_
 
 def test_runtime_refuses_forged_variant_or_escaped_path(tmp_path):
     root=project(tmp_path)
-    wrapper=root/'gradlew';wrapper.write_text('''#!/bin/sh
-printf '%s' '{"app":{"module":"app","application_id":"org.example.app","project_path":"../escape","variants":{"freeRelease":{"build_type":"release","flavor":"free"}}}}' > "$DEVTOOL_ANDROID_DISCOVERY_OUTPUT"
+    wrapper=root/'gradlew';wrapper.write_text(fixture_shebang()+'''printf '%s' '{"app":{"module":"app","application_id":"org.example.app","project_path":"../escape","variants":{"freeRelease":{"build_type":"release","flavor":"free"}}}}' > "$DEVTOOL_ANDROID_DISCOVERY_OUTPUT"
 ''');wrapper.chmod(0o755)
     subprocess.run(['git','-C',str(tmp_path),'add','-A'],check=True)
     subprocess.run(['git','-C',str(tmp_path),'commit','-qm','review wrapper'],check=True)

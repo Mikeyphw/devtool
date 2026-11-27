@@ -1701,3 +1701,7 @@ Remove the native validator dependency on a namespace-sensitive hosted CI helper
 ### W4 consolidated shared Rich ownership (DT-20261126-04)
 
 Uncommitted native apply could display PASS/SUCCESS despite absent commit/session. Five separate Live construction sites and separate keyboard loops also prevented one lifecycle owner; the 40-column floor and wide-screen split violated the vertical layout. W4 centralizes presentation and POSIX input, validates exact committed evidence before delivery success, invalidates log caches on source/attempt drift, preserves the native verdict and uses explicit Textual selection. Source, local PTY, hosted and physical acceptance remain separate. No new mutation engine or implicit clipboard action is introduced.
+
+### DT-20261126-04 — RICH-U-C01-F04 workspace correction
+
+Height-bounded native workspace, explicit source-bound asynchronous Actions reads, exact individual-job log paging, nested selection, and read-only mixed timestamp catalog ordering. See `DEVTOOL_W4_RICH_ACCEPTANCE.md` and `tests/test_w4_f04_workspace.py`. Historical W4 CI is not physical acceptance.

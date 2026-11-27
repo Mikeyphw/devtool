@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import socket
 import stat
 import sys
-import tempfile
 import threading
 import time
 from pathlib import Path
 
 from rich.console import Console
+
+from tests._compat import short_private_ipc_socket_dir
 
 from devtool.desktop.command_model import DevtoolCommandDraft, split_extra_arguments
 from devtool.desktop.control_center_model import (
@@ -191,40 +191,9 @@ def test_desktop_launcher_callback_errors_do_not_kill_pump(tmp_path: Path) -> No
     assert handle.stdout_lines == ["ok"]
 
 
-def _short_private_ipc_socket_dir() -> tempfile.TemporaryDirectory[str]:
-    """Keep AF_UNIX names below Android's sockaddr_un limit, even in deep worktrees.
-
-    pytest's tmp_path may live in a very long Devtool transaction checkout.
-    Use a separate private directory under the Termux prefix (or a short
-    system temporary directory) for the *socket only*, never shared storage.
-    """
-    roots: list[Path] = []
-    prefix = os.environ.get("PREFIX", "").strip()
-    if prefix:
-        roots.append(Path(prefix) / "tmp")
-    runtime_tmp = os.environ.get("TMPDIR", "").strip()
-    if runtime_tmp:
-        roots.append(Path(runtime_tmp))
-    roots.extend((Path("/tmp"), Path(tempfile.gettempdir())))
-    for root in dict.fromkeys(roots):
-        if not root.is_dir():
-            continue
-        # Leave room for the randomized private subdirectory and socket name.
-        if len(os.fsencode(str(root))) + len("/dt-ipc-xxxxxxxx/ipc.sock") > 103:
-            continue
-        try:
-            private = tempfile.TemporaryDirectory(prefix="dt-ipc-", dir=root)
-        except OSError:
-            continue
-        if len(os.fsencode(str(Path(private.name) / "ipc.sock"))) <= 103:
-            return private
-        private.cleanup()
-    raise OSError("No writable short private directory available for AF_UNIX IPC test")
-
-
 def test_desktop_ipc_reads_fragmented_json(tmp_path: Path) -> None:
     payload = b'{"ok":true,"runs":[{"run_id":"r1"}]}' + b"\n"
-    with _short_private_ipc_socket_dir() as socket_dir:
+    with short_private_ipc_socket_dir() as socket_dir:
         socket_path = Path(socket_dir) / "ipc.sock"
         server_failure: list[BaseException] = []
 

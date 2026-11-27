@@ -165,8 +165,13 @@ def _run_live_with_events(
             if not stdin_text.endswith("\n"):
                 proc.stdin.write("\n")
             proc.stdin.flush()
+        except BrokenPipeError:
+            # A hook can exit or close stdin before consuming the payload.
+            # Drain its output and preserve its exit status and mutation checks.
+            pass
         finally:
-            proc.stdin.close()
+            with contextlib.suppress(BrokenPipeError):
+                proc.stdin.close()
     reader_done = False
 
     def append(text: str) -> None:

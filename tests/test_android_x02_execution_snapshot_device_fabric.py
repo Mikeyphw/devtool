@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests._compat import fixture_shebang
+
 import hashlib
 import os
 from pathlib import Path
@@ -56,7 +58,7 @@ def _sdk(root: Path, *, missing: str = "") -> Path:
         if name == missing:
             continue
         path = bt / name
-        path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        path.write_text(fixture_shebang()+"exit 0\n", encoding="utf-8")
         path.chmod(0o755)
     return sdk
 
@@ -292,7 +294,7 @@ def test_inspect_repair_requalify_has_structured_receipt_and_no_cleanup_ownershi
     repaired: list[str] = []
     def repairer(request, qualification, view):
         path = sdk / "build-tools" / "36.0.0" / "aidl"
-        path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8"); path.chmod(0o755)
+        path.write_text(fixture_shebang()+"exit 0\n", encoding="utf-8"); path.chmod(0o755)
         repaired.append("aidl")
         return {"authority": "bootstrap", "installed": ["aidl"], "cleanup_owned": False}
     result = inspect_qualify_repair_android_environment(
@@ -313,7 +315,7 @@ def test_execution_context_prefers_qualified_termux_helper_over_sdk_helper(
     prefix = tmp_path / "termux-prefix"
     helper = prefix / "bin" / "apksigner"
     helper.parent.mkdir(parents=True)
-    helper.write_text("#!/bin/sh\nprintf '1.2.3\\n'\n", encoding="utf-8")
+    helper.write_text(fixture_shebang()+"printf '1.2.3\\n'\n", encoding="utf-8")
     helper.chmod(0o755)
     runtime = RuntimeIdentity("android", "termux", "arm64", "bionic", prefix=prefix)
     monkeypatch.setattr(capabilities_module, "detect_runtime_identity", lambda _env=None: runtime)
@@ -336,7 +338,7 @@ def test_inspect_repair_requalify_respects_existing_termux_helper(
     prefix = tmp_path / "termux-prefix"
     helper = prefix / "bin" / "aidl"
     helper.parent.mkdir(parents=True)
-    helper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    helper.write_text(fixture_shebang()+"exit 0\n", encoding="utf-8")
     helper.chmod(0o755)
     runtime = RuntimeIdentity("android", "termux", "arm64", "bionic", prefix=prefix)
     monkeypatch.setattr(android_environment_module, "detect_runtime_identity", lambda _env=None: runtime)

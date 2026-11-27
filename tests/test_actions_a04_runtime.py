@@ -1,5 +1,7 @@
 """A04: exercise A03-generated commands through the actual Devtool CLI."""
 from __future__ import annotations
+
+from tests._compat import fixture_shebang
 import json
 import os
 from pathlib import Path
@@ -34,7 +36,7 @@ command = ''' + command + '''
 ci = [{id="unit", ref="job:unit"}]
 ''')
     wrapper = repo / 'devtoolw'
-    wrapper.write_text('#!/bin/sh\nexec python3 -m devtool --repo "$(dirname "$0")" wrapper exec "$@"\n')
+    wrapper.write_text(fixture_shebang()+'exec python3 -m devtool --repo "$(dirname "$0")" wrapper exec "$@"\n')
     wrapper.chmod(0o755)
     subprocess.run(['git', 'init', '-q', str(repo)], check=True)
     subprocess.run(['git', '-C', str(repo), 'add', '.'], check=True)
@@ -96,7 +98,7 @@ def _invoke_yaml(repo: Path, runner_tmp: Path, *, failed: bool = False) -> tuple
     cmd = _command_from_generated_yaml(yml, ' --machine-file ')
     venv_bin = runner_tmp / 'devtool-venv' / 'bin'
     venv_bin.mkdir(parents=True, exist_ok=True)
-    (venv_bin / 'python').write_text('#!/bin/sh\nexec ' + sys.executable + ' \"$@\"\n')
+    (venv_bin / 'python').write_text(fixture_shebang()+'exec ' + sys.executable + ' \"$@\"\n')
     (venv_bin / 'python').chmod(0o755)
     env = _env(repo)
     env['RUNNER_TEMP'] = str(runner_tmp)
@@ -126,7 +128,7 @@ def test_a04_real_plan_preflight_and_invoke_receipt(tmp_path, monkeypatch):
     runner_tmp = tmp_path / 'runtime'
     runner_tmp.mkdir()
     (runner_tmp / 'devtool-venv' / 'bin').mkdir(parents=True)
-    (runner_tmp / 'devtool-venv' / 'bin' / 'python').write_text('#!/bin/sh\nexec ' + sys.executable + ' \"$@\"\n')
+    (runner_tmp / 'devtool-venv' / 'bin' / 'python').write_text(fixture_shebang()+'exec ' + sys.executable + ' \"$@\"\n')
     (runner_tmp / 'devtool-venv' / 'bin' / 'python').chmod(0o755)
     env['RUNNER_TEMP'] = str(runner_tmp)
     for needle, output in [(' plan --target ', 'devtool-plan.json'), (' preflight --target ', 'devtool-preflight.json')]:

@@ -50,6 +50,16 @@ def test_explicit_sparse_linux_environment_does_not_leak_android_parent_platform
     assert host.current_substrate == "desktop-linux"
 
 
+@pytest.mark.skipif(not hasattr(os, "uname"), reason="POSIX kernel architecture")
+def test_modeled_posix_host_uses_kernel_architecture_without_android_release_lookup(monkeypatch) -> None:
+    def unexpected_machine():
+        raise AssertionError("modeled host must not call platform.machine()")
+    monkeypatch.setattr("devtool.host_context.platform.machine", unexpected_machine)
+    host = detect_host_context({"HOME": "/home/mike"})
+    assert host.machine == os.uname().machine
+    assert detect_host_context({"HOME": "/home/mike"}, machine="aarch64").machine == "aarch64"
+
+
 def test_build_resource_policy_does_not_inherit_android_platform_for_synthetic_desktop() -> None:
     from devtool.build_optimization import resolve_build_policy
     from devtool.models import ProjectConfig

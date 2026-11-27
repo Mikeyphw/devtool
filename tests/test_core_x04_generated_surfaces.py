@@ -9,6 +9,8 @@ import sys
 
 import pytest
 
+from tests._compat import fixture_shebang, portable_fixture_path, portable_wrapper_argv
+
 from devtool.cli import build_parser
 from devtool.core_registry import build_adopted_core_registry
 from devtool.core_surfaces import (
@@ -124,13 +126,13 @@ def test_cli_smoke_timeout_is_host_bounded_not_generation_budget(monkeypatch: py
 def test_wrapper_launcher_argv_forwarding_without_python_import(tmp_path: Path) -> None:
     """Verify the launcher boundary independently from an expensive CLI import."""
     probe = tmp_path / "argv-probe"
-    probe.write_text("#!/bin/sh\nprintf 'ARG:%s\\n' \"$@\"\n", encoding="utf-8")
+    probe.write_text(fixture_shebang()+"printf 'ARG:%s\\n' \"$@\"\n", encoding="utf-8")
     probe.chmod(0o700)
     env = os.environ.copy()
     env["DEVTOOL_WRAPPER_EXECUTABLE"] = str(probe)
-    env["PATH"] = "/usr/bin:/bin"
+    env["PATH"] = portable_fixture_path()
     result = subprocess.run(
-        [str(Path("devtoolw").resolve()), "--help", "--", "argument with spaces"],
+        portable_wrapper_argv(Path("devtoolw").resolve(), "--help", "--", "argument with spaces"),
         cwd=Path.cwd(), env=env, text=True, stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, timeout=5, check=False,
     )
@@ -152,9 +154,9 @@ def test_devtool_repo_dogfoods_schema2_wrapper_and_source_aware_launchers() -> N
 
     env = os.environ.copy()
     env["DEVTOOL_WRAPPER_PYTHON"] = sys.executable
-    env["PATH"] = "/usr/bin:/bin"
+    env["PATH"] = portable_fixture_path()
     result = subprocess.run(
-        [str(Path("devtoolw").resolve()), "--help"],
+        portable_wrapper_argv(Path("devtoolw").resolve(), "--help"),
         cwd=Path.cwd(),
         env=env,
         text=True,

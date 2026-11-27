@@ -59,7 +59,10 @@ def _secure(key: object, value: object, *, limit: int = 150) -> str:
         return '—'
     raw=redact_sensitive_text(str(value))
     raw=''.join(' ' if ord(ch)<32 or 127<=ord(ch)<160 or ord(ch) in (0x202a,0x202b,0x202c,0x202d,0x202e,0x2066,0x2067,0x2068,0x2069) else ch for ch in raw)
-    return raw[:limit-1]+'…' if len(raw)>limit else raw
+    if len(raw)>limit:
+        from .display_graphemes import cluster_prefix
+        return cluster_prefix(raw,max(0,limit-1))+'…'
+    return raw
 
 
 def _style(value: object) -> str:

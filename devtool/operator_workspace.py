@@ -10,11 +10,11 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 import hashlib
+import copy
 import json
 import os
 from queue import Empty, Queue
 from pathlib import Path
-import select
 import subprocess
 import sys
 import threading
@@ -25,14 +25,12 @@ from typing import Any
 from rich.console import Console, Group
 from .inline_live import InlineLive, terminal_geometry
 from .posix_input import PosixInput
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
 
-from .operator_rich import (build_operator_view, operator_enabled, operator_items,
+from .operator_rich import (operator_enabled, operator_items, operator_drilldown,
                             _secure)
+from .workspace_viewport import LogCursor, detail_lines, log_page, render_workspace
 from .operator_event_feed import (DOMAIN_FILTERS, STATE_FILTERS, native_events,
-                                  visible_events, event_key, event_view)
+                                  visible_events, event_key)
 
 TABS = ('actions', 'runs', 'validation', 'ssh', 'events')
 _MIN_LOCAL_REFRESH = 2.0
@@ -241,6 +239,19 @@ class Workspace:
     event_query: str = ''
     event_editing: bool = False
     event_draft: str = ''
+    auth_mode: str = 'auto'
+    remote_selected: int = 0
+    remote_history: list = field(default_factory=list)
+    remote_generation: int = 0
+    remote_pending: bool = False
+    remote_scope: str = ""
+    remote_results: Queue = field(default_factory=lambda: Queue(maxsize=1),repr=False)
+    help_open: bool = False
+    cursor: LogCursor = field(default_factory=LogCursor)
+    page_history: list[LogCursor] = field(default_factory=list)
+    help_restore: tuple | None = None
+    viewport_width: int = 80
+    viewport_height: int = 24
 
     def __post_init__(self) -> None:
         self.root = _safe_root(self.root)
@@ -258,13 +269,14 @@ class Workspace:
         try:
             actual=_source_head(self.root)
         except (RuntimeError,OSError,subprocess.SubprocessError):
+            self._clear_remote()
             self.source_issue='HEAD verification unavailable; snapshots are stale'
             return False
         if actual != self.head:
             self.source_drift=True
             self.automatic=False
             self.ssh_auto_consent=False
-            self.remote_detail=None
+            self._clear_remote()
             self.source_issue='Repository HEAD changed; detach and reopen to bind the new source'
             return False
         self.source_issue=''
@@ -298,6 +310,11 @@ class Workspace:
                     and old_versions.get(event_key(row)) != (
                        row.get('update_count'),row.get('revision'),row.get('status'))}
                     if 'events' in self.snapshots else set())
+        if tab=='actions' and self.remote_detail is None and self.remote_pending and self.remote_scope in ('g','l'):
+            new_index=self.selections[tab]
+            new_key=_row_key(new_rows[new_index]) if 0<=new_index<len(new_rows) else ''
+            if not key or key!=new_key:
+                self.remote_generation+=1
         self.snapshots[tab]=new
         self.refreshed_at[tab]=time.monotonic() if now is None else now
         self.errors.pop(tab,None)
@@ -351,6 +368,75 @@ class Workspace:
             changed=True
         return changed
 
+    def _reset_page(self) -> None:
+        self.cursor=LogCursor()
+        self.page_history=[]
+
+    def _clear_remote(self) -> None:
+        self.remote_generation+=1
+        self.remote_detail=None
+        self.remote_selected=0
+        self.remote_history=[]
+        self.details.discard('actions')
+        self._reset_page()
+
+    def current_snapshot(self) -> Mapping[str,Any]:
+        if self.tab=='actions' and self.remote_detail is not None:
+            return self.remote_detail
+        return self.snapshots.get(self.tab,{'state':'not-observed','message':'Press r to refresh; g on SSH makes an explicit read'})
+
+    def current_selection(self) -> int:
+        return self.remote_selected if self.tab=='actions' and self.remote_detail is not None else self.selections.get(self.tab,0)
+
+    def current_rows(self) -> list[Any]:
+        return self._selection_rows(self.tab,self.current_snapshot())
+
+    def _push_remote(self, response: Mapping[str,Any]) -> None:
+        self.remote_history.append((self.remote_detail,self.remote_selected,
+                                    'actions' in self.details,self.cursor,list(self.page_history)))
+        self.remote_detail=response
+        self.remote_selected=0
+        self.details.discard('actions')
+        self._reset_page()
+
+    def _back(self) -> None:
+        self.remote_generation+=1
+        if self.help_open:
+            self.help_open=False
+            if self.help_restore is not None:
+                self.cursor,self.page_history=self.help_restore
+            self.help_restore=None
+            return
+        if self.tab in self.details:
+            self.details.discard(self.tab)
+            self._reset_page()
+        elif self.tab=='actions' and self.remote_history:
+            self.remote_detail,self.remote_selected,detail,self.cursor,self.page_history=self.remote_history.pop()
+            if detail:self.details.add('actions')
+        elif self.tab=='actions':
+            self._clear_remote()
+
+    def _page_lines(self) -> tuple[str,...] | list[str] | None:
+        from .workspace_viewport import HELP_LINES
+        if self.help_open:return HELP_LINES
+        snapshot=self.current_snapshot()
+        if 'log_lines' in snapshot:return snapshot['log_lines']
+        rows=self.current_rows()
+        selected=self.current_selection()
+        if self.tab in self.details and 0<=selected<len(rows):return detail_lines(rows[selected])
+        if not rows and self.remote_detail is not None:return detail_lines(snapshot)
+        return None
+
+    def _next_page(self) -> None:
+        from .workspace_viewport import page_capacity
+        lines=self._page_lines()
+        if lines is None:return
+        _,next_cursor=log_page(lines,self.cursor,self.viewport_width,
+                               page_capacity(self.viewport_height,bool(self.source_issue or self.errors.get(self.tab)),self.help_open))
+        if next_cursor is not None:
+            self.page_history.append(self.cursor)
+            self.cursor=next_cursor
+
     def press(self,key: str, *,readers: Mapping[str,Callable[[],Mapping[str,Any]]] | None = None
               ) -> bool:
         """Deterministic key transition, always non-mutating to Devtool authorities."""
@@ -367,20 +453,61 @@ class Workspace:
             elif len(key)==1 and key.isprintable() and len(self.event_draft)<64:
                 self.event_draft += key
             return True
-        if key in ('q','\x03'):return False
+        if key=='q':
+            self.remote_generation+=1
+            return False
+        if key=='?':
+            if self.help_open:self._back()
+            else:
+                self.remote_generation+=1
+                self.help_restore=(self.cursor,list(self.page_history))
+                self.help_open=True
+                self._reset_page()
+            return True
+        if key=='b' or (key=='\x1b' and self.help_open):
+            self._back()
+            return True
+        if key in (']','[') or (key in ('j','k') and self._page_lines() is not None):
+            if key in (']','j'):self._next_page()
+            elif self.page_history:self.cursor=self.page_history.pop()
+            return True
+        if self.help_open:return True
         if key and key in '12345' and len(key)==1:
-            self.remote_detail=None
+            self._clear_remote()
             self.tab=TABS[int(key)-1]
+            self.details.discard(self.tab)
             save_ui_state(self.root,self.head,self.tab)
-        elif key=='j':
-            rows=self._selection_rows(self.tab,self.snapshots.get(self.tab,{}))
-            self.selections[self.tab]=min(max(0,len(rows)-1),self.selections.get(self.tab,0)+1)
-        elif key=='k':
-            self.selections[self.tab]=max(0,self.selections.get(self.tab,0)-1)
+        elif key in ('j','k'):
+            rows=self.current_rows()
+            current=self.current_selection()
+            selected=max(0,min(len(rows)-1,current+(1 if key=='j' else -1)))
+            if selected!=current:
+                self.remote_generation+=1
+                if self.tab=='actions' and self.remote_detail is not None:self.remote_selected=selected
+                else:self.selections[self.tab]=selected
+                self._reset_page()
         elif key in ('\r','\n'):
-            if self.tab in self.details:self.details.remove(self.tab)
-            else:self.details.add(self.tab)
+            if self.tab in self.details:
+                self.details.discard(self.tab)
+                self._reset_page()
+            elif self.tab=='actions' and self.remote_detail is not None:
+                child=operator_drilldown(self.remote_detail,self.remote_selected)
+                if child is not None:
+                    payload,kind=child
+                    if self.remote_detail.get('kind')=='run-jobs' and kind=='steps':
+                        payload={**payload,'kind':'job-steps','run':self.remote_detail['run'],
+                                 'job':self.current_rows()[self.remote_selected],'read_only':True}
+                    self.remote_generation+=1
+                    self._push_remote(payload)
+                else:
+                    self.details.add(self.tab)
+                    self._reset_page()
+            else:
+                self.details.add(self.tab)
+                self._reset_page()
         elif self.tab=='events' and key in ('f','s','/','c'):
+            self.details.discard('events')
+            self._reset_page()
             if key=='f':
                 index=DOMAIN_FILTERS.index(self.event_domain)
                 self.event_domain=DOMAIN_FILTERS[(index+1)%len(DOMAIN_FILTERS)]
@@ -400,18 +527,15 @@ class Workspace:
                 self.selections['events']=0
         elif key=='a':
             if self.tab=='ssh':
-                # Only an explicit SSH-tab keypress can grant periodic SSH GETs.
                 if not self.source_drift:
                     self.ssh_auto_consent=not self.ssh_auto_consent
                     self.automatic=True
             else:
                 if not self.source_drift:self.automatic=not self.automatic
         elif key=='r':
-            self.remote_detail=None
+            self._clear_remote()
             self.last_source_check=float('-inf')
             if not self.source_drift:self.refresh(self.tab,readers=readers)
-        elif key=='b':
-            self.remote_detail=None
         elif key in ('w','g','l') and self.tab=='actions' and not self.source_drift:
             self.actions_get(key)
         elif key=='g' and self.tab=='ssh':
@@ -419,9 +543,7 @@ class Workspace:
         return True
 
     def actions_get(self, key: str) -> None:
-        """Legacy UX-RICH02 explicit Actions GET keys; never dispatch/collect."""
-        # Force current identity re-check before any network GET, irrespective
-        # of the periodic cadence and of the automatic/manual setting.
+        """Schedule exactly one explicit, source-bound native read off the terminal thread."""
         self.last_source_check=float('-inf')
         if not self.check_source():
             self.errors['actions']=self.source_issue+'; remote GET refused'
@@ -429,60 +551,80 @@ class Workspace:
         if not self.slug:
             self.errors['actions']='No GitHub repository selected for native read-only GET'
             return
-        rows=operator_items(self.snapshots.get('actions',{}))
-        index=self.selections.get('actions',0)
-        item=rows[index] if 0<=index<len(rows) and isinstance(rows[index],Mapping) else {}
-        try:
-            from .actions_operator import operator_workflows, operator_review, operator_lineage
-            if key=='w': response=operator_workflows(self.slug)
-            elif key=='g': response=operator_review(item,self.slug)
-            else:response=operator_lineage(item,self.root,self.slug)
-            if not isinstance(response,Mapping) or response.get('read_only') is False:
-                raise ValueError('Unverified read-only response')
-            self.remote_detail=response
-            self.errors.pop('actions',None)
-        except Exception as exc:
-            self.remote_detail=None
-            self.errors['actions']='Remote GET unavailable ('+type(exc).__name__+')'
+        if self.remote_pending:
+            self.errors['actions']='A remote GET is already pending'
+            return
+        snapshot=self.current_snapshot()
+        rows=self.current_rows()
+        index=self.current_selection()
+        item=copy.deepcopy(rows[index]) if 0<=index<len(rows) and isinstance(rows[index],Mapping) else {}
+        kind=snapshot.get('kind')
+        root,slug,auth=self.root,self.slug,self.auth_mode
+        run=copy.deepcopy(snapshot.get('run'))
+        job=copy.deepcopy(snapshot.get('job'))
+        from .workspace_actions import workspace_client, workflow_runs, run_jobs, job_logs
+        def fetch():
+            from importlib import import_module
+            actions_operator=import_module(".actions_operator",__package__)
+            if key=='w':return actions_operator.operator_workflows(slug,client=workspace_client(slug,auth))
+            if key=='g' and kind=='workflows':return workflow_runs(workspace_client(slug,auth),slug,item)
+            if key=='g' and kind=='workflow-runs':return run_jobs(workspace_client(slug,auth),slug,item)
+            if key=='l' and kind in ('run-jobs','job-steps'):
+                return job_logs(workspace_client(slug,auth),slug,run,item if kind=='run-jobs' else job)
+            if key=='g' and kind not in ('workflows','workflow-runs','run-jobs','job-steps','job-logs'):
+                return actions_operator.operator_review(item,slug,client=workspace_client(slug,auth) if item.get('run_id') is not None else None)
+            if key=='l' and kind not in ('workflows','workflow-runs','run-jobs','job-steps','job-logs'):
+                return actions_operator.operator_lineage(item,root,slug)
+            raise ValueError('No explicit GET for this selection')
+        generation=self.remote_generation
+        self.remote_pending=True
+        self.remote_scope=key
+        self.errors.pop('actions',None)
+        def worker():
+            try:result=(generation,True,fetch())
+            except Exception as exc:result=(generation,False,type(exc).__name__)
+            self.remote_results.put_nowait(result)
+        threading.Thread(target=worker,daemon=True,name='devtool-rich-actions-read').start()
 
-    def current_view(self, *, width: int = 80) -> Group:
-        table=Table.grid(expand=True)
-        table.add_column(ratio=1)
-        tabs=[]
-        for i,name in enumerate(TABS,1):
-            tabs.append(('['+str(i)+' '+name.upper()+']' if name==self.tab
-                         else str(i)+' '+name.upper()))
-        heading=Text('DEVTOOL · UX-RICH03  '+(' · '.join(tabs)),style='bold cyan')
-        status=Text('Source '+self.head[:12]+'  • '+('AUTO' if self.automatic else 'MANUAL')+
-            ('  • SSH AUTO OPT-IN' if self.ssh_auto_consent else '  • SSH MANUAL')+
-            ('  • SSH GET PENDING' if self.ssh_pending else '')+
-            ('  • EVENT READ PENDING' if self.events_pending else '')+
-            '  • read-only',style='dim')
-        snapshot=self.snapshots.get(self.tab)
-        if snapshot is None:
-            snapshot={'state':'not-observed','message':'Press r to refresh, or g on SSH to query the worker'}
-        error=self.source_issue or self.errors.get(self.tab)
-        if error:
-            warning=Text(_secure('warning',error,limit=180),style='bold red')
+    def consume_actions(self) -> bool:
+        try:generation,ok,result=self.remote_results.get_nowait()
+        except Empty:return False
+        self.remote_pending=False
+        self.remote_scope=""
+        self.last_source_check=float('-inf')
+        if not self.check_source() or generation!=self.remote_generation or self.tab!='actions':
+            return True
+        if not ok:
+            self.errors['actions']='Remote GET unavailable ('+str(result)+'); previous view retained'
+        elif (not isinstance(result,Mapping) or result.get('read_only') is False
+                or result.get('qualified_release') is True):
+            self.errors['actions']='Remote GET refused: invalid read-only result'
         else:
-            warning=Text('Native observation; no execution, cancellation or release qualification',style='dim')
-        selected=self.selections.get(self.tab,0)
-        if self.tab=='actions' and self.remote_detail is not None:
-            snapshot=self.remote_detail
-            selected=0
-        if self.tab=='events':
-            panel=event_view(snapshot,width=width,selected=selected,
-                             domain=self.event_domain,state=self.event_state,
-                             query=self.event_query,editing=self.event_editing,
-                             draft=self.event_draft,detail=self.tab in self.details,
-                             recent=self.event_highlights)
-        else:
-            panel=build_operator_view(self.tab,snapshot,width=width,selected=selected,
-                                      detail=self.tab in self.details)
-        footer=Text('1–5 tabs · j/k select · Enter details · r refresh · a auto toggle'
-                    ' · events: f/s filters / search c clear'
-                    ' · g SSH/Actions GET · w/l Actions GET · b back · q detach',style='dim')
-        return Group(heading,status,warning,panel,footer)
+            self._push_remote(result)
+            self.errors.pop('actions',None)
+        return True
+
+    def current_view(self, *, width: int = 80, height: int = 24) -> Group:
+        self.viewport_width,self.viewport_height=max(1,width),max(1,height)
+        tabs=['['+str(i)+' '+name.upper()+']' if name==self.tab else str(i)+' '+name.upper()
+              for i,name in enumerate(TABS,1)]
+        if width<80:
+            tabs=['['+str(i)+' '+name[:3].upper()+']' if name==self.tab else str(i)+' '+name[:3].upper()
+                  for i,name in enumerate(TABS,1)]
+        heading='DEVTOOL · '+' '.join(tabs)
+        status='Source '+self.head[:12]+' · '+('AUTO' if self.automatic else 'MANUAL')+' · read-only'
+        if self.tab=='actions':status+=' · auth '+self.auth_mode
+        if self.ssh_pending or self.remote_pending or self.events_pending:status+=' · GET pending'
+        warning=self.source_issue or self.errors.get(self.tab,'')
+        if self.tab=='events' and not warning:
+            warning='Events '+self.event_domain+'/'+self.event_state+' · '+('Search: '+self.event_draft if self.event_editing else self.event_query)
+        snapshot=self.current_snapshot()
+        footer='q detach · ? help · b back · j/k · Enter'
+        if width>=80:footer+=' · [ ] page · w/g/l GET · r refresh'
+        return render_workspace(width=width,height=height,heading=heading,status=status,
+                warning=_secure('warning',warning,limit=300) if warning else '',tab=self.tab,
+                snapshot=snapshot,selected=self.current_selection(),rows=self.current_rows(),
+                detail=self.tab in self.details,help_open=self.help_open,cursor=self.cursor,footer=footer)
 
 
 class SSHReadObserver:
@@ -549,7 +691,8 @@ def run_operator_workspace(root: Path, slug: str | None, *, initial: Mapping[str
         from .github_actions import resolve_repository, GitHubActionsError
         try:slug=resolve_repository('',root)
         except GitHubActionsError:slug=None
-    ws=Workspace(root,head,slug=slug,tab=initial_tab or load_ui_state(root,head))
+    ws=Workspace(root,head,slug=slug,tab=initial_tab or load_ui_state(root,head),
+                 auth_mode=str(getattr(args,'auth','auto') or 'auto'))
     if initial is not None and isinstance(initial,Mapping):
         ws.snapshots['actions']=initial
         ws.refreshed_at['actions']=time.monotonic()
@@ -565,7 +708,7 @@ def run_operator_workspace(root: Path, slug: str | None, *, initial: Mapping[str
     fd=sys.stdin.fileno()
     try:
         out.width,out.height=terminal_geometry(out,fd)
-        with PosixInput(fd) as keys, InlineLive(ws.current_view(width=out.width),console=out) as live:
+        with PosixInput(fd) as keys, InlineLive(ws.current_view(width=out.width,height=out.height),console=out) as live:
             while True:
                 # Continuous local projection refresh, never run/SSH command execution.
                 key=keys.read(.2)
@@ -574,6 +717,7 @@ def run_operator_workspace(root: Path, slug: str | None, *, initial: Mapping[str
                 now=time.monotonic()
                 changed=ws.maybe_refresh(now=now,readers=readers,
                                          include_ssh=False,include_events=False) or resized
+                changed=ws.consume_actions() or changed
                 changed=events_observer.consume(ws,now=now) or changed
                 if (ws.automatic and not ws.source_drift and not ws.source_issue
                     and now-events_last_request>=_MIN_LOCAL_REFRESH):
@@ -609,7 +753,7 @@ def run_operator_workspace(root: Path, slug: str | None, *, initial: Mapping[str
                     elif not ws.press(key,readers=readers):break
                     changed=True
                 if changed:
-                    live.update(ws.current_view(width=out.width),refresh=True)
+                    live.update(ws.current_view(width=out.width,height=out.height),refresh=True)
     except KeyboardInterrupt:
         return True
     except Exception as exc:

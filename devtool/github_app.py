@@ -527,9 +527,12 @@ def make_app_client(repository: str, capability: str, *, role: str = 'base'):
         def artifact_download_location(self, slug, identity):
             self._assert_repository(slug)
             return super().artifact_download_location(slug,identity)
-        def run_log_location(self, slug, identity):
+        def run_log_location(self, slug, identity, *, attempt=None):
             self._assert_repository(slug)
-            return super().run_log_location(slug,identity)
+            return super().run_log_location(slug,identity,attempt=attempt)
+        def job_log_location(self, slug, identity):
+            self._assert_repository(slug)
+            return super().job_log_location(slug,identity)
         @property
         def _token(self):
             access = provider.issue(self._bound_repository,capability)

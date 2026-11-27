@@ -1,5 +1,7 @@
 """Unsigned-first Android releases, reviewed profile overrides, local LIFE preservation."""
 from __future__ import annotations
+
+from tests._compat import fixture_shebang
 import hashlib
 import json
 import os
@@ -111,7 +113,7 @@ def test_workflow_bash_syntax_and_secret_free_release_task(tmp_path):
     assert 'DT_KEYSTORE' not in task and 'secrets.' not in task
     env=dict(os.environ,TASK_PROJECT=str(tmp_path),TASK_MODULE='app',TASK_NAME='assembleLiteRelease')
     gradlew=tmp_path/'gradlew'
-    gradlew.write_text('#!/bin/sh\nprintf "%s\\n" "$*" > gradle-invoked.txt\n');gradlew.chmod(0o755)
+    gradlew.write_text(fixture_shebang()+'printf "%s\\n" "$*" > gradle-invoked.txt\n');gradlew.chmod(0o755)
     result=_run(task,cwd=tmp_path,env=env)
     assert result.returncode==0,result.stderr
     assert (tmp_path/'gradle-invoked.txt').read_text().strip()=='--no-daemon -Pdevtool.unsignedReleaseCandidate=true :app:assembleLiteRelease'
@@ -122,7 +124,7 @@ def _candidate_harness(tmp_path,mode='local',*,already_signed=False):
     marker=tmp_path/'verify-calls'
     # apksigner simulated only for exercise of workflow branch and negative checks.
     apksigner=sdk/'apksigner'
-    apksigner.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\n'+
+    apksigner.write_text(fixture_shebang()+'printf "%s\\n" "$*" >> "$CALLS"\n'+
                           ('exit 0\n' if already_signed else 'exit 1\n'))
     apksigner.chmod(0o755)
     repo=tmp_path/'repo';outdir=repo/'app/build/outputs/apk/lite/release';outdir.mkdir(parents=True)
@@ -201,8 +203,7 @@ def test_explicit_hosted_signing_still_uses_16k_and_reports_nonqualified(tmp_pat
     env['GITHUB_REF_PROTECTED']='true'
     sdk=tmp_path/'sdk/build-tools/35.0.0'
     align=sdk/'zipalign'
-    align.write_text('''#!/bin/sh
-printf '%s\\n' "$*" >> "$CALLS"
+    align.write_text(fixture_shebang()+'''printf '%s\\n' "$*" >> "$CALLS"
 [ "$1" = '-c' ] && exit 0
 before='';last=''
 for item in "$@"; do before="$last"; last="$item"; done
@@ -210,8 +211,7 @@ cp "$before" "$last"
 ''')
     align.chmod(0o755)
     sign=sdk/'apksigner'
-    sign.write_text('''#!/bin/sh
-printf '%s\\n' "$*" >> "$CALLS"
+    sign.write_text(fixture_shebang()+'''printf '%s\\n' "$*" >> "$CALLS"
 [ "$1" = 'verify' ] && exit 0
 [ "$1" = 'sign' ] || exit 3
 out='';previous='';last=''

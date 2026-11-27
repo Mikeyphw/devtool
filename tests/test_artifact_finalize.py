@@ -204,3 +204,17 @@ def test_before_validation_finalize_runs_before_validator_and_can_block(tmp_path
     assert "stop" in raw
     finalize.assert_called_once()
     validator.assert_not_called()
+
+
+def test_hook_early_stdin_close_preserves_child_result(tmp_path: Path) -> None:
+    import os
+    import sys
+    from devtool.hooks.engine import _run_live_with_events
+
+    code, output, _, _ = _run_live_with_events(
+        [sys.executable, "-c", "import os,sys;os.close(0);print('early hook output',flush=True);sys.exit(7)"],
+        cwd=tmp_path, env=dict(os.environ), timeout_seconds=10,
+        activity_label="fixture", script_label="fixture", stdin_text="x" * 1_000_000,
+    )
+    assert code == 7
+    assert output.strip() == "early hook output"

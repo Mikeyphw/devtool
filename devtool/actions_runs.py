@@ -194,13 +194,8 @@ def watch(client: GitHubActionsClient, slug: str, identity: int, path: Path | No
             "history":observations, "polling":"bounded-foreground-no-daemon"}
 
 
-def remote_logs(client: GitHubActionsClient, slug: str, identity: int,
-                *, root: Path | None = None, attempt: int | None = None) -> dict[str, Any]:
-    # Do not place expiring signed URLs in stdout or persistent metadata.
-    if attempt is not None and (type(attempt) is not int or attempt <= 0):
-        raise GitHubActionsError("Invalid workflow run attempt")
-    url = (client.run_log_location(slug, identity) if attempt is None else
-           client.run_log_location(slug, identity, attempt=attempt))
+def _download_log_bytes(client: GitHubActionsClient, url: str) -> bytes:
+    """Fetch a bounded signed log response without forwarding credentials."""
     target = urlsplit(url)
     host = (target.hostname or "").lower()
     if (target.scheme != "https" or not host or target.port not in (None, 443)
@@ -222,6 +217,17 @@ def remote_logs(client: GitHubActionsClient, slug: str, identity: int,
         raise GitHubActionsError("GitHub logs download failed") from None
     if len(content) > _LOG_LIMIT:
         raise GitHubActionsError("GitHub logs archive exceeds 32 MiB limit")
+    return content
+
+
+def remote_logs(client: GitHubActionsClient, slug: str, identity: int,
+                *, root: Path | None = None, attempt: int | None = None) -> dict[str, Any]:
+    # Do not place expiring signed URLs in stdout or persistent metadata.
+    if attempt is not None and (type(attempt) is not int or attempt <= 0):
+        raise GitHubActionsError("Invalid workflow run attempt")
+    url = (client.run_log_location(slug, identity) if attempt is None else
+           client.run_log_location(slug, identity, attempt=attempt))
+    content = _download_log_bytes(client, url)
     import io, zipfile
     if not zipfile.is_zipfile(io.BytesIO(content)):
         raise GitHubActionsError("GitHub logs archive is not a ZIP")
@@ -247,6 +253,47 @@ def remote_logs(client: GitHubActionsClient, slug: str, identity: int,
     return {"repository":slug,"run_id":identity,"archive":str(path),"sha256":digest,
             "size":len(content),"extracted":False,"qualified_artifact":False,
             **({"run_attempt":attempt} if attempt is not None else {})}
+
+
+def remote_job_logs(client: GitHubActionsClient, slug: str, identity: int,
+                    attempt: int, job_id: int, *, root: Path | None = None) -> dict[str, Any]:
+    """Download native individual-job text into private, digest-bound storage.
+
+    Caller must first verify exact repository/run/attempt membership.
+    """
+    slug = _slug(slug)
+    if any(type(x) is not int or x <= 0 for x in (identity, attempt, job_id)):
+        raise GitHubActionsError('Invalid job log identity')
+    content = _download_log_bytes(client, client.job_log_location(slug, job_id))
+    if not content:
+        raise GitHubActionsError('Empty native job log')
+    folder = root if root is not None else _state_root().parent / 'remote-logs'
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if (any(p.is_symlink() for p in (folder, *folder.parents))
+            or not folder.is_dir() or folder.stat().st_uid != os.getuid()
+            or folder.stat().st_mode & 0o077):
+        raise GitHubActionsError('Job log destination is not private')
+    digest = hashlib.sha256(content).hexdigest()
+    path = folder / f"{slug.replace('/', '_')}-{identity}-attempt-{attempt}-job-{job_id}-{digest}.log"
+    fd, tmp = tempfile.mkstemp(prefix='.github-job-', dir=folder)
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp, path)
+        dfd = os.open(folder, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    return {'repository': slug, 'run_id': identity, 'run_attempt': attempt,
+            'job_id': job_id, 'path': str(path), 'sha256': digest,
+            'size': len(content), 'qualified_artifact': False}
 
 
 def control_run(client: GitHubActionsClient, slug: str, identity: int, method: str,

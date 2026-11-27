@@ -13,6 +13,8 @@ on:
       - .github/workflows/devtool-w02-portable-dotnet-source.yml
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
 jobs:
   native-graph-source:
     runs-on: ubuntu-24.04
@@ -27,13 +29,20 @@ jobs:
         with:
           python-version: '3.12'
           check-latest: false
+      - name: Verify eligible merged-tree source evidence (read only)
+        id: tree_reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -B -m devtool.postmerge_ci decide --workflow devtool-w02-portable-dotnet-source.yml --scope ubuntu-24.04 --proof "${{ runner.temp }}/tree-proof.json"
       - name: Install tested Python dependencies (no .NET or Gradle)
+        if: steps.tree_reuse.outputs.reuse != 'true'
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           python -m pip install --disable-pip-version-check -e '.[textual]' 'pytest==8.4.2' pexpect
       - name: W02 .NET mixed-host source and compatibility regression
+        if: steps.tree_reuse.outputs.reuse != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -42,3 +51,14 @@ jobs:
             tests/test_rm09_dotnet.py \
             tests/test_rm07_toolchain_profiles.py
           echo W02_SOURCE_ONLY_PORTABLE_DOTNET_PASS
+      - name: Record executed source tree proof
+        if: success() && steps.tree_reuse.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        run: python -B -m devtool.postmerge_ci record --workflow devtool-w02-portable-dotnet-source.yml --scope ubuntu-24.04 --proof "${{ runner.temp }}/tree-proof.json"
+      - name: Upload scoped source tree evidence (not release acceptance)
+        if: success() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: devtool-tree-proof-${{ github.run_id }}-${{ github.run_attempt }}-ubuntu-24.04
+          path: ${{ runner.temp }}/tree-proof.json
+          if-no-files-found: error
+          retention-days: 14

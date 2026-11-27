@@ -29,16 +29,20 @@ def _prepend(c: str) -> bool:
             0x111C2 <= n <= 0x111C3 or 0x11A84 <= n <= 0x11A89)
 
 
-def display_clusters(text: str) -> Iterator[str]:
-    if not text:
+def display_clusters(text: str, *, offset: int = 0) -> Iterator[str]:
+    """Iterate from a known cluster boundary without copying the remaining text."""
+    if offset < 0 or offset > len(text):
+        raise ValueError("Invalid display cluster offset")
+    if offset == len(text):
         return
     if text.isascii():
-        yield from text
+        for i in range(offset,len(text)):
+            yield text[i]
         return
-    start = 0
-    ri_count = int(_ri(text[0]))
-    join_next = ud.combining(text[0]) == 9 or text[0] == '\u200d'
-    for i in range(1, len(text)):
+    start = offset
+    ri_count = int(_ri(text[offset]))
+    join_next = ud.combining(text[offset]) == 9 or text[offset] == '\u200d'
+    for i in range(offset+1, len(text)):
         prev, cur = text[i-1], text[i]
         n = ord(cur)
         h1, h2 = _hangul(prev), _hangul(cur)
