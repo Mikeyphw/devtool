@@ -157,3 +157,106 @@ def test_reviewed_package_scope_requires_exact_changed_set(tmp_path,monkeypatch)
     assert w.run_local(repo,names,reviewed_changes={'source.py'})==0 and calls[-1]==set()
     (repo/'extra.py').write_text('x=3\n')
     assert w.run_local(repo,names,reviewed_changes={'source.py'})==0 and calls[-1]=={'source.py','extra.py'}
+
+
+# Hosted source gates must not silently lose optional-but-required test tools.
+# Check structured steps and exact dependency tokens, not text in comments.
+HOSTED_LANES = (
+    ('devtool-ga-source-acceptance.yml', 'ga-source-contracts', 'Unified full W3 source acceptance', '.'),
+    ('devtool-full-repository-pytest.yml', 'pytest', 'Run assigned modules with bounded subprocesses and live output', '.'),
+    ('devtool-rm15-regression-source-gate.yml', 'rm15-strict-regression', 'Verify exact source-bound audit regressions', '.'),
+    ('devtool-rm17-polyglot-source-gate.yml', 'rm17-source', 'Provider, DAG and hostile source fixtures (no local Gradle build)', '.'),
+    ('devtool-rm21-hosted-polyglot-acceptance.yml', 'hosted-fixture', 'Pure source, archive, and hostile provider regressions', '.'),
+    ('devtool-rm21-hosted-polyglot-acceptance.yml', 'independent-consumer', 'Native exact-SHA external consumer acceptance (no release)', './tool'),
+    ('devtool-rm22-hosted-env-source.yml', 'source-regression', 'No-execution hosted environment and RM21 regressions', '.'),
+)
+HOSTED_REQUIREMENTS = {'setuptools>=75,<82', 'wheel', 'coverage>=7,<9',
+                       'cryptography>=43,<47', 'pytest', 'pexpect'}
+GA_PREFLIGHT = 'Verify hosted test dependencies before acceptance'
+GA_IMPORTS = 'import coverage, cryptography, pexpect, pytest, textual'
+
+
+def _hosted_install_tokens(line):
+    import shlex
+    if not line.lstrip().startswith(("python ", "python3 ")):
+        return set()
+    try:
+        tokens = shlex.split(line.strip(), comments=True)
+    except ValueError:
+        return set()
+    if not tokens or tokens[0] not in {'python', 'python3'}:
+        return set()
+    if tokens[1:2] == ['-B']:
+        tokens.pop(1)
+    if tokens[1:4] != ['-m', 'pip', 'install']:
+        return set()
+    # The reviewed invocations are standalone commands (no shell control flow).
+    if any(t in {';', '&&', '||', '|', '&'} for t in tokens):
+        return set()
+    return set(tokens[4:])
+
+
+def _assert_hosted_dependency_parity(steps, test_name, project):
+    import shlex
+    matches = [i for i, step in enumerate(steps) if step.get('name') == test_name]
+    assert len(matches) == 1, 'missing or duplicate hosted acceptance step'
+    test_index = matches[0]
+    required = HOSTED_REQUIREMENTS | {project + '[textual]'}
+    observed = set()
+    for i, step in enumerate(steps[:test_index + 1]):
+        if step.get('if') or step.get('continue-on-error'):
+            continue
+        for line in step.get('run', '').splitlines():
+            # RM22 has setup and pytest in one step. Never credit a later install.
+            if i == test_index and ('-m pytest' in line or 'tests/w3_native_validate.py' in line or 'tools/actions_full_pytest_ci.py run' in line):
+                break
+            observed.update(_hosted_install_tokens(line))
+    assert required <= observed, f'missing hosted dependencies: {sorted(required - observed)}'
+    if test_name == 'Unified full W3 source acceptance':
+        preflights = [i for i, step in enumerate(steps) if step.get('name') == GA_PREFLIGHT]
+        assert len(preflights) == 1 and preflights[0] < test_index
+        preflight = steps[preflights[0]]
+        assert not preflight.get('if') and not preflight.get('continue-on-error')
+        assert shlex.split(preflight['run']) == ['python3', '-B', '-c', GA_IMPORTS]
+        # Verify the prerequisites are present before the import preflight, too.
+        _assert_hosted_dependency_parity(steps[:preflights[0] + 1], GA_PREFLIGHT, project)
+        complement = [i for i, step in enumerate(steps) if 'tests/w4_native_validate.py --hosted-extra' in step.get('run', '')]
+        assert len(complement) == 1 and complement[0] > test_index
+        assert not steps[complement[0]].get('if') and not steps[complement[0]].get('continue-on-error')
+
+
+@pytest.mark.parametrize('workflow,job,test_name,project', HOSTED_LANES)
+def test_hosted_source_dependency_parity(workflow, job, test_name, project):
+    import yaml
+    jobs = yaml.safe_load((ROOT / '.github/workflows' / workflow).read_text())['jobs']
+    _assert_hosted_dependency_parity(jobs[job]['steps'], test_name, project)
+
+
+@pytest.mark.parametrize('fault', ['missing-coverage', 'missing-textual', 'conditional-install',
+                                  'ignored-install-error', 'late-install', 'missing-preflight',
+                                  'conditional-preflight', 'late-preflight', 'comment-only-coverage'])
+def test_ga_dependency_parity_refuses_incomplete_setup(fault):
+    import yaml
+    steps = yaml.safe_load((ROOT / '.github/workflows/devtool-ga-source-acceptance.yml').read_text())['jobs']['ga-source-contracts']['steps']
+    install = next(s for s in steps if 'pip install' in s.get('run', ''))
+    preflight = next(s for s in steps if s.get('name') == GA_PREFLIGHT)
+    if fault == 'missing-coverage':
+        install['run'] = install['run'].replace("'coverage>=7,<9'", '')
+    elif fault == 'missing-textual':
+        install['run'] = install['run'].replace("'.[textual]'", '.')
+    elif fault == 'conditional-install':
+        install['if'] = 'false'
+    elif fault == 'ignored-install-error':
+        install['continue-on-error'] = True
+    elif fault == 'late-install':
+        steps.remove(install); steps.append(install)
+    elif fault == 'missing-preflight':
+        steps.remove(preflight)
+    elif fault == 'conditional-preflight':
+        preflight['if'] = 'false'
+    elif fault == 'late-preflight':
+        steps.remove(preflight); steps.append(preflight)
+    elif fault == 'comment-only-coverage':
+        install['run'] = install['run'].replace("'coverage>=7,<9'", '') + "\n# python -m pip install 'coverage>=7,<9'\n"
+    with pytest.raises(AssertionError):
+        _assert_hosted_dependency_parity(steps, 'Unified full W3 source acceptance', '.')

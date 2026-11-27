@@ -22,6 +22,10 @@ W3 performance candidate failed before collecting tests on Termux (DT-20261126-0
 
 PR55 merged at `f5b02e22691c39dd9500de5b766659156336b6c6`, tree `4f034b4c04c2a674a5968d06f562463600a7a3d8`. Native transaction `20261126T032708Z-403071e70e0c`, session `d48548615f564b3b9587b92c7e9bfc93`, required CI 6/6 and CI24 24/24 (run 45750411068 attempt 1) are retained. Owner selection campaign `3e4d511579d8519ecbaf6943e33e2ffd3c7f10657aaf468a42b293b6c85ac46e` passed baseline/denied/restored; full P16/W3 remain false. W4 depends on W2 and the safe native/UI boundary, not blanket W3 acceptance. W3 residual gates remain bound to affected operations, W4 host testing and W8/W10 protected operations. W4 combines M6 and both Rich slices without changing the original inventory or replaying W3. See `docs/DEVTOOL_W4_RICH_ACCEPTANCE.md`. Current candidate is not a receipt of its own native/hosted/device acceptance.
 
+## Revision 1.13 — W4 HF04 hosted dependency parity
+
+RICH-U-C01-F04-HF04 is a subordinate repair on the same draft PR #56, not an original overlay. GA must install the reviewed CI24 dependency ranges and Textual extra before running W3 and the W4 complement; the hosted dependency-parity regression is part of the existing bounded native inventory. Exact new-head GA, required CI and independent CI24 evidence must be verified before merge. The M6 interactive drill-down and physical acceptance remain subsequent work.
+
 ## Revision 1.12 — W4 HF03 portability recovery
 
 RICH-U-C01-F04-HF03 is a corrective subordinate of HF02, not another original overlay. The owner HF02 native validation failed at the Bash/sh fixture shebang path limit and reported rollback; the successor verifies actual rollback history and reuses the original PR #56 only. The bounded 14-module local validation and exhaustive CI24 policy are unchanged. See the W4 acceptance document for the exact portability regression; hosted/device acceptance remains pending.
