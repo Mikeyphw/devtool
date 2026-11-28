@@ -18,9 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_w4_uses_bounded_local_inventory_and_preserves_hosted_regressions():
     selected = support.reviewed_native_plan(ROOT, w4.TESTS, w4.REVIEWED_CHANGES,
                                             w4.REVIEWED_CHANGES, w4.NATIVE_MODULES)
-    assert len(selected) == len(w4.NATIVE_MODULES) == 15
+    assert len(selected) == len(w4.NATIVE_MODULES) == 19
     assert set(support.MANDATORY) <= {Path(p).stem for p in selected}
     assert 'tests/test_m6_live.py' in selected
+    assert {'tests/test_textual_github_workspace.py','tests/test_textual_github_ui_contract.py','tests/test_textual_github_view_pilot.py'} <= set(selected)
     assert 'tests/test_rm08_completion.py' in w4.TESTS
     assert 'tests/test_rm08_completion.py' not in selected
     hosted = (ROOT / '.github/workflows/devtool-full-repository-pytest.yml').read_text()

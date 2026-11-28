@@ -948,6 +948,42 @@ def collect_maven_test_reports(
     )
 
 
+def _node_report_path(project_root: Path, parser: str, report_path: str) -> Path:
+    default = "node-tests.json" if parser == "node-json" else "node-tests.xml"
+    path = Path(report_path).expanduser() if report_path else project_root / ".devtool" / "reports" / default
+    return path if path.is_absolute() else project_root / path
+
+
+def _node_report_identity(path: Path) -> tuple[int, int, int, int, int] | None:
+    try:
+        st = path.stat()
+        return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns
+    except FileNotFoundError:
+        return None
+
+
+def snapshot_node_report_state(project_root: Path, parser: str, report_path: str = "") -> dict[str, tuple[int, ...] | None]:
+    """Observe the configured report at invocation entry, independent of clock granularity."""
+    path = _node_report_path(project_root, parser, report_path)
+    try:
+        return {str(path.absolute()): _node_report_identity(path)}
+    except OSError:
+        return {}  # unobservable entry is not proven absent
+
+
+def _node_report_current(path: Path, started_at: float | None, initial_report_state: dict[str, tuple[int, ...] | None] | None) -> bool:
+    if not path.is_file():
+        return False
+    if initial_report_state is None:
+        return _recent(path, started_at)
+    try:
+        identity = _node_report_identity(path)
+    except OSError:
+        return False
+    key = str(path.absolute())
+    return identity is not None and key in initial_report_state and initial_report_state[key] != identity
+
+
 def collect_node_junit_report(
     project_root: Path,
     *,
@@ -955,13 +991,10 @@ def collect_node_junit_report(
     report_path: str = "",
     started_at: float | None = None,
     command_name: str = "test",
+    initial_report_state: dict[str, tuple[int, ...] | None] | None = None,
 ) -> ReportCollection:
-    path = Path(report_path).expanduser() if report_path else project_root / ".devtool" / "reports" / "node-tests.xml"
-    if not path.is_absolute():
-        path = project_root / path
-    files = [path] if path.is_file() else []
-    if started_at is not None:
-        files = [item for item in files if _recent(item, started_at)]
+    path = _node_report_path(project_root, "node-junit", report_path)
+    files = [path] if _node_report_current(path, started_at, initial_report_state) else []
     return parse_junit_reports(
         repo_root or project_root, files, command_name=command_name,
         framework="node-junit", issue_code="NODE_TEST",
@@ -976,10 +1009,10 @@ def collect_node_json_report(
     report_path: str = "",
     started_at: float | None = None,
     command_name: str = "test",
+    initial_report_state: dict[str, tuple[int, ...] | None] | None = None,
 ) -> ReportCollection:
-    path = Path(report_path).expanduser() if report_path else project_root / ".devtool" / "reports" / "node-tests.json"
-    if not path.is_absolute(): path = project_root / path
-    if not path.is_file() or not _recent(path, started_at):
+    path = _node_report_path(project_root, "node-json", report_path)
+    if not _node_report_current(path, started_at, initial_report_state):
         return ReportCollection({"framework": "node-json", "report_files": [], "passed": 0, "failed": 0, "skipped": 0, "total": 0}, [])
     try:
         payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
@@ -1043,7 +1076,7 @@ def collect_report_metadata(
     command_name: str,
     output: str = "",
     report_path: str = "",
-    initial_report_state: dict[str, tuple[int, ...]] | None = None,
+    initial_report_state: dict[str, tuple[int, ...] | None] | None = None,
 ) -> ReportCollection:
     if parser == "gradle-junit":
         return collect_gradle_test_reports(
@@ -1076,11 +1109,13 @@ def collect_report_metadata(
         )
     if parser == "node-junit":
         return collect_node_junit_report(
-            project_root, repo_root=repo_root, report_path=report_path, started_at=started_at, command_name=command_name
+            project_root, repo_root=repo_root, report_path=report_path, started_at=started_at, command_name=command_name,
+            initial_report_state=initial_report_state,
         )
     if parser == "node-json":
         return collect_node_json_report(
-            project_root, repo_root=repo_root, report_path=report_path, started_at=started_at, command_name=command_name
+            project_root, repo_root=repo_root, report_path=report_path, started_at=started_at, command_name=command_name,
+            initial_report_state=initial_report_state,
         )
     if parser == "android-instrumentation":
         return collect_instrumentation_output(output, repo_root=repo_root or project_root, command_name=command_name)

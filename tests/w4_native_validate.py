@@ -73,7 +73,11 @@ TESTS=(
     'tests/test_w4_f04_workspace.py',
     'tests/test_hf01_fixture_portability.py',
     'tests/test_rm08_completion.py',
+    'tests/test_textual_github_workspace.py',
+    'tests/test_textual_github_ui_contract.py',
+    'tests/test_textual_github_view_pilot.py',
     'tests/test_native_ci24_policy.py',
+    'tests/test_tsys02_adapters.py',
 )
 
 # Explicit owner-side scope; hosted W3, W4 complement and CI24 remain exhaustive.
@@ -92,17 +96,26 @@ NATIVE_MODULES = (
     'tests/test_hf01_fixture_portability.py',
     'tests/test_w4_f04_workspace.py',
     'tests/test_m6_live.py',
+    'tests/test_textual_github_workspace.py',
+    'tests/test_textual_github_ui_contract.py',
+    'tests/test_textual_github_view_pilot.py',
     'tests/test_native_ci24_policy.py',
+    'tests/test_tsys02_adapters.py',
 )
 
 REVIEWED_CHANGES = (
-    'devtool/delivery_cli.py',
-    'devtool/delivery_rich.py',
-    'devtool/m6_live.py',
+    'devtool/delivery_remote_logs.py',
+    'devtool/gradle_reports.py',
+    'devtool/runners.py',
+    'devtool/textual_github_view.py',
+    'devtool/textual_github_workspace.py',
     'docs/DEVTOOL_UNIFIED_ROADMAP.md',
     'docs/DEVTOOL_W4_RICH_ACCEPTANCE.md',
-    'tests/test_m6_live.py',
     'tests/test_native_ci24_policy.py',
+    'tests/test_textual_github_ui_contract.py',
+    'tests/test_textual_github_view_pilot.py',
+    'tests/test_textual_github_workspace.py',
+    'tests/test_tsys02_adapters.py',
     'tests/w4_native_validate.py',
 )
 

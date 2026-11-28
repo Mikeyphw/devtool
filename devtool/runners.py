@@ -2950,6 +2950,18 @@ def run_specs(
             from .gradle_reports import snapshot_maven_report_state
             report_entry_root = Path(str(spec.metadata.get("project_root") or spec.cwd or config.repo_root)).resolve()
             report_entry_state = snapshot_maven_report_state(report_entry_root)
+        # Node reports can also be written with coarse/backdated filesystem
+        # timestamps. Bind them to this invocation, not wall-clock proximity.
+        node_report_entry_state = {}
+        from .gradle_reports import snapshot_node_report_state
+        configured = spec.metadata.get("report_parsers")
+        configured = configured if isinstance(configured, (list, tuple)) else [spec.metadata.get("report_parser")]
+        configured = {str(value).strip() for value in configured if value}
+        for parser in ("node-json", "node-junit"):
+            if parser in configured:
+                root = Path(str(spec.metadata.get("project_root") or spec.cwd or config.repo_root)).resolve()
+                node_report_entry_state[parser] = snapshot_node_report_state(
+                    root, parser, str(spec.metadata.get("test_report") or spec.metadata.get("package_report") or ""))
         started = time.perf_counter()
         started_wall = time.time()
         returncode = 1
@@ -3217,7 +3229,8 @@ def run_specs(
                     command_name=spec.name,
                     output=output,
                     report_path=raw_report_path,
-                    initial_report_state=report_entry_state if report_parser == "maven-surefire" and not returned_project_root else None,
+                    initial_report_state=(report_entry_state if report_parser == "maven-surefire"
+                                          else node_report_entry_state.get(report_parser)) if not returned_project_root else None,
                 )
                 if report_parser in {"gradle-junit", "pytest-junit", "android-instrumentation", "dotnet-trx", "maven-surefire", "node-json", "node-junit"}:
                     tests = dict(collection.metadata)

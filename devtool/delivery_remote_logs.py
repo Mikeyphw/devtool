@@ -120,6 +120,7 @@ def fetch_selected_run_logs(client: GitHubActionsClient, repository: str,
     if (receipt.get('run_id') != rid or receipt.get('repository') != _slug(repository)
             or type(receipt.get('run_attempt')) is not int or receipt['run_attempt'] != attempt):
         raise GitHubActionsError('Native log download receipt lost run identity')
+    verified_remote_run(client, repository, selected)
     return sanitized_archive_lines(Path(str(receipt.get('archive') or '')),
                                    str(receipt.get('sha256') or ''))
 

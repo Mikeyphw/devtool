@@ -398,3 +398,8 @@ Hotfix of RICH-U-C01; no new original overlay identity. Continue existing PR56 f
 ### M6 interactive run navigation — same-PR W4 subordinate repair
 
 `RICH-U-C01-F04-HF05` continues exact HF04 PR #56 head `854126dd622b485dde3dedd7e49d9f096ff6ba23` (GA 46047973864, all 15 observed PR workflows successful, CI24 46048410600 with 24/24 shard jobs and summary successful). Adds real PR check → workflow run → job → step navigation and selected job logs in the existing shared M6 Live observer, with exact identity, explicit read-only GET, back/resize/log paging and stale result revocation. No original milestone or promise is added, retired, or promoted to FULL by this subordinate repair. M6-14/15/16/17/18/26/27/28/29/32/33/35 remain subject to current-source regression and native/hosted/physical acceptance. See the W4 acceptance guide for controls and evidence boundaries.
+
+
+### W4 Textual parity — same-PR subordinate repair
+
+`RICH-U-C01-F04-HF06` continues PR #56 from the exact HF05 published head `8409f9d1b9cc637bcc3c5abaa99e106f7406b5b6`. The explicit Textual GitHub page shares native workflow, exact-attempt job and log operations with Rich and adds a read-only native PR-session view. Preserve native mutation confirmation, selection identity, safe paging, search and compact portrait layout. See the W4 acceptance guide. No original milestone or acceptance verdict is promoted solely by this source change.

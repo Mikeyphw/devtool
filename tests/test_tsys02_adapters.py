@@ -295,3 +295,37 @@ printf '%s\\n' 'Results:' 'Tests run: 99, Failures: 0, Errors: 0, Skipped: 0'
     result = run_specs(config, [spec], verbose=False)[0][0]
     assert result.metadata["test_evidence"] == "report"
     assert result.metadata["tests"]["total"] == 1
+
+
+def test_node_report_invocation_identity_excludes_stale_and_accepts_backdated_current(tmp_path: Path) -> None:
+    import os
+    import shlex
+    reports = {
+        "node-json": '{"testResults":[{"name":"demo.test.js","assertionResults":[{"fullName":"demo fails","status":"failed","duration":5,"failureMessages":["boom"]}]}]}',
+        "node-junit": '<testsuite name="demo"><testcase classname="C" name="fails"><failure message="boom"/></testcase></testsuite>',
+    }
+    for parser, payload in reports.items():
+        root = tmp_path / parser
+        root.mkdir()
+        report = root / "report"
+        config = ProjectConfig(repo_root=root, project_root=str(root), kind="node")
+        metadata = {"runner": "node", "test_framework": "node", "report_parser": parser,
+                    "test_report": str(report), "project_root": str(root)}
+        # An unchanged previous report must not be attributed to this run,
+        # even if its timestamp is in the future relative to process start.
+        report.write_text(payload, encoding="utf-8")
+        future = time.time() + 60
+        os.utime(report, (future, future))
+        noop = _script(root, "noop.sh", "exit 0\n")
+        stale = run_specs(config, [CommandSpec("test", [str(noop)], cwd=str(root), metadata=metadata)], verbose=False)[0][0]
+        assert stale.returncode == 0
+        assert stale.metadata["tests"]["failed"] == 0
+        report.unlink()
+        # A genuine newly generated report is authoritative even if its mtime
+        # lags wall clock, and overrides a successful process exit.
+        write = _script(root, "report.sh", "printf '%s\\n' " + shlex.quote(payload) + " > " + shlex.quote(str(report))
+                        + "\ntouch -t 202001010000 " + shlex.quote(str(report)) + "\nexit 0\n")
+        current = run_specs(config, [CommandSpec("test", [str(write)], cwd=str(root), metadata=metadata)], verbose=False)[0][0]
+        assert current.returncode == 1
+        assert current.failure_kind == "test_failure"
+        assert current.metadata["tests"]["failed"] == 1

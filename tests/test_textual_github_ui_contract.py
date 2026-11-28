@@ -37,8 +37,9 @@ def test_single_shell_runtime_uses_isolated_actions_widget_with_no_implicit_post
     projection_source=inspect.getsource(textual_github_workspace)
     assert 'run_mutation(' not in projection_source + widget_source
     assert '.dispatch(' not in projection_source + widget_source
-    assert '.run_attempt_jobs(' in projection_source
-    assert 'remote_logs(client' in projection_source
+    assert 'run_jobs(client, slug, expected)' in projection_source
+    assert 'fetch_selected_run_logs(client, slug, identity)' in projection_source
+    assert 'job_logs(client, slug, run, job)' in projection_source
     assert 'release_qualified": False' in projection_source
     assert 'canonical safe downloader' in widget_source
 
