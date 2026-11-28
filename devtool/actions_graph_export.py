@@ -1130,7 +1130,9 @@ def run_node(root: Path, *, target: str, workflow: str, devtool_sha: str, graph_
             env['COVERAGE_FILE']=str(Path(temp)/'.coverage')
             original=specs[0]
             tests=replace(original,name=original.name+' [coverage tests]',
-                          argv=[original.argv[0],'-m','coverage','run','-m','pytest',*original.argv[3:]],env=env)
+                          # Scope native coverage to the reviewed checkout, not host/site
+                          # packages imported by pytest plugins or interpreter hooks.
+                          argv=[original.argv[0],'-m','coverage','run','--source',str(root),'-m','pytest',*original.argv[3:]],env=env)
             xml=replace(original,name=original.name+' [coverage report]',
                         argv=[original.argv[0],'-m','coverage','xml','-o','dist/coverage.xml'],env=env)
             results,_=run_specs(cfg,[tests],verbose=True,dry_run=False,continue_on_error=False)

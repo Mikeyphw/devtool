@@ -33879,10 +33879,11 @@
         {
           "choices": [
             "auto",
+            "rich",
             "textual"
           ],
           "dest": "backend",
-          "help": "Textual dashboard backend (auto or textual)",
+          "help": "Inline Rich dashboard (auto/rich) or explicit Textual",
           "hidden": false,
           "id": "cli.option.control-center.backend",
           "nargs": null,
@@ -33975,7 +33976,7 @@
         {
           "choices": [],
           "dest": "require_textual",
-          "help": "Fail instead of falling back when Textual cannot be launched",
+          "help": "Require explicit Textual; fail if unavailable",
           "hidden": false,
           "id": "cli.option.tui.require_textual",
           "nargs": 0,
@@ -42957,7 +42958,7 @@
       "summary": "M7 credential health and guided recovery"
     }
   ],
-  "digest": "daa4d37a433e1b7d34641a4fae6f9ff490f6c858e4417f28ae07fdb5fd53beda",
+  "digest": "0ee0af79ad40c5c3a9cdfb924aa9eff82cb7bb5e3ec64874d915df903574f3c0",
   "kind": "devtool.machine-help",
   "parser_parity": {
     "covered": [
@@ -43541,7 +43542,7 @@
     "registry_command_count": 438
   },
   "performance_budget_ms": 5000,
-  "registry_digest": "0d16086a3fd3c0043a9f91a313732d7562a9554ab650b63bbf95fbe1cc39ec9c",
+  "registry_digest": "ac4738f5a80f6be8595b10086fef8c22cd596061e58751c74f9380e5d6781f6b",
   "registry_schema_version": 1,
   "schema_version": 1
 }

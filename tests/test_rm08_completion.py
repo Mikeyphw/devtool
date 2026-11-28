@@ -202,7 +202,10 @@ def test_automatic_coverage_is_in_native_job_and_uploaded_with_handoff(tmp_path,
     lock=root/'requirements.txt'
     lock.write_text(lock.read_text()+'coverage==7.6.1 --hash=sha256:'+'e'*64+'\n')
     project=root/'tests';project.mkdir()
-    (project/'test_sample.py').write_text('def test_covered():\n    assert (1 + 1)==2\n')
+    outside=tmp_path/'external';outside.mkdir()
+    (outside/'hf01_external_probe.py').write_text('def exercised():\n    return 2\n')
+    (project/'test_sample.py').write_text('from hf01_external_probe import exercised\n'
+        'def test_covered():\n    assert exercised()==2\n')
     cfg=root/'.devtool.toml'
     cfg.write_text(cfg.read_text().replace('command = ["python3", "-m", "unittest"]',
         'command = ["python3", "-m", "pytest", "-q", "tests/test_sample.py"]\n'
@@ -217,13 +220,18 @@ def test_automatic_coverage_is_in_native_job_and_uploaded_with_handoff(tmp_path,
     monkeypatch.setenv('GITHUB_SHA',git(root,'rev-parse','HEAD'))
     monkeypatch.setenv('GITHUB_RUN_ID','42061')
     monkeypatch.setenv('GITHUB_RUN_ATTEMPT','1')
-    monkeypatch.setenv('PYTHONPATH',str(root))
+    monkeypatch.setenv('PYTHONPATH',os.pathsep.join((str(root),str(outside))))
     result=run_node(root,target='app',workflow='ci',devtool_sha=PIN,
        graph_sha=graph['graph_sha256'],job_id=graph['jobs'][0]['id'],
        inputs=tmp_path/'none',outputs=tmp_path/'outputs')
     assert result['status']=='LOCAL_JOB_SUCCEEDED'
     assert result['coverage'][0]['shards']
     assert (root/'dist/coverage.xml').is_file()
+    import xml.etree.ElementTree as ET
+    names={item.get('filename') for item in ET.parse(root/'dist/coverage.xml').findall('.//class')}
+    assert 'tests/test_sample.py' in names
+    assert all(name and not Path(name).is_absolute() and '..' not in Path(name).parts for name in names)
+    assert not any('hf01_external_probe' in name for name in names)
     assert (tmp_path/'outputs'/graph['jobs'][0]['id']/'payload/dist/coverage.xml').is_file()
     assert not (root/'dist/.coverage').exists()
     with pytest.raises(ProviderError,match='exists before'):

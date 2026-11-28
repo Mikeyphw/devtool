@@ -15,6 +15,7 @@ import zipfile
 
 from .github_actions import GitHubActionsClient, GitHubActionsError, _slug
 from .logstore import redact_sensitive_text
+from .display_graphemes import cluster_prefix
 from .actions_runs import remote_logs
 
 MAX_UNCOMPRESSED = 24 * 1024 * 1024
@@ -28,8 +29,8 @@ _ANSI = re.compile(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))')
 def _safe_text(value: str) -> str:
     """Visible, secret-redacted bounded text; not an untrusted Rich markup."""
     redacted = redact_sensitive_text(_ANSI.sub('', value))
-    return ''.join(' ' if (ord(c) < 32 or ord(c) == 127) else c
-                   for c in redacted)[:MAX_LINE]
+    return cluster_prefix(''.join(' ' if (ord(c) < 32 or ord(c) == 127) else c
+                                  for c in redacted), MAX_LINE)
 
 
 def verified_remote_run(client: GitHubActionsClient, slug: str,
@@ -112,8 +113,48 @@ def fetch_selected_run_logs(client: GitHubActionsClient, repository: str,
                             selected: Mapping[str, Any]) -> tuple[str,...]:
     """Fetch once, only for user-selected source-attested run and current attempt."""
     rid = verified_remote_run(client,repository,selected)
-    receipt = remote_logs(client,_slug(repository),rid)
-    if receipt.get('run_id') != rid or receipt.get('repository') != _slug(repository):
+    attempt = selected.get('attempt', selected.get('run_attempt'))
+    # Exact-attempt endpoint prevents a rerun between GET and archive lookup
+    # from substituting another attempt. No fallback to latest-run logs.
+    receipt = remote_logs(client,_slug(repository),rid,attempt=attempt)
+    if (receipt.get('run_id') != rid or receipt.get('repository') != _slug(repository)
+            or type(receipt.get('run_attempt')) is not int or receipt['run_attempt'] != attempt):
         raise GitHubActionsError('Native log download receipt lost run identity')
+    verified_remote_run(client, repository, selected)
     return sanitized_archive_lines(Path(str(receipt.get('archive') or '')),
                                    str(receipt.get('sha256') or ''))
+
+
+def fetch_selected_job_logs(client: GitHubActionsClient, repository: str,
+                            run: Mapping[str, Any], job: Mapping[str, Any]) -> tuple[str, ...]:
+    """Verify membership before and after the exact job-log GET."""
+    from .workspace_actions import run_jobs
+    from .actions_runs import remote_job_logs
+    repository = _slug(repository)
+    rid = verified_remote_run(client, repository, run)
+    attempt = run.get('run_attempt', run.get('attempt'))
+    job_id = job.get('id')
+    if type(job_id) is not int or job_id <= 0:
+        raise GitHubActionsError('Invalid selected job identity')
+    def verify_membership():
+        rows = run_jobs(client, repository, run)['items']
+        matches = [x for x in rows if x['id'] == job_id]
+        if len(matches) != 1 or any(matches[0].get(k) != job.get(k) for k in ('id','run_id','run_attempt')):
+            raise GitHubActionsError('Selected job is not a member of the verified run attempt')
+    verify_membership()
+    receipt = remote_job_logs(client, repository, rid, attempt, job_id)
+    if any(receipt.get(k) != v for k, v in (('repository',repository),('run_id',rid),('run_attempt',attempt),('job_id',job_id))):
+        raise GitHubActionsError('Job log receipt identity mismatch')
+    verify_membership()
+    path = Path(receipt['path'])
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 32*1024*1024:
+        raise GitHubActionsError('Invalid native job log')
+    raw = path.read_bytes()
+    if len(raw) != receipt.get('size') or hashlib.sha256(raw).hexdigest() != receipt.get('sha256'):
+        raise GitHubActionsError('Job log digest or size mismatch')
+    full = redact_sensitive_text(_ANSI.sub('', raw.decode('utf-8', errors='replace')))
+    lines = full.splitlines()
+    if len(lines) > MAX_LINES:
+        raise GitHubActionsError('Job log exceeds bounded line count')
+    # Keep complete redacted lines for paging; unlike an inline preview, do not truncate.
+    return tuple(''.join(' ' if ord(c)<32 or 127<=ord(c)<160 or ord(c) in (0x202a,0x202b,0x202c,0x202d,0x202e,0x2066,0x2067,0x2068,0x2069) else c for c in line) for line in lines)

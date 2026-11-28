@@ -36,54 +36,41 @@ def test_pres_g3_campaign_position_and_exec_prerequisite_are_current() -> None:
 
 
 def test_pres_g3_only_allows_explicit_inline_rich_live() -> None:
-    # PRES-G3 remains a closed allowlist. M6's explicitly enabled, read-only
-    # native receipt inspector was accepted on a real Termux/tmux PTY before
-    # adding it here. Never permit arbitrary Rich Live owners.
-    allowed = {
-        "devtool/delivery_rich.py",
-        "devtool/operator_rich.py",
-        "devtool/operator_workspace.py",
-        "devtool/m6_live.py",
-        "devtool/m6_operation_view.py",
-    }
-    found = set()
+    # The old five permitted consumers are now projections of one exclusive host.
+    import ast
+    constructors = []
     for path in (ROOT / "devtool").rglob("*.py"):
-        if path.name == "pres_g3_gate.py":
-            continue
-        source = path.read_text(encoding="utf-8")
-        if "rich.live" in source.lower() or "Live(" in source:
-            relative = path.relative_to(ROOT).as_posix()
-            assert relative in allowed, f"Unexpected Rich Live owner: {relative}"
-            assert "screen=False" in source, f"Non-inline Rich Live: {relative}"
-            found.add(relative)
-    assert found == allowed
+        tree=ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node,ast.ImportFrom) and node.module=="rich.live":
+                constructors.append(path.relative_to(ROOT).as_posix())
+    assert constructors == ["devtool/inline_live.py"]
+    host=(ROOT/"devtool/inline_live.py").read_text(encoding="utf-8")
+    for requirement in ("screen=False", "transient=False", "auto_refresh=False", "redirect_stdout=False", "redirect_stderr=False"):
+        assert requirement in host
+    assert "_OWNER.acquire(blocking=False)" in host
+    for name in ("delivery_rich", "operator_rich", "operator_workspace", "m6_live", "m6_operation_view"):
+        source=(ROOT/"devtool"/(name+".py")).read_text(encoding="utf-8")
+        assert "InlineLive(" in source and "from rich.live import" not in source
     hud = (ROOT / "devtool" / "hud.py").read_text(encoding="utf-8")
     assert "build_textual_terminal_hud_app" in hud
     assert "Static rendering is deliberately non-live" in hud
 
 
 def test_m6_saved_inspector_keeps_explicit_inline_terminal_boundary() -> None:
-    # Adding one owner is not a global exemption from the PRES-G3 seal.
     source = (ROOT / "devtool" / "m6_operation_view.py").read_text(encoding="utf-8")
     assert "def browse_inspection(" in source
     assert "if not inspect_enabled(args) or os.name != 'posix':" in source
-    assert "with Live(frame," in source
-    for requirement in (
-        "screen=False", "transient=False", "auto_refresh=False",
-        "redirect_stdout=False", "redirect_stderr=False",
-    ):
-        assert requirement in source, f"M6 inline terminal contract lost: {requirement}"
+    assert "with PosixInput(fd) as keys, InlineLive(frame," in source
+    assert "tty.setcbreak" not in source
 
 
 def test_m6_overlay_progress_owns_only_bounded_inline_live() -> None:
     source = (ROOT / "devtool" / "m6_live.py").read_text(encoding="utf-8")
     assert "class OverlayLiveProjection:" in source
     assert "if not self.enabled or self._broken:return" in source
-    for invariant in (
-        "screen=False", "transient=False", "auto_refresh=False",
-        "redirect_stdout=False,redirect_stderr=False",
-    ):
-        assert invariant in source, f"M6 overlay terminal contract lost: {invariant}"
+    assert "InlineLive(self._render(), console=self.console)" in source
+    assert "return BoundedLiveFrame(" in source
 
 
 def test_pres_g3_terminal_and_studio_aliases_remain_compatible() -> None:

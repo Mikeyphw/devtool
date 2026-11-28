@@ -107,36 +107,32 @@ class RichMonitorTests(unittest.TestCase):
 
     def test_40_and_120_column_resizes_adapt_console(self):
         from unittest.mock import patch
+        from devtool.inline_live import InlineLive
         m=NativeRichMonitor(enabled=True,console=Console(file=io.StringIO(),width=80))
-        class DummyLive:
-            def update(self,*a,**kw):pass
-        m._live=DummyLive()
-        # Simulate a terminal independent of pytest's stdin capture.
-        with patch('devtool.delivery_rich.sys.stdin') as terminal_input:
+        m._live=InlineLive(m.render(),console=m.console)
+        with patch.object(m._live,'update'), patch('devtool.delivery_rich.sys.stdin') as terminal_input:
             terminal_input.fileno.return_value=0
-            for columns,rows in ((40,24),(120,40)):
+            for columns,rows in ((28,18),(40,24),(120,40),(220,50)):
                 with (self.subTest(columns=columns),
-                      patch('devtool.delivery_rich.os.get_terminal_size',return_value=os.terminal_size((columns,rows))),
-                      patch('devtool.delivery_rich.shutil.get_terminal_size',return_value=os.terminal_size((106,24)))):
+                      patch('devtool.inline_live.os.get_terminal_size',return_value=os.terminal_size((columns,rows)))):
                     m.refresh()
-                    self.assertEqual(m.console.width,columns)
+                    self.assertEqual((m.console.width,m.console.height),(columns,rows))
 
     def test_resize_fallback_when_stdin_has_no_terminal(self):
         from unittest.mock import patch
-        m=NativeRichMonitor(enabled=True,console=Console(file=io.StringIO(),width=80))
-        class DummyLive:
-            def update(self,*a,**kw):pass
-        m._live=DummyLive()
-        # Ensure the captured-stdin path uses the fallback and clamps widths.
-        with patch('devtool.delivery_rich.sys.stdin') as captured_input:
+        from devtool.inline_live import InlineLive
+        m=NativeRichMonitor(enabled=True,console=Console(file=io.StringIO(),width=80,height=24))
+        m._live=InlineLive(m.render(),console=m.console)
+        # A non-PTY fixture has its own explicit console geometry, not the
+        # environment of an unrelated terminal. Preserve even narrow widths.
+        with patch.object(m._live,'update'), patch('devtool.delivery_rich.sys.stdin') as captured_input:
             captured_input.fileno.side_effect=OSError('no terminal')
-            for columns,expected in ((20,40),(52,52),(106,106),(220,180)):
-                with (self.subTest(columns=columns),
-                      patch('devtool.delivery_rich.os.get_terminal_size',return_value=os.terminal_size((80,24))),
-                      patch('devtool.delivery_rich.shutil.get_terminal_size',return_value=os.terminal_size((columns,24))) as fallback):
+            for columns in (20,28,52,106,220):
+                with self.subTest(columns=columns):
+                    m.console.width=columns
                     m.refresh()
-                    self.assertEqual(m.console.width,expected)
-                    self.assertTrue(fallback.called)
+                    self.assertEqual(m.console.width,columns)
+                    self.assertTrue(m.enabled)
 
     def test_newly_added_required_ci_policy_is_checked_after_native_commit(self):
         # Native source tests run against the real staged launcher; no target

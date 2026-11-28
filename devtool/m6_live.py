@@ -5,6 +5,7 @@ or guessed progress lives here. Rich Live is always inline and terminal-safe.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -15,10 +16,11 @@ from typing import Any
 
 from rich.console import Console, Group, ConsoleOptions, RenderResult
 from rich.segment import Segment
-from rich.live import Live
+from .inline_live import InlineLive
 from rich.panel import Panel
-from rich.table import Table
 from rich.text import Text
+from rich.cells import cell_len
+from .display_graphemes import cluster_prefix, display_clusters
 
 # Provider output, filenames, paths and journal fields are ALL untrusted text.
 _ANSI = re.compile(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-_])')
@@ -46,11 +48,12 @@ def safe(value: object, *, key: str = '', limit: int = 300) -> str:
         return 'not recorded'
     if isinstance(value, (dict, list, tuple, set)):
         return '[structured value omitted]'
-    text = _ANSI.sub('', str(value))
-    text = ''.join(' ' if ord(ch) < 32 or 127 <= ord(ch) < 160 else ch for ch in text)
+    from .logstore import redact_sensitive_text
+    text = redact_sensitive_text(_ANSI.sub('', str(value)))
+    text = ''.join(' ' if ord(ch) < 32 or 127 <= ord(ch) < 160 or ord(ch) in (0x202a,0x202b,0x202c,0x202d,0x202e,0x2066,0x2067,0x2068,0x2069) else ch for ch in text)
     for expression in _SECRETS:
         text = expression.sub('[redacted]', text)
-    return text[:limit] + ('…' if len(text) > limit else '')
+    return cluster_prefix(text, limit) + ('…' if len(text) > limit else '')
 
 
 def _facts(source: Mapping[str, Any], *keys: str) -> object:
@@ -63,6 +66,8 @@ def _facts(source: Mapping[str, Any], *keys: str) -> object:
 
 def _status(value: object) -> tuple[str, str]:
     state = str(value or 'not recorded').lower().replace(' ', '_')
+    if state == 'apply_returned_commit_session_unverified':
+        return 'APPLY RETURNED / DELIVERY UNVERIFIED', 'yellow'
     if state in _FAILURE or state.startswith('blocked'):
         return 'FAIL / ' + safe(value, limit=35).upper(), 'bold red'
     if state in _SUCCESS:
@@ -134,12 +139,12 @@ class BoundedLiveFrame:
         self.reserve_rows = reserve_rows
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        limit = max(5, options.size.height - self.reserve_rows)
+        limit = max(1, options.size.height - self.reserve_rows)
         rendered = console.render_lines(self.renderable, options, pad=False)
         if len(rendered) > limit:
             # Focus pages expose the retained rows without a separate provider
             # request. Do not claim that hidden lines are absent.
-            hint = Text('… view clipped · 1–5 inspect sections', style='yellow',
+            hint = Text('… view clipped · native data retained', style='yellow',
                         no_wrap=True, overflow='ellipsis')
             footer = console.render_lines(hint, options, pad=False)
             rendered = rendered[:limit - 1] + footer[:1]
@@ -169,9 +174,36 @@ def _as_rows(value: Any) -> list[Mapping[str, Any]]:
     return [v for v in value if isinstance(v, Mapping)]
 
 
-def log_page_size(width: int) -> int:
+def log_page_size(width: int, height: int | None = None) -> int:
     """Keep each paged log line reachable on portrait terminals."""
-    return 4 if width < 60 else 8
+    count = 4 if width < 60 else 8
+    return count if height is None else min(count,max(1,height-18))
+
+
+@__import__("functools").lru_cache(maxsize=1)
+def log_display_rows(lines: tuple[str,...], width: int) -> list[tuple[int,Text]]:
+    """Fold sanitized text into individually reachable display rows.
+
+    No provider calls; each fragment preserves its original line number.
+    Existing native log sanitizer caps input length and number of lines.
+    """
+    rows=[]; budget=max(1,width-6)
+    for number,line in enumerate(lines,1):
+        fragments=[]; fragment=''; used=0
+        for cluster in display_clusters(safe(line,limit=280)):
+            cells=cell_len(cluster)
+            if cells>budget:
+                # Pathological cluster cannot fit. Never draw half of it;
+                # the complete native archive remains available.
+                cluster='…'; cells=1
+            if used+cells>budget and fragment:
+                fragments.append(fragment); fragment=''; used=0
+            fragment+=cluster; used+=cells
+        fragments.append(fragment)
+        for fragment in fragments:
+            row=Text('│ ',style='dim');row.append(fragment)
+            row.no_wrap=True;row.overflow='ellipsis';rows.append((number,row))
+    return rows
 
 
 def _progress_evidence(item: Mapping[str,Any], width: int) -> Text | None:
@@ -192,11 +224,11 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
                     logs: bool = False, log_lines: tuple[str,...] = (),
                     log_page: int = 0, log_error: str = '',
                     icons: str | None = None, focus: str = 'overview',
-                    focus_page: int = 0) -> Group:
+                    focus_page: int = 0, height: int | None = None) -> Group:
     """One projection; no I/O, source inference or mutation side effects."""
     if not isinstance(source, Mapping):
         raise TypeError('M6 native view requires existing structured evidence')
-    width = max(40, min(180, int(width)))
+    width = max(1, int(width))
     mode = icons or icon_mode()
     if mode not in ('ascii','unicode','nerd'):
         raise ValueError('Unsupported existing icon preference')
@@ -212,6 +244,16 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
     credential = source.get('credential_health') if isinstance(source.get('credential_health'), Mapping) else {}
     state = (_facts(remote, 'conclusion','status') if kind == 'run' else
              _facts(source, 'state','completion_status','status'))
+    if kind == 'overlay' and str(state or '').casefold() in _SUCCESS:
+        # Apply return zero is not a committed/session-qualified delivery.
+        commit = _facts(native, 'commit') or _facts(source, 'commit')
+        session = _facts(source, 'session_id', 'native_delivery_session_id')
+        if not (re.fullmatch(r'[0-9a-f]{40}', str(commit or '')) and
+                re.fullmatch(r'[0-9a-f]{32}', str(session or '')) and
+                str(native.get('state') or source.get('native_apply_state') or '') == 'COMMITTED'):
+            state = 'APPLY_RETURNED_COMMIT_SESSION_UNVERIFIED'
+    if kind == 'ci' and state == 'REQUIRED_CHECKS_PASSED' and source.get('checks_qualified') is not True:
+        state = 'CHECKS_EVIDENCE_PENDING'
     if kind == 'ci' and state == 'REQUIRED_CHECKS_PASSED':
         # This is the *native* qualified state, not a guess from green jobs.
         status_msg = 'Native required checks passed; release NOT qualified'
@@ -255,8 +297,10 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
     elif kind == 'run':
         done = sum(x.get('status') == 'completed' for x in rows)
         stages.append(_row(f'Jobs {done}/{len(rows)}' if rows else 'No observed jobs'))
-    visible_rows=(rows[:80] if focus=='stages' else _limited(rows,width=width))
-    for i,item in enumerate(visible_rows):
+    cap=len(_limited(rows,width=width))
+    start=0 if focus=='stages' else max(0,min(selected,len(rows)-1)-max(0,cap-1))
+    visible_rows=(rows[:80] if focus=='stages' else rows[start:start+cap])
+    for i,item in enumerate(visible_rows,start=start):
         label = _facts(item,'name','label','phase','kind')
         state_item = _facts(item,'conclusion','state','status','result')
         indicator,style=_status(state_item)
@@ -275,7 +319,7 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
             identifier = _facts(item,'id','run_id','phase_id','attempt')
             if identifier is not None:stages.append(_row('    ID',identifier))
             if kind=='run':
-                for step in _limited(_as_rows(item.get('steps')),width=width)[:3]:
+                for step in (_as_rows(item.get('steps'))[:100] if focus=='stages' else _limited(_as_rows(item.get('steps')),width=width)[:3]):
                     flag,stepstyle = _status(_facts(step,'conclusion','status'))
                     stages.append(_row('    '+safe(step.get('name')),flag,style=stepstyle))
             if kind=='ci':
@@ -298,6 +342,7 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
         detail_state = _facts(row, 'state', 'status', 'conclusion')
         if detail_state is not None:
             line = str(line or 'event') + ' · ' + safe(detail_state)
+        if row.get('time_origin')=='observed-callback':line='observed: '+str(line or 'event')
         events.append(_row(safe(stamp) if stamp else 'time unrecorded',safe(line)))
     if source.get('event_stream_state') == 'UNVERIFIED':
         events.insert(0, _row('Native journal readback unavailable',style='yellow'))
@@ -316,15 +361,15 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
         if log_error:
             output.append(_row('Log GET refused',log_error,style='yellow'))
         elif log_lines:
-            size = log_page_size(width)
-            page_count = (len(log_lines) + size - 1) // size
+            size = log_page_size(width,height)
+            fragments = log_display_rows(log_lines,width)
+            page_count = (len(fragments) + size - 1) // size
             current = min(max(0, log_page), page_count - 1)
             offset = current * size
-            end = min(len(log_lines), offset + size)
+            end = min(len(fragments), offset + size)
             output.append(_row(f'Log page {current+1}/{page_count}',
-                               f'Lines {offset+1}-{end}/{len(log_lines)}'))
-            for line in log_lines[offset:end]:
-                output.append(_row('│',line))
+                               f'Lines {fragments[offset][0]}-{fragments[end-1][0]}/{len(log_lines)}'))
+            output.extend(row for _,row in fragments[offset:end])
         else:
             output.append(_row('Logs not fetched; press l on a selected verified run'))
     else:
@@ -368,6 +413,8 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
     hints = ('j/k navigate · Enter detail · v verbose · l logs · [ prev  ] next · r refresh · q detach'
              if kind!='overlay' else 'Native lifecycle events only · original logs preserved')
 
+    if kind=='ci' and source.get('m6_drilldown_available') is True:
+        hints='j/k select · Enter open run · l run logs · b back · r refresh · q detach'
     output_block = _segment('OUTPUT','logs',mode,output)
     blocks = [title,
               _segment('IDENTITY','repo',mode,
@@ -377,7 +424,7 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
               _segment('EVENTS','events',mode,events),
               output_block,
               _segment('EVIDENCE','evidence',mode,proof[:5 if width<60 else len(proof)]),
-              _segment(hints,'keys',mode,[]) if verbose or width>=60 else _row('j/k · Enter · l · v · r · q')]
+              _segment(hints,'keys',mode,[]) if verbose or width>=60 else _row('j/k · Enter open run · l · r · q' if kind=='ci' and source.get('m6_drilldown_available') is True else 'j/k · Enter · l · v · r · q')]
     feedback_messages = {
         'REFRESH_REQUESTED': 'Refresh requested · native bounded interval only',
         'REFRESH_CONSUMED': 'Refresh shortcut consumed · awaiting native observation',
@@ -415,30 +462,7 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
         blocks.insert(2 + bool(feedback) + 2 * bool(verbose),
                       blocks.pop(output_index))
 
-    if width >= 100:
-        # Full-width, true two-column layout on roomy Termux PTYs. A single
-        # panel uses the entire viewport; log inspection is not duplicated.
-        # Pure Rich composition only: no provider calls or new facts.
-        left = Group(
-            _segment('IDENTITY','repo',mode,identity),
-            _segment('STAGES','stage',mode,stages),
-            _segment('EVENTS','events',mode,events),
-        )
-        right_parts = [output_block,
-                       _segment('EVIDENCE','evidence',mode,proof)]
-        if verbose and kind in ('run','ci'):
-            right_parts.append(_segment('VERBOSE DETAILS · VERBOSE ON','evidence',mode,extra))
-        grid = Table.grid(expand=True, padding=(0,2))
-        grid.add_column(ratio=1, overflow='fold')
-        grid.add_column(ratio=1, overflow='fold')
-        grid.add_row(left,Group(*right_parts))
-        blocks = [title]
-        if feedback:
-            blocks.append(_row('UI',feedback,style='cyan'))
-        # Verbose details belong in the evidence column, not in the title area.
-        blocks.extend((grid, _row(hints)))
-
-    if logs and width < 100 and kind in ('ci','run'):
+    if logs and kind in ('ci','run'):
         # Log-focus mode prevents short portrait PTYs from clipping requested
         # evidence beneath stages, events and expanded verbose metadata.
         # 'l' restores the complete vertical view, without changing source.
@@ -463,9 +487,19 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
     if focus != 'overview':
         entries = {'identity':identity, 'stages':stages, 'events':events,
                    'output':output, 'evidence':proof}[focus]
-        if focus in ('stages','events','evidence'):
-            # Bounded pager exposes evidence omitted from the overview.
+        if focus != 'output':
+            # Preserve exact identities and long native rows in focus pages.
+            if height is not None:
+                folded = []
+                wrapping_console = Console(width=width,color_system=None)
+                for row in entries:
+                    if isinstance(row,Text):
+                        folded.extend(row.wrap(wrapping_console,max(1,width-4),overflow='fold',no_wrap=False))
+                    else:folded.append(row)
+                entries = folded
+            # Height-aware paging is based on the same native rows at every width.
             page_size = 10 if width < 100 else 18
+            if height is not None:page_size=min(page_size,max(1,height-13))
             page_count = max(1,(len(entries)+page_size-1)//page_size)
             current = min(max(0,int(focus_page)),page_count-1)
             visible = entries[current*page_size:(current+1)*page_size]
@@ -473,18 +507,7 @@ def build_live_view(kind: str, source: Mapping[str, Any], *, width: int = 80,
         else:
             visible = entries
             page_info = _row('Details',f'{len(entries)} native rows')
-        if focus == 'identity' or focus == 'evidence':
-            if width >= 100 and len(visible)>1:
-                columns=Table.grid(expand=True,padding=(0,2))
-                columns.add_column(ratio=1,overflow='fold')
-                columns.add_column(ratio=1,overflow='fold')
-                for index in range(0,len(visible),2):
-                    columns.add_row(visible[index], visible[index+1] if index+1<len(visible) else '')
-                content=[columns]
-            else:
-                content=list(visible)
-        else:
-            content=list(visible)
+        content=list(visible)
         # The details drawer is anchored BELOW the selected section; never
         # flood the top of a portrait screen with verbose metadata.
         if verbose and kind in ('ci','run') and focus in ('stages','evidence'):
@@ -522,21 +545,19 @@ class OverlayLiveProjection:
         self.data.setdefault('completion_status', 'in_progress')
         self.stages: deque[dict[str,Any]] = deque(maxlen=60)
         self.events: deque[dict[str,Any]] = deque(maxlen=30)
-        self._live: Live | None = None
+        self._live: InlineLive | None = None
         self._broken = False
 
     def _render(self) -> BoundedLiveFrame:
         self.data['stages'] = list(self.stages)
         self.data['events'] = list(self.events)
-        return BoundedLiveFrame(build_live_view('overlay',self.data,width=self.console.width))
+        return BoundedLiveFrame(build_live_view('overlay',self.data,width=self.console.width,height=self.console.height))
 
     def start(self) -> None:
         if not self.enabled or self._broken:return
         try:
-            self._live = Live(self._render(),console=self.console,screen=False,
-                              transient=False,auto_refresh=False,
-                              redirect_stdout=False,redirect_stderr=False,
-                              vertical_overflow='ellipsis')
+            self._live = InlineLive(self._render(), console=self.console)
+            if self._live.resize():self._live.frame=self._render()
             self._live.start()
         except Exception as exc:
             self._warn(exc)
@@ -551,7 +572,8 @@ class OverlayLiveProjection:
         meta=getattr(result,'metadata',None)
         moment=(meta.get('timestamp') or meta.get('at')) if isinstance(meta,Mapping) else None
         self.events.append({'name':item['name'], 'status':state,
-                            **({'at':moment} if moment is not None else {})})
+                            **({'at':moment} if moment is not None else {'observed_at':datetime.now(timezone.utc).isoformat()}),
+                            'time_origin':'native' if moment is not None else 'observed-callback'})
         self._refresh()
 
     def finish(self, result: Any) -> None:
@@ -561,13 +583,23 @@ class OverlayLiveProjection:
                                           else 'skipped' if getattr(result,'skipped',False)
                                           else 'failure')
         self.events.append({'name':safe(getattr(result,'name','native operation')),
-                            'status':self.data['completion_status']})
+                            'status':self.data['completion_status'],
+                            'observed_at':datetime.now(timezone.utc).isoformat(),'time_origin':'observed-callback'})
         metadata = getattr(result,'metadata',None)
         if isinstance(metadata,Mapping):
             if metadata.get('transaction_id') is not None:
                 self.data['transaction_id'] = metadata['transaction_id']
             if metadata.get('native_delivery_session_id') is not None:
                 self.data['session_id'] = metadata['native_delivery_session_id']
+            for key in ('native_apply_state', 'commit'):
+                if metadata.get(key) is not None:
+                    self.data[key] = metadata[key]
+        if self.data['completion_status'] == 'success' and not (
+                re.fullmatch(r'[0-9a-f]{40}',str(self.data.get('commit') or '')) and
+                re.fullmatch(r'[0-9a-f]{32}',str(self.data.get('session_id') or '')) and
+                self.data.get('native_apply_state')=='COMMITTED'):
+            self.data['completion_status'] = 'APPLY_RETURNED_COMMIT_SESSION_UNVERIFIED'
+            self.events[-1]['status'] = self.data['completion_status']
         self._refresh()
 
     def _refresh(self) -> None:
@@ -575,12 +607,7 @@ class OverlayLiveProjection:
         try:
             # A native overlay may continue through a Termux zoom/resize.
             # Read the PTY directly, not potentially stale COLUMNS/LINES.
-            try:
-                geometry=os.get_terminal_size(sys.stdout.fileno())
-                self.console.width=max(40,min(180,geometry.columns))
-                self.console.height=max(8,min(120,geometry.lines))
-            except (OSError,AttributeError,ValueError):
-                pass
+            self._live.resize()
             self._live.update(self._render(),refresh=True)
         except Exception as exc:
             self._warn(exc)
@@ -602,4 +629,4 @@ class OverlayLiveProjection:
                       '; native execution/result unaffected',file=sys.stderr,flush=True)
 
 
-__all__ = ['safe','icon_mode','log_page_size','shared_panel','build_live_view','BoundedLiveFrame','OverlayLiveProjection']
+__all__ = ['safe','icon_mode','log_page_size','log_display_rows','shared_panel','build_live_view','BoundedLiveFrame','OverlayLiveProjection']

@@ -13,7 +13,9 @@ parallel history stores.
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
+from datetime import datetime
 import hashlib
+import math
 import json
 import os
 import time
@@ -21,6 +23,32 @@ import time
 _ATTACHMENT_STATES = {"created", "pinned", "tombstoned"}
 _PRIVACY_MODES = {"private", "metadata", "public"}
 _STREAM_KINDS = {"stdout", "stderr", "event", "snapshot"}
+
+
+def _catalog_timestamp(descriptor: Mapping[str, Any]) -> float | None:
+    """Read old epoch and timezone-aware ISO timestamps without changing receipts."""
+    for key in ("created_at", "started_at"):
+        value = descriptor.get(key)
+        if isinstance(value, bool) or value is None:
+            continue
+        try:
+            if isinstance(value, str):
+                try:
+                    result = float(value)
+                except ValueError:
+                    moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                    if moment.tzinfo is None:
+                        continue
+                    result = moment.timestamp()
+            elif isinstance(value, (int, float)):
+                result = float(value)
+            else:
+                continue
+            if math.isfinite(result):
+                return result
+        except (ValueError, OverflowError, OSError):
+            continue
+    return None
 
 
 def _stable_json(value: Any) -> str:
@@ -576,9 +604,12 @@ class RunCatalog:
 
     def query(self, query: RunQuery) -> list[Mapping[str, Any]]:
         results: list[Mapping[str, Any]] = []
+        def sort_key(item):
+            timestamp = _catalog_timestamp(item[1])
+            return (timestamp if timestamp is not None else float("-inf"), item[0])
         ordered = sorted(
             self.runs.items(),
-            key=lambda item: (float(item[1].get("created_at") or item[1].get("started_at") or 0.0), item[0]),
+            key=sort_key,
             reverse=True,
         )
         for run_id, descriptor in ordered:
@@ -594,10 +625,10 @@ class RunCatalog:
             name = str(descriptor.get("name") or descriptor.get("label") or descriptor.get("command_id") or run_id)
             if query.name_contains and query.name_contains.lower() not in name.lower():
                 continue
-            timestamp = float(descriptor.get("created_at") or descriptor.get("started_at") or 0.0)
-            if query.since is not None and timestamp < query.since:
+            timestamp = _catalog_timestamp(descriptor)
+            if query.since is not None and (timestamp is None or timestamp < query.since):
                 continue
-            if query.until is not None and timestamp > query.until:
+            if query.until is not None and (timestamp is None or timestamp > query.until):
                 continue
             attachments = [a for a in self.attachments.values() if a.run_id == run_id]
             if query.attachment_kind:

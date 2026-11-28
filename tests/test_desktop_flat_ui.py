@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -143,7 +142,6 @@ def test_force_cancel_requires_verified_process_identity(monkeypatch) -> None:
 
 def test_hud_graceful_cancel_uses_ipc_ack(tmp_path: Path) -> None:
     import json
-    import os
     import socket
     import threading
 
@@ -151,27 +149,30 @@ def test_hud_graceful_cancel_uses_ipc_ack(tmp_path: Path) -> None:
 
     # AF_UNIX paths are commonly capped around 108 bytes. Devtool validates
     # overlays from deep transaction directories, so keep this fixture short.
-    socket_path = Path(os.environ.get("TMPDIR") or tempfile.gettempdir()) / f"dt-hud-cancel-{os.getpid()}.sock"
-    socket_path.unlink(missing_ok=True)
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(str(socket_path))
-    server.listen(1)
-    received: dict[str, object] = {}
+    from tests._compat import short_private_ipc_socket_dir
 
-    def serve() -> None:
-        connection, _ = server.accept()
-        with connection:
-            line = connection.makefile("rb").readline()
-            received.update(json.loads(line.decode("utf-8")))
-            connection.sendall(b'{"type":"cancel_ack","run_id":"run-7","accepted":true}\n')
-        server.close()
+    with short_private_ipc_socket_dir() as socket_dir:
+        socket_path = Path(socket_dir) / "ipc.sock"
         socket_path.unlink(missing_ok=True)
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(socket_path))
+        server.listen(1)
+        received: dict[str, object] = {}
 
-    thread = threading.Thread(target=serve, daemon=True)
-    thread.start()
-    accepted, message = _request_ipc_cancel("run-7", socket_path=socket_path)
-    thread.join(timeout=2)
+        def serve() -> None:
+            connection, _ = server.accept()
+            with connection:
+                line = connection.makefile("rb").readline()
+                received.update(json.loads(line.decode("utf-8")))
+                connection.sendall(b'{"type":"cancel_ack","run_id":"run-7","accepted":true}\n')
+            server.close()
+            socket_path.unlink(missing_ok=True)
 
-    assert accepted is True
-    assert received == {"type": "cancel", "run_id": "run-7", "reason": "Desktop HUD request"}
-    assert "run-7" in message
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        accepted, message = _request_ipc_cancel("run-7", socket_path=socket_path)
+        thread.join(timeout=2)
+
+        assert accepted is True
+        assert received == {"type": "cancel", "run_id": "run-7", "reason": "Desktop HUD request"}
+        assert "run-7" in message

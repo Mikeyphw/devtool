@@ -155,6 +155,11 @@ def detect_host_context(
             system_raw = "Linux"
     else:
         system_raw = str(system if system is not None else platform.system()).strip() or "unknown"
+    # For modeled POSIX environments, avoid platform.uname() consulting
+    # Android release properties merely to obtain the kernel architecture.
+    # An explicit architecture override still takes precedence.
+    if machine is None and env is not None and env is not os.environ and hasattr(os, "uname"):
+        machine = os.uname().machine
     machine_raw = str(machine if machine is not None else platform.machine()).strip() or "unknown"
     os_family = _system_name(system=system_raw, platform_name=platform_name)
 

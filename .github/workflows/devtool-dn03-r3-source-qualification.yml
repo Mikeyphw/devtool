@@ -9,6 +9,8 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
 
 concurrency:
   group: devtool-dn03r3-${{ github.ref }}-${{ github.event_name }}
@@ -31,12 +33,19 @@ jobs:
         with:
           python-version: '3.13'
           check-latest: false
+      - name: Verify eligible merged-tree source evidence (read only)
+        id: tree_reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -B -m devtool.postmerge_ci decide --workflow devtool-dn03-r3-source-qualification.yml --scope ubuntu-24.04 --proof "${{ runner.temp }}/tree-proof.json"
       - name: Install reviewed source and deterministic test entrypoint
+        if: steps.tree_reuse.outputs.reuse != 'true'
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --disable-pip-version-check -e . pytest
       - name: Verify R3 exporter, node verifier and prior DN gates
+        if: steps.tree_reuse.outputs.reuse != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -53,6 +62,7 @@ jobs:
             tests/test_fc06_dotnet_shared_restore.py
           git diff --exit-code
       - name: Record source-only evidence and immutable run identity
+        if: steps.tree_reuse.outputs.reuse != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -65,10 +75,21 @@ jobs:
                     tests/test_dn03_r3_verified_export.py \
             > "$RUNNER_TEMP/dn03r3-source/source-sha256.txt"
       - name: Upload local test receipt (not hosted consumer acceptance)
-        if: always()
+        if: always() && steps.tree_reuse.outputs.reuse != 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: dn03r3-source-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/dn03r3-source/
           if-no-files-found: warn
+          retention-days: 14
+      - name: Record executed source tree proof
+        if: success() && steps.tree_reuse.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        run: python -B -m devtool.postmerge_ci record --workflow devtool-dn03-r3-source-qualification.yml --scope ubuntu-24.04 --proof "${{ runner.temp }}/tree-proof.json"
+      - name: Upload scoped source tree evidence (not release acceptance)
+        if: success() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: devtool-tree-proof-${{ github.run_id }}-${{ github.run_attempt }}-ubuntu-24.04
+          path: ${{ runner.temp }}/tree-proof.json
+          if-no-files-found: error
           retention-days: 14

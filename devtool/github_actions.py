@@ -467,6 +467,13 @@ class GitHubActionsClient:
         slug = _slug(slug)
         return self._paged(slug,f"/repos/{slug}/actions/runs","workflow_runs",max_results=limit)
 
+    def workflow_runs(self, slug: str, workflow_id: int, *, limit: int = 100) -> list[dict[str, Any]]:
+        slug = _slug(slug)
+        if type(workflow_id) is not int or workflow_id <= 0 or type(limit) is not int or not 1 <= limit <= 100:
+            raise GitHubActionsError("Invalid workflow identity or run limit")
+        return self._paged(slug, f"/repos/{slug}/actions/workflows/{workflow_id}/runs",
+                           "workflow_runs", max_results=limit)
+
     def run_jobs(self, slug: str, identity: int) -> list[dict[str, Any]]:
         slug = _slug(slug)
         if type(identity) is not int or identity <= 0:
@@ -548,11 +555,23 @@ class GitHubActionsClient:
         return {"state":"request-accepted", "run_id":identity,"action":action,
                 "execution_complete":False,"outcome":"pending-remote-confirmation"}
 
-    def run_log_location(self, slug: str, identity: int) -> str:
+    def run_log_location(self, slug: str, identity: int, *, attempt: int | None = None) -> str:
         slug = _slug(slug)
         if type(identity) is not int or identity <= 0:
             raise GitHubActionsError("Invalid workflow run ID")
-        req=Request(f"{API_ORIGIN}/repos/{slug}/actions/runs/{identity}/logs",
+        if attempt is not None and (type(attempt) is not int or attempt <= 0):
+            raise GitHubActionsError("Invalid workflow run attempt")
+        suffix = "logs" if attempt is None else f"attempts/{attempt}/logs"
+        return self._log_location(slug, f"runs/{identity}/{suffix}")
+
+    def job_log_location(self, slug: str, identity: int) -> str:
+        slug = _slug(slug)
+        if type(identity) is not int or identity <= 0:
+            raise GitHubActionsError("Invalid workflow job ID")
+        return self._log_location(slug, f"jobs/{identity}/logs")
+
+    def _log_location(self, slug: str, suffix: str) -> str:
+        req=Request(f"{API_ORIGIN}/repos/{slug}/actions/{suffix}",
                     headers={"Accept":"application/vnd.github+json",
                              "X-GitHub-Api-Version":API_VERSION,
                              "User-Agent":"devtool-actions-logs/1",

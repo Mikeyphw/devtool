@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import types
+import time
 from unittest import mock
 
 import pytest
@@ -166,19 +167,30 @@ def test_no_auto_remote_actions_get_without_keypress(tmp_path,monkeypatch):
     assert obj.remote_detail is None
 
 
+def finish_actions(obj):
+    deadline=time.monotonic()+2
+    while time.monotonic()<deadline:
+        if obj.consume_actions():return
+        time.sleep(.005)
+    pytest.fail("Actions worker did not finish")
+
+
 def test_actions_operator_explicit_get_preserved(tmp_path,monkeypatch):
     obj=ws(tmp_path)
     monkeypatch.setattr(mod,'_source_head',lambda root:HEAD)
     obj.snapshots['actions']={'items':[{'kind':'dispatch','id':'abc'}]}
     called=[]
     fake=types.SimpleNamespace(
-        operator_workflows=lambda slug:(called.append(('w',slug)) or {'read_only':True,'workflows':[]}),
-        operator_review=lambda row,slug:(called.append(('g',row['id'])) or {'read_only':True,'jobs':[]}),
+        operator_workflows=lambda slug, **kw:(called.append(('w',slug)) or {'read_only':True,'workflows':[]}),
+        operator_review=lambda row,slug, **kw:(called.append(('g',row['id'])) or {'read_only':True,'jobs':[]}),
         operator_lineage=lambda row,root,slug:(called.append(('l',row['id'])) or {'read_only':True,'nodes':[]}))
     monkeypatch.setitem(sys.modules,'devtool.actions_operator',fake)
+    obj.auth_mode='none'
     for key in ('w','g','l'):
         obj.press(key)
+        finish_actions(obj)
         assert obj.remote_detail is not None
+        obj.press('b')
     assert called==[('w','Mikeyphw/devtool'),('g','abc'),('l','abc')]
     obj.press('b')
     assert obj.remote_detail is None
@@ -187,10 +199,12 @@ def test_actions_operator_explicit_get_preserved(tmp_path,monkeypatch):
 def test_actions_remote_failure_no_leaked_exception_message(tmp_path,monkeypatch):
     obj=ws(tmp_path)
     monkeypatch.setattr(mod,'_source_head',lambda root:HEAD)
-    fake=types.SimpleNamespace(operator_workflows=lambda slug:(_ for _ in ()).throw(
+    fake=types.SimpleNamespace(operator_workflows=lambda slug, **kw:(_ for _ in ()).throw(
         RuntimeError('SECRET_TOKEN')))
     monkeypatch.setitem(sys.modules,'devtool.actions_operator',fake)
+    obj.auth_mode='none'
     obj.press('w')
+    finish_actions(obj)
     assert 'SECRET_TOKEN' not in obj.errors['actions']
     assert obj.remote_detail is None
 
@@ -324,7 +338,7 @@ def test_other_actions_views_are_not_mutated_by_bridge(tmp_path,monkeypatch):
 def test_actions_remote_get_refuses_new_head_before_provider(tmp_path,monkeypatch):
     obj=ws(tmp_path)
     monkeypatch.setattr(mod,'_source_head',lambda root:NEW)
-    fake=types.SimpleNamespace(operator_workflows=lambda slug:pytest.fail('remote GET must not run'))
+    fake=types.SimpleNamespace(operator_workflows=lambda slug, **kw:pytest.fail('remote GET must not run'))
     monkeypatch.setitem(sys.modules,'devtool.actions_operator',fake)
     obj.press('w')
     assert obj.source_drift
@@ -487,15 +501,18 @@ def test_tui_discovers_local_github_origin_using_native_resolver(tmp_path, monke
     monkeypatch.setattr(mod.Workspace,'maybe_refresh',lambda *a,**k:False)
     import termios, tty
     restored=[]
-    monkeypatch.setattr(termios,'tcgetattr',lambda fd:['old'])
+    old=[0,0,0,termios.ISIG,0,0,[b'\x00']*32]
+    import copy
+    monkeypatch.setattr(termios,'tcgetattr',lambda fd:copy.deepcopy(old))
     monkeypatch.setattr(tty,'setcbreak',lambda fd:None)
     monkeypatch.setattr(termios,'tcsetattr',lambda fd,when,attrs:restored.append(attrs))
-    monkeypatch.setattr(mod.select,'select',lambda *a:([19],[],[]))
+    from devtool import posix_input
+    monkeypatch.setattr(posix_input.select,'select',lambda *a:([19],[],[]))
     monkeypatch.setattr(mod.os,'read',lambda fd,n:b'q')
     console=mod.Console(file=io.StringIO(),force_terminal=False)
     assert mod.run_operator_workspace(repo,None,console=console)
     assert called==[('',repo.resolve())]
-    assert restored==[['old']]
+    assert restored[-1]==old
 
 
 def test_ssh_worker_refuses_false_readonly_evidence(tmp_path,monkeypatch):

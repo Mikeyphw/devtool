@@ -23,6 +23,7 @@ from zipfile import ZipFile, BadZipFile
 from .actions_dispatch import _durable_record, dispatch_workflow, GitHubDispatchPreflightError
 from .actions_pipeline import _source, _git
 from .actions_runs import _normalize_run
+from . import ci_tree_evidence as tree_evidence
 from .actions_artifacts import artifact_list, download_artifact, verify_download
 from .g3r_evidence_gate import evaluate as verify_native
 from .final_seal import final_seal_report, FINAL_SEAL_SCHEMA_VERSION
@@ -173,6 +174,14 @@ def ci24_start(root: Path, *, client: GitHubActionsClient | None = None,
             or plan.get('workflow_path') != f'.github/workflows/{WORKFLOW}'
             or type(plan.get('workflow_id')) is not int):
             raise GitHubActionsError('CI24 read-only preflight identity mismatch; no dispatch attempted')
+        # Only main may reuse independently verified prior tree evidence. PR
+        # heads always retain the exact-commit CI24 acceptance contract.
+        if branch == 'main' and slug.casefold() == 'mikeyphw/devtool':
+            reused = _ci24_try_tree_reuse(root, client, slug, head, branch, plan['workflow_id'])
+            if reused is not None:
+                return reused
+            if _identity(root) != (head, branch):
+                raise GitHubActionsError('CI tree source changed before fresh dispatch')
         record = {'schema': 1, 'kind': 'ci24', 'repo_root': str(root.resolve()),
                   'source_sha': head, 'branch': branch, 'repository': slug,
                   'workflow': WORKFLOW, 'workflow_id': plan['workflow_id'],
@@ -204,14 +213,72 @@ def ci24_start(root: Path, *, client: GitHubActionsClient | None = None,
 
 
 def _public_ci(record: dict[str, Any]) -> dict[str, Any]:
+    reused = record.get('state') == 'PASS_CI24_TREE_REUSED'
+    exact = record['state'] == 'PASS_CI24_VERIFIED'
     return {'schema': 1, 'workflow': 'CI24', 'source_sha': record['source_sha'],
             'repository': record['repository'], 'run_id': record.get('run_id'),
             'request_id': record.get('request_id'), 'state': record['state'],
             'run_correlated': record.get('run_correlated', False),
-            'ci_verified': record['state'] == 'PASS_CI24_VERIFIED',
+            'ci_verified': exact, 'tree_verified': exact or reused,
+            'qualification_scope': 'tree-equivalent' if reused else 'exact-source',
+            'tested_source_sha': (record.get('reused_from') or {}).get('source_sha', record['source_sha']),
+            'source_tree': record.get('source_tree'),
             'formal_release_qualified': False,
-            'next_action': ('ci24-resume (provide DEVTOOL_CI24_RUN_ID for an uncorrelated 204 response)'
-                            if record['state'] != 'PASS_CI24_VERIFIED' else 'g3r-native and g3r-verify')}
+            'next_action': ('review tree-equivalent source evidence; exact commit/release gates remain separate'
+                            if reused else 'g3r-native and g3r-verify' if exact else
+                            'ci24-resume (provide DEVTOOL_CI24_RUN_ID for an uncorrelated 204 response)')}
+
+
+def _ci24_try_tree_reuse(root, client, slug, head, branch, workflow_id):
+    """Reuse only original complete, authenticated artifacts; never redispatch old SHA."""
+    try:
+        identity = tree_evidence.tree(root, head)
+        rows = tree_evidence.candidates(root, slug, head, identity, workflow_id)
+    except (GitHubActionsError, OSError, ValueError):
+        return None
+    # An ambiguous provenance or unavailable artifact causes fresh CI for the
+    # new commit, not a guessed PASS or an inherited old dispatch receipt.
+    if len(rows) != 1:
+        return None
+    old = rows[0]
+    try:
+        outcome = _ci24_evaluate(client, slug, root, old, old['run_id'])
+        if outcome.get('status') != 'PASS_CI24_VERIFIED' or outcome.get('complete') is not True:
+            return None
+    except (GitHubActionsError, OSError, ValueError, RuntimeError, BadZipFile):
+        return None
+    if _identity(root) != (head, branch) or not tree_evidence.equivalent(root, head, old['source_sha'], identity):
+        raise GitHubActionsError('CI tree changed during historical verification')
+    plan = dispatch_workflow(client, slug, WORKFLOW, branch, {}, execute=False, expected_source_sha=head)
+    if plan.get('pre_dispatch_sha') != head or plan.get('workflow_id') != workflow_id or plan.get('workflow_path') != f'.github/workflows/{WORKFLOW}':
+        raise GitHubActionsError('CI tree reuse remote identity changed')
+    record = {'schema':1, 'kind':'ci24', 'repo_root':str(root.resolve()), 'source_sha':head,
+              'source_tree':identity, 'branch':branch, 'repository':slug, 'workflow':WORKFLOW,
+              'workflow_id':workflow_id, 'state':'PASS_CI24_TREE_REUSED', 'run_id':old['run_id'],
+              'request_id':None, 'run_correlated':False, 'qualified_release':False,
+              'reused_from':old, 'verification':outcome,
+              'last_observation':{'id':uuid.uuid4().hex,'status':'VERIFIED','error_code':None,'run_id':old['run_id']}}
+    _save(root, head, 'ci24', record)
+    return {**_public_ci(record), 'verification':outcome, 'qualification_complete':True}
+
+
+def _ci24_revalidate_tree(root, client, slug, head, record, rid):
+    old = record.get('reused_from') or {}
+    if (record.get('branch') != 'main' or slug.casefold() != 'mikeyphw/devtool'
+            or not tree_evidence._valid(old, slug, record.get('source_tree'))
+            or old.get('run_id') != rid
+            or old.get('workflow_id') != record.get('workflow_id')
+            or not tree_evidence.equivalent(root, head, old.get('source_sha',''), record.get('source_tree',''))):
+        raise GitHubActionsError('CI tree reuse identity no longer established')
+    outcome = _ci24_evaluate(client, slug, root, old, rid)
+    if outcome.get('status') != 'PASS_CI24_VERIFIED' or outcome.get('complete') is not True:
+        raise GitHubActionsError('Historical CI tree evidence no longer complete')
+    plan = dispatch_workflow(client, slug, WORKFLOW, 'main', {}, execute=False, expected_source_sha=head)
+    if (plan.get('pre_dispatch_sha') != head or plan.get('workflow_id') != record['workflow_id']
+            or plan.get('workflow_path') != f'.github/workflows/{WORKFLOW}' or _identity(root) != (head, 'main')
+            or not tree_evidence.equivalent(root, head, old['source_sha'], record['source_tree'])):
+        raise GitHubActionsError('CI tree reuse remote identity changed')
+    return outcome
 
 
 
@@ -510,7 +577,9 @@ def ci24_resume(root: Path, *, explicit_run_id: int | None = None,
             if rid is None:
                 raise GitHubActionsError('GitHub 204 dispatch was uncorrelated; specify DEVTOOL_CI24_RUN_ID explicitly; do not guess or redispatch')
             # The native verifier owns every source/run/artifact check.
-            outcome = _ci24_evaluate(client, slug, root, record, rid)
+            reused = record.get('state') == 'PASS_CI24_TREE_REUSED'
+            outcome = (_ci24_revalidate_tree(root, client, slug, head, record, rid) if reused
+                       else _ci24_evaluate(client, slug, root, record, rid))
         except (GitHubActionsError, OSError, ValueError, RuntimeError) as exc:
             # Keep the previous successful observation and dispatch identity intact.
             # A failed fresh read is not WAITING_REMOTE and not fresh qualification.
@@ -523,14 +592,21 @@ def ci24_resume(root: Path, *, explicit_run_id: int | None = None,
                 # A receipt write failure cannot replace the original native error.
                 print('CI24_OBSERVATION_FAILURE_RECEIPT_WRITE_FAILED', file=sys.stderr)
             raise
-        record.update(state=outcome['status'], run_id=rid,
+        record.update(state='PASS_CI24_TREE_REUSED' if reused else outcome['status'], run_id=rid,
                       run_correlated=bool(record.get('run_correlated')),
-                      selected_uncorrelated=not bool(record.get('run_correlated')),
+                      selected_uncorrelated=not reused and not bool(record.get('run_correlated')),
                       verification=outcome,
                       last_observation={'id': observation_id,
                           'status': 'VERIFIED' if outcome.get('complete') else 'PENDING',
                           'error_code': None, 'run_id': rid})
         _save(root, head, 'ci24', record)
+        if not reused and record['state'] == 'PASS_CI24_VERIFIED' and slug.casefold() == 'mikeyphw/devtool':
+            try:
+                tree_evidence.remember(root, record)
+            except (GitHubActionsError, OSError, ValueError, RuntimeError):
+                # Exact-source acceptance has already succeeded. A missing
+                # optional locator cannot grant reuse or invalidate that proof.
+                print('CI24_TREE_LOCATOR_NOT_RECORDED', file=sys.stderr)
         return {**_public_ci(record), 'verification': outcome,
                 'last_observation': record['last_observation'],
                 'observation_completed': True, 'qualification_complete': bool(outcome.get('complete')),
@@ -783,6 +859,8 @@ def qualify_status(root: Path) -> dict[str, Any]:
             rid = receipt.get('run_id')
             state['ci24_run_id'] = rid if type(rid) is int and rid > 0 else None
             state['ci24_run_correlated'] = receipt.get('run_correlated') is True
+            state['ci24_qualification_scope'] = _public_ci(receipt)['qualification_scope']
+            state['ci24_tested_source_sha'] = _public_ci(receipt)['tested_source_sha']
             latest = receipt.get('last_observation')
             if isinstance(latest, dict) and re.fullmatch(r'[a-f0-9]{32}', str(latest.get('id') or '')) and latest.get('status') in ('FAILED', 'PENDING', 'VERIFIED'):
                 error = latest.get('error_code')
@@ -897,6 +975,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('command', choices=('ci24-start','ci24-resume','g3r-remote-start','g3r-remote-resume', 'g3r-native','g3r-verify','qualify-status','qualify-seal'))
     ap.add_argument('--repo', type=Path, default=_root())
+    ap.add_argument('--auth', choices=('auto','app'), default='auto', help='CI24 native operation-scoped authentication')
     ap.add_argument('--run-id', type=int, default=None, help='Explicit CI run identity (never guessed)')
     ap.add_argument('--candidate',type=Path,default=None,help='G3R evidence archive')
     args = ap.parse_args(argv)
@@ -908,8 +987,16 @@ def main(argv: list[str] | None = None) -> int:
     candidate = args.candidate or (Path(os.environ['DEVTOOL_G3R_CANDIDATE'])
                                    if os.environ.get('DEVTOOL_G3R_CANDIDATE') else None)
     try:
-        if args.command == 'ci24-start': output = ci24_start(root)
-        elif args.command == 'ci24-resume': output = ci24_resume(root, explicit_run_id=run_id)
+        kwargs={}
+        if args.auth=='app':
+            if args.command not in ('ci24-start','ci24-resume','qualify-status'):
+                raise GitHubActionsError('App authentication is admitted here only for CI24')
+            if args.command!='qualify-status':
+                from .github_app import make_app_client
+                slug=resolve_repository('',root)
+                kwargs={'client':make_app_client(slug,'actions_dispatch' if args.command=='ci24-start' else 'actions_read'),'slug':slug}
+        if args.command == 'ci24-start': output = ci24_start(root, **kwargs)
+        elif args.command == 'ci24-resume': output = ci24_resume(root, explicit_run_id=run_id, **kwargs)
         elif args.command == 'g3r-remote-start': output = g3r_remote_start(root)
         elif args.command == 'g3r-remote-resume': output = g3r_remote_resume(root, explicit_run_id=run_id)
         elif args.command == 'g3r-native': output = g3r_native(root)

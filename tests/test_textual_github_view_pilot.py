@@ -23,18 +23,18 @@ def fixture(selection):
         "workflows":[{"id":i,"name":f"Workflow {i}","state":"active","path":f".github/{i}.yml"}
                      for i in range(1,33)],
         "runs":[{"id":i,"workflow_id":(i%32)+1,"name":f"Run {i}","status":"completed",
-                 "conclusion":"failure" if i==55 else "success","branch":f"feature/r{i}","sha":(f"{i:040x}")}
+                 "conclusion":"failure" if i==55 else "success","branch":f"feature/r{i}","sha":(f"{i:040x}"),"head_sha":f"{i:040x}","run_attempt":2,"event":"push"}
                 for i in range(50,91)],
         "selected_run":({"id":rid,"status":"completed","conclusion":"failure",
-                         "run_attempt":2,"sha":f"{rid:040x}","event":"push"} if rid else None),
+                         "run_attempt":2,"sha":f"{rid:040x}","head_sha":f"{rid:040x}","workflow_id":(rid%32)+1,"event":"push"} if rid else None),
         "jobs_scope":"exact-run-attempt" if rid else "none",
         "jobs":[{"id":rid*10,"name":"pytests","status":"completed","conclusion":"failure",
-                 "steps":[{"name":"syntax","status":"completed","conclusion":"success"}]}] if rid else [],
+                 "run_id":rid,"run_attempt":2,"steps":[{"number":1,"name":"syntax","status":"completed","conclusion":"success"}]}] if rid else [],
         "runs_limit_reached":False,"jobs_limit_reached":False,
     }
 
 
-@pytest.mark.parametrize("size",[(42,16),(64,22),(80,24),(120,35)])
+@pytest.mark.parametrize("size",[(28,16),(42,16),(64,22),(80,24),(120,35)])
 def test_widget_real_pilot_selection_search_logs_and_geometry(tmp_path:Path,size):
     _require_textual()
     from textual.app import App, ComposeResult
@@ -67,7 +67,11 @@ def test_widget_real_pilot_selection_search_logs_and_geometry(tmp_path:Path,size
             assert app.query_one("#github-runs",DataTable).row_count==16
             assert app.query_one("#github-log-lines",RichLog) is not None
             assert app.query_one("#github-jobs",Tree) is not None
+            if size[0]<72:
+                assert app.query_one("#github-runs",DataTable).size.width >= size[0]-6
+                assert app.query_one("#github-log-lines",RichLog).size.width >= size[0]-8
             app.query_one("#github-runs",DataTable).move_cursor(row=0,column=0,animate=False)
+            app.query_one("#github-runs",DataTable).action_select_cursor()
             await pilot.pause(0.25)
             w=app.query_one("#github",Workspace)
             assert w._selected_run==50
@@ -75,10 +79,11 @@ def test_widget_real_pilot_selection_search_logs_and_geometry(tmp_path:Path,size
             assert "Exact attempt" in str(app.query_one("#github-jobs",Tree).root.label)
             app.query_one("#github-load-logs",Button).press()
             await pilot.pause(0.25)
-            assert w._shown_logs==["job secret-safe line","test PASS"]
+            assert "".join(w._shown_logs)=="job secret-safe linetest PASS"
             assert ("logs",50,2) in calls
             # Switching runs must clear the old run's log lines before fetching.
             app.query_one("#github-runs",DataTable).move_cursor(row=1,column=0,animate=False)
+            app.query_one("#github-runs",DataTable).action_select_cursor()
             await pilot.pause(0.25)
             assert w._selected_run==51 and not w._shown_logs
             app.query_one("#github-search",Input).value="r52"
@@ -174,6 +179,7 @@ def test_remote_controls_require_confirmation_and_do_not_claim_success(tmp_path:
             await pilot.pause(0.2)
             run_table=app.query_one("#github-runs",DataTable)
             run_table.move_cursor(row=0,column=0,animate=False)
+            run_table.action_select_cursor()
             await pilot.pause(0.2)
             app.query_one("#github-cancel",Button).press()
             await pilot.pause(0.08)
@@ -191,6 +197,7 @@ def test_remote_controls_require_confirmation_and_do_not_claim_success(tmp_path:
             assert "pending GitHub confirmation" in w._remote_notice
             workflow_table=app.query_one("#github-workflows",DataTable)
             workflow_table.move_cursor(row=1,column=0,animate=False)
+            workflow_table.action_select_cursor()
             await pilot.pause(0.1)
             assert w._workflow==1
             app.query_one("#github-dispatch",Button).press()
@@ -202,4 +209,51 @@ def test_remote_controls_require_confirmation_and_do_not_claim_success(tmp_path:
             await pilot.click("#github-dispatch-yes")
             await pilot.pause(0.25)
             assert calls[-1]==("dispatch",1,"feature/source",{"debug":True})
+    asyncio.run(run())
+
+
+def test_real_job_step_and_native_read_only_pilot(tmp_path):
+    _require_textual()
+    from textual.app import App, ComposeResult
+    from textual.widgets import Button, DataTable, Tree
+    from devtool.textual_github_view import create_github_workspace_widget
+    calls=[]
+    def loader(root, *, selection):
+        calls.append((selection.native_checks, selection.run_id))
+        return fixture(selection)
+    def job_logs(root, *, run, job):
+        calls.append((run["id"], run["run_attempt"], job["id"]))
+        return {"run_id":run["id"],"run_attempt":run["run_attempt"],"sha":run["sha"],"job_id":job["id"],"lines":["x"*5000],"truncated":False}
+    Workspace = create_github_workspace_widget(tmp_path, loader=loader, job_log_reader=job_logs, refresh_seconds=999)
+    class Shell(App):
+        def compose(self)->ComposeResult:
+            yield Workspace(id="github")
+    async def run():
+        app=Shell()
+        async with app.run_test(size=(42,22)) as pilot:
+            await pilot.pause(.25)
+            w=app.query_one("#github",Workspace)
+            assert calls==[(False,None)]  # rendering does not select a run
+            app.query_one("#github-native-checks",Button).press()
+            await pilot.pause(.25)
+            table=app.query_one("#github-runs",DataTable)
+            table.move_cursor(row=0,column=0,animate=False)
+            table.action_select_cursor()
+            await pilot.pause(.25)
+            tree=app.query_one("#github-jobs",Tree)
+            leaf=tree.root.children[0].children[0]
+            tree.move_cursor(leaf)
+            tree.action_select_cursor()
+            await pilot.pause(.15)
+            assert w._selected_job==500 and w._selected_step==1
+            assert app.query_one("#github-cancel",Button).disabled
+            assert app.query_one("#github-rerun",Button).disabled
+            assert app.query_one("#github-dispatch",Button).disabled
+            app.query_one("#github-load-job-logs",Button).press()
+            await pilot.pause(.25)
+            assert (50,2,500) in calls and w._shown_logs
+            assert not app.query_one("#github-logs-next",Button).disabled
+            app.query_one("#github-logs-next",Button).press()
+            await pilot.pause(.1)
+            assert w._log_page==1
     asyncio.run(run())

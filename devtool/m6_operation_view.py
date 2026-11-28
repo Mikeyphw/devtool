@@ -10,15 +10,14 @@ from contextlib import contextmanager
 import os
 import json
 import stat
-import signal
-import threading
 from pathlib import Path
 import re
 import sys
 from typing import Any, Callable
 
 from rich.console import Console
-from rich.live import Live
+from .inline_live import InlineLive, terminal_geometry
+from .posix_input import PosixInput
 from rich.text import Text
 
 from .m6_live import BoundedLiveFrame, safe, shared_panel
@@ -338,7 +337,7 @@ def render_inspection(pages: Mapping[int, list[tuple[str, str]]], section: int, 
     rows = pages.get(section) or [('Native evidence', 'not recorded in this snapshot')]
     # Fold using Rich cell widths: hashes, long paths and combining glyphs
     # remain reachable in a narrow portrait viewport, not silently truncated.
-    console = Console(width=max(20, width), color_system=None)
+    console = Console(width=max(1, width), color_system=None)
     lines = []
     for key, value in rows:
         text = Text(_public(key) + ': ', style='dim')
@@ -363,41 +362,25 @@ def browse_inspection(pages: Mapping[int, list[tuple[str, str]]], *, args: Any =
     """
     if not inspect_enabled(args) or os.name != 'posix':
         return False
-    import select
-    import termios
-    import tty
-    fd = None
-    saved = None
-    handlers = {}
     try:
         fd = sys.stdin.fileno()
-        saved = termios.tcgetattr(fd)
         out = Console()
         section = page = 0
         log_index = 0
         log_page = 0
         log_open = False
-        def geometry():
-            size = os.get_terminal_size(fd)
-            return max(20, size.columns), max(8, size.lines)
-        width, height = geometry()
+        width,height=terminal_geometry(out,fd)
         out.width, out.height = width, height
         frame, page = render_inspection(pages, section, page, width=width, height=height, title=title)
-        if threading.current_thread() is threading.main_thread():
-            def terminate(signum, frame):
-                raise SystemExit(128 + signum)
-            for signum in (signal.SIGTERM, signal.SIGHUP):
-                handlers[signum] = signal.signal(signum, terminate)
-        tty.setcbreak(fd)
-        with Live(frame, console=out, screen=False, transient=False, auto_refresh=False, redirect_stdout=False, redirect_stderr=False, vertical_overflow='ellipsis') as live:
+        with PosixInput(fd) as keys, InlineLive(frame,console=out) as live:
             while True:
-                ready, _, _ = select.select([fd], [], [], .2)
-                size = geometry()
-                changed = size != (width, height)
-                if ready:
-                    key = os.read(fd, 1)
-                    if key in (b'', b'q', b'\x04'):
+                key=keys.read(.2)
+                size=terminal_geometry(out,fd)
+                changed=size!=(width,height)
+                if key is not None:
+                    if key in ('','q','\x04'):
                         break
+                    key={'up':'k','down':'j'}.get(key,key).encode('ascii','ignore')
                     if key in tuple(str(i).encode() for i in range(6)):
                         section, page = int(key), 0
                         log_open = False
@@ -447,15 +430,6 @@ def browse_inspection(pages: Mapping[int, list[tuple[str, str]]], *, args: Any =
     except Exception as exc:
         print('M6 inspection unavailable: '+type(exc).__name__,file=sys.stderr,flush=True)
         return False
-    finally:
-        try:
-            if saved is not None:
-                termios.tcsetattr(fd, termios.TCSADRAIN, saved)
-        except (OSError, termios.error):
-            print('M6 inspection warning: terminal restore failed',file=sys.stderr,flush=True)
-        finally:
-            for signum, previous in handlers.items():
-                signal.signal(signum, previous)
 
 
 def _browse_session(payload: Mapping[str, Any], repo: Path, *, args: Any = None) -> bool:

@@ -730,7 +730,7 @@ def normalize_tui_backend(value: str | None) -> str:
     normalized = (value or "auto").strip().lower().replace("_", "-")
     if normalized in {"", "default", "preferred"}:
         return "auto"
-    if normalized in {"auto", "textual", "new"}:
+    if normalized in {"auto", "rich", "textual", "new"}:
         return "textual" if normalized == "new" else normalized
     raise ValueError(f"Legacy Rich TUI was removed; unsupported backend: {value}")
 
@@ -738,9 +738,9 @@ def normalize_tui_backend(value: str | None) -> str:
 def default_tui_backend_contract() -> dict[str, Any]:
     return {
         "schema_version": 1,
-        "default_backend": "textual",
+        "default_backend": "rich",
         "command_default": "auto",
-        "auto_policy": "textual-only-fail-closed",
+        "auto_policy": "rich-default-explicit-textual-fail-closed",
         "legacy_override": None,
         "explicit_textual_failure_mode": "fail-closed-when-unavailable",
         "textual_owns_truth": False,
@@ -757,21 +757,25 @@ def resolve_tui_backend_selection(
     availability: TextualAvailability | None = None,
     session_transport: str = "local",
 ) -> TuiBackendSelection:
-    """There is only one dashboard TUI: Textual. No Rich fallback."""
+    """Rich is native terminal default; explicit Textual is never substituted."""
     if legacy_tui:
         raise ValueError("--legacy-tui was removed; use devtool tui")
     requested = normalize_tui_backend(requested_backend)
     availability = availability or probe_textual_availability()
+    if requested == "rich" and require_textual:
+        raise ValueError("--backend rich conflicts with --require-textual")
+    wants_textual = requested == "textual" or require_textual
+    effective = ("textual" if availability.available else "unavailable") if wants_textual else "rich"
+    command = {"textual": ("python", "-m", "devtool.tui_textual_runtime"),
+               "rich": ("devtool", "tui", "--backend", "rich"), "unavailable": ()}[effective]
     selected = TuiBackendSelection(
-        requested_backend=requested,
-        effective_backend="textual" if availability.available else "unavailable",
-        default_backend="textual",
-        fallback_backend=None,
-        availability=availability,
-        reason="Textual available" if availability.available else (availability.reason or "Textual is required"),
-        command=("python", "-m", "devtool.tui_textual_runtime") if availability.available else (),
-        session_transport=normalize_session_transport(session_transport),
-        require_textual=bool(require_textual or not availability.available),
+        requested_backend=requested, effective_backend=effective,
+        default_backend="rich", fallback_backend=None, availability=availability,
+        reason=("Native inline Rich selected" if effective == "rich" else
+                "Textual available" if effective == "textual" else
+                (availability.reason or "Textual is required")),
+        command=command, session_transport=normalize_session_transport(session_transport),
+        require_textual=bool(require_textual or effective == "unavailable"),
     )
     assert_tui_backend_selection_is_safe(selected)
     return selected
@@ -784,8 +788,8 @@ def assert_tui_backend_selection_is_safe(selection: TuiBackendSelection) -> None
         raise AssertionError(f"TUI backend selection contains execution-owned truth: {leaked}")
     if selection.owns_truth is not False:
         raise AssertionError("TUI backend selection attempted to own canonical truth")
-    if selection.default_backend != "textual":
-        raise AssertionError("PRES-X06 requires Textual to be the default TUI backend")
+    if selection.default_backend != "rich":
+        raise AssertionError("W4 requires Rich as the default TUI backend")
 
 
 
@@ -818,7 +822,7 @@ class TuiBackendHardeningNotice:
 def textual_replacement_hardening_contract() -> dict[str, Any]:
     return {
         "schema_version": 1,
-        "primary_backend": "textual",
+        "primary_backend": "rich",
         "legacy_backend_status": "removed",
         "legacy_allowed_when": (),
         "legacy_not_allowed_when": ("all invocations",),
@@ -831,6 +835,8 @@ def textual_replacement_hardening_contract() -> dict[str, Any]:
 
 def build_tui_backend_notice(selection: TuiBackendSelection) -> TuiBackendHardeningNotice:
     assert_tui_backend_selection_is_safe(selection)
+    if selection.effective_backend == "rich":
+        return TuiBackendHardeningNotice(selection, "info", "Native inline Rich workspace selected.")
     if selection.effective_backend == "textual":
         return TuiBackendHardeningNotice(selection, "info", "Textual dashboard selected.")
     return TuiBackendHardeningNotice(
@@ -858,8 +864,8 @@ def summarize_legacy_cleanup_assumptions(selections: Sequence[TuiBackendSelectio
     for selection in selections:
         assert_legacy_tui_is_fenced(selection)
     payload = {
-        "schema_version": 1, "primary_backend": "textual", "legacy_path_count": 0,
-        "legacy_reasons": [], "default_backend": "textual", "owns_truth": False,
+        "schema_version": 1, "primary_backend": "rich", "legacy_path_count": 0,
+        "legacy_reasons": [], "default_backend": "rich", "owns_truth": False,
     }
     payload["cleanup_digest"] = projection_digest({k: v for k, v in payload.items() if k != "cleanup_digest"})
     return payload
@@ -944,16 +950,21 @@ def run_tui_entrypoint(
     console: Any | None = None,
     availability: TextualAvailability | None = None,
     textual_runner: Any | None = None,
+    rich_runner: Any | None = None,
 ) -> int:
     """Entrypoint used by ``devtool tui`` after PRES-X06."""
 
-    selection = resolve_tui_backend_selection(
-        requested_backend=getattr(args, "backend", "auto"),
-        legacy_tui=bool(getattr(args, "legacy_tui", False)),
-        require_textual=bool(getattr(args, "require_textual", False)),
-        availability=availability,
-        session_transport=getattr(args, "session_transport", "local"),
-    )
+    try:
+        selection = resolve_tui_backend_selection(
+            requested_backend=getattr(args, "backend", "auto"),
+            legacy_tui=bool(getattr(args, "legacy_tui", False)),
+            require_textual=bool(getattr(args, "require_textual", False)),
+            availability=availability,
+            session_transport=getattr(args, "session_transport", "local"),
+        )
+    except ValueError as exc:
+        print(f"Error: {exc}", file=__import__('sys').stderr)
+        return 2
     notice = build_tui_backend_notice(selection)
     if bool(getattr(args, "explain_backend", False)):
         payload = {"selection": selection.as_dict(), "notice": notice.as_dict()}
@@ -969,6 +980,11 @@ def run_tui_entrypoint(
         else:
             print(f"Error: {message}")
         return 2
+    if selection.effective_backend == "rich" and not bool(getattr(args, "once", False)):
+        if rich_runner is None:
+            from .rich_workspace_entrypoint import run_rich_workspace
+            rich_runner = run_rich_workspace
+        return int(rich_runner(args, repo_root=repo_root, console=console))
     if textual_runner is None:
         textual_runner = run_textual_tui_runtime
     return int(textual_runner(args, repo_root=repo_root, console=console))
@@ -1075,7 +1091,7 @@ def build_textual_replacement_proof_gate(
     """Build the PRES-G1 proof gate from canonical PRES contracts.
 
     The gate intentionally uses the PRES projection and Textual contract APIs
-    instead of runtime TUI state.  It proves that Textual is now the default TUI
+    instead of runtime TUI state.  It proves the current Rich default and explicit Textual selection
     and that all rendering remains reference-only.
     """
 
@@ -1117,29 +1133,29 @@ def build_textual_replacement_proof_gate(
             "PRES-X01 through PRES-X07 current-source executable proofs must all pass",
         ),
         TextualReplacementGateItem(
-            "textual-is-default",
-            _gate_status(default_contract.get("default_backend") == "textual" and default_contract.get("machine_output_changed") is False),
+            "rich-is-default",
+            _gate_status(default_contract.get("default_backend") == "rich" and default_contract.get("machine_output_changed") is False),
             ("default_tui_backend_contract",),
-            "Textual is the default TUI while machine output remains unchanged",
+            "Rich is the default TUI while machine output remains unchanged",
         ),
         TextualReplacementGateItem(
-            "auto-prefers-textual",
-            _gate_status(selections[0].effective_backend == "textual" and selections[0].default_backend == "textual"),
+            "auto-prefers-rich",
+            _gate_status(selections[0].effective_backend == "rich" and selections[0].default_backend == "rich"),
             (selections[0].as_dict()["selection_digest"],),
-            "auto backend chooses Textual when Textual is available",
+            "auto backend chooses Rich even when Textual is available",
         ),
         TextualReplacementGateItem(
             "fallback-is-fenced",
             _gate_status(
-                selections[1].effective_backend == "unavailable"
-                and notices[1].severity == "error"
+                selections[1].effective_backend == "rich"
+                and notices[1].severity == "info"
                 and selections[2].effective_backend == "unavailable"
                 and selections[3].effective_backend == "unavailable"
                 and selections[4].effective_backend == "textual"
                 and cleanup["legacy_path_count"] == 0
             ),
             tuple(notice.as_dict()["notice_digest"] for notice in notices),
-            "Legacy fallback is removed; absent Textual fails closed",
+            "Legacy fallback is removed; explicitly requested absent Textual fails closed",
         ),
         TextualReplacementGateItem(
             "feature-parity-complete",

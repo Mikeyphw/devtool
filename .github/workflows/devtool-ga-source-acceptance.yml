@@ -20,10 +20,18 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install exact checked-out candidate and source test dependencies
-        run: python3 -B -m pip install --disable-pip-version-check . pytest pexpect cryptography
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B -m pip install --disable-pip-version-check 'setuptools>=75,<82' wheel 'coverage>=7,<9' 'cryptography>=43,<47'
+          python3 -B -m pip install --disable-pip-version-check -e '.[textual]' pytest pexpect
+      - name: Verify hosted test dependencies before acceptance
+        run: python3 -B -c 'import coverage, cryptography, pexpect, pytest, textual'
       - name: Verify real JDK signing fixture prerequisite
         run: keytool -help >/dev/null 2>&1
       # W3 is the audited superset of GA-00/01/02/03 and W2. Run once;
       # the independent CI24 workflow still enumerates all test modules.
       - name: Unified full W3 source acceptance
         run: python3 -u -B tests/w3_native_validate.py --profile full
+      - name: W4 shared terminal and presentation acceptance (nonduplicated W3 complement)
+        run: python3 -u -B tests/w4_native_validate.py --hosted-extra

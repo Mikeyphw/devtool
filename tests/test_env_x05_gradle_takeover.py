@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests._compat import fixture_shebang
+
 import json
 import os
 from pathlib import Path
@@ -51,7 +53,9 @@ def _config(root: Path, takeover: dict | None = None, *, execution_environment: 
     )
 
 
-def _exe(path: Path, text: str = "#!/bin/sh\nexit 0\n") -> Path:
+def _exe(path: Path, text: str | None = None) -> Path:
+    if text is None:
+        text = fixture_shebang()+"exit 0\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
@@ -287,9 +291,9 @@ def test_execute_real_gradle_escapes_shim_and_preserves_underlying_exit_status(t
     monkeypatch.setenv("XDG_STATE_HOME", str(_external_state_root(tmp_path)))
     shim = tmp_path / "shim"
     real = tmp_path / "real"
-    _exe(shim / "gradle", "#!/bin/sh\nexit 99\n")
+    _exe(shim / "gradle", fixture_shebang()+"exit 99\n")
     (shim / ".devtool-gradle-takeover-shim").write_text("test\n", encoding="utf-8")
-    _exe(real / "gradle", "#!/bin/sh\nexit 7\n")
+    _exe(real / "gradle", fixture_shebang()+"exit 7\n")
     env = dict(os.environ)
     env["PATH"] = os.pathsep.join((str(shim), str(real)))
     cfg = _config(tmp_path)

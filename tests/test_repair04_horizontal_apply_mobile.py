@@ -48,6 +48,13 @@ def test_success_never_credits_unobserved_intermediate_stages() -> None:
 
 
 def test_live_textual_terminal_resize_reclaims_log_height() -> None:
+    # Textual is an optional project extra; hosted source qualification installs it.
+    # Skip only when the top-level module is absent, not on broken installed imports.
+    import importlib.util
+    import pytest
+
+    if importlib.util.find_spec("textual") is None:
+        pytest.skip("optional Textual dependency unavailable; hosted resize test required")
     from textual.widgets import RichLog, Static
     from devtool.textual_apply_host import build_apply_textual_app
 

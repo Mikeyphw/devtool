@@ -1,8 +1,8 @@
 # Devtool — One integrated execution roadmap
 
-**Roadmap:** `DEVTOOL-UNIFIED/1.0` · **Planning revision:** `1.10` · **As of:** 2026-11-25 UTC
-**Repository:** `Mikeyphw/devtool` · **Verified base main:** `2e1cbe46f03e133fb424a8a22f74773733b65b99`
-**Status:** **W1/W2 MERGED; GA-00 P09 AND P17 RELEASE ACCEPTED / W3 SOURCE MERGED / CONSOLIDATED P16 / VALIDATION / RECOVERY REPAIR CANDIDATE**. It supersedes the **execution ordering and presentation** of the v1.1 Library design, **not** its original 24 overlay IDs, promise inventory, acceptance history, or Git commits.
+**Roadmap:** `DEVTOOL-UNIFIED/1.0` · **Planning revision:** `1.12` · **As of:** 2026-11-26 UTC
+**Repository:** `Mikeyphw/devtool` · **Verified base main:** `f5b02e22691c39dd9500de5b766659156336b6c6`
+**Status:** **W1/W2/W3 SOURCE MERGED; GA-00 P09/P17 HISTORICAL RELEASE SCOPE ACCEPTED; P16 SELECTION QUALIFIED; FULL W3 OPEN; W4 CONSOLIDATED REMEDIATION CANDIDATE**. It supersedes the **execution ordering and presentation** of the v1.1 Library design, **not** its original 24 overlay IDs, promise inventory, acceptance history, or Git commits.
 **Authoritative committed roadmap:** `docs/DEVTOOL_NATIVE_OVERLAY_DELIVERY_V3_ROADMAP.md` on `main` (historical milestone statuses may be stale). Revision 1.5 was adopted through merged PR #49. Revision 1.6 records the forward-only guide correction. Revision 1.7 recorded PR #52 and the pending P09 repair. Revision 1.8 reconciles the subsequent PR #53 merge and qualified protected release; introduces the W3 exact-archive, credential-scope and shared read-only CI gateway retry corrections and P16 selected-repository denial/restoration observer. See `docs/DEVTOOL_W3_FOUNDATIONAL_ACCEPTANCE.md` for per-promise evidence and remaining gates.  
 **User operating contract:** `AGENT-OPERATIONS-DEVTOOL` v1.25, SHA-256 `850a858e863bb2715da7f9e09bd26ede3d7f81231f7da05db3b381b6cfb7df76` (read in full and byte-verified).  
 **Canonical bug ledger:** `/Devtool/DEVTOOL_BUG_LEDGER_cg.md`, SHA-256 `f90e6a719b794ba86adad72c6b4675af6fa5901aa51dee6333f3b3e3e2782c32` (read in full; historical dispositions require current-source retriage).  
@@ -17,6 +17,18 @@ PR54 merged source `2e1cbe46f03e133fb424a8a22f74773733b65b99`, tree `c4decff69ac
 ## Revision 1.10 — validator bootstrap and retained-failure recovery
 
 W3 performance candidate failed before collecting tests on Termux (DT-20261126-03). Native local JUnit parsing is independent of the hosted `tools` namespace; a separate exact-base successor preserves and verifies the failed retained worktree and original transaction. Native rollback policy is explicit for future validation failures. Original overlay inventory and required full W3 / CI24 gates remain unchanged. Production and physical Termux qualification pending.
+
+## Revision 1.11 — W4 shared terminal ownership
+
+PR55 merged at `f5b02e22691c39dd9500de5b766659156336b6c6`, tree `4f034b4c04c2a674a5968d06f562463600a7a3d8`. Native transaction `20261126T032708Z-403071e70e0c`, session `d48548615f564b3b9587b92c7e9bfc93`, required CI 6/6 and CI24 24/24 (run 45750411068 attempt 1) are retained. Owner selection campaign `3e4d511579d8519ecbaf6943e33e2ffd3c7f10657aaf468a42b293b6c85ac46e` passed baseline/denied/restored; full P16/W3 remain false. W4 depends on W2 and the safe native/UI boundary, not blanket W3 acceptance. W3 residual gates remain bound to affected operations, W4 host testing and W8/W10 protected operations. W4 combines M6 and both Rich slices without changing the original inventory or replaying W3. See `docs/DEVTOOL_W4_RICH_ACCEPTANCE.md`. Current candidate is not a receipt of its own native/hosted/device acceptance.
+
+## Revision 1.13 — W4 HF04 hosted dependency parity
+
+RICH-U-C01-F04-HF04 is a subordinate repair on the same draft PR #56, not an original overlay. GA must install the reviewed CI24 dependency ranges and Textual extra before running W3 and the W4 complement; the hosted dependency-parity regression is part of the existing bounded native inventory. Exact new-head GA, required CI and independent CI24 evidence must be verified before merge. The M6 interactive drill-down and physical acceptance remain subsequent work.
+
+## Revision 1.12 — W4 HF03 portability recovery
+
+RICH-U-C01-F04-HF03 is a corrective subordinate of HF02, not another original overlay. The owner HF02 native validation failed at the Bash/sh fixture shebang path limit and reported rollback; the successor verifies actual rollback history and reuses the original PR #56 only. The bounded 14-module local validation and exhaustive CI24 policy are unchanged. See the W4 acceptance document for the exact portability regression; hosted/device acceptance remains pending.
 
 ## Current execution waves and gates (supersedes historical queue)
 
@@ -377,3 +389,17 @@ This section retains every currently identified atomic **GA-00**, **M6**, **U01*
 ### W3 validation budget and recovery
 
 Revision 1.9 candidate incorporates the undelivered P16 diagnostics and CI monitor fixes, mandatory dependency-aware local test selection, exact-input module checkpoints, explicit verified rollback recovery and consolidated full W3 hosted source acceptance. CI24 remains exhaustive and independently source-bound; the remaining original 24-overlay inventory and all acceptance obligations are unchanged.
+
+### W4 physical-acceptance repair — RICH-U-C01-F04
+
+Hotfix of RICH-U-C01; no new original overlay identity. Continue existing PR56 from d48d98abfceabd38619f1b36e94452465a35a3ed with native validated overlay and exact new-head CI. F04 workspace requirements and user controls are documented in `docs/DEVTOOL_W4_RICH_ACCEPTANCE.md`; device acceptance remains pending.
+
+
+### M6 interactive run navigation — same-PR W4 subordinate repair
+
+`RICH-U-C01-F04-HF05` continues exact HF04 PR #56 head `854126dd622b485dde3dedd7e49d9f096ff6ba23` (GA 46047973864, all 15 observed PR workflows successful, CI24 46048410600 with 24/24 shard jobs and summary successful). Adds real PR check → workflow run → job → step navigation and selected job logs in the existing shared M6 Live observer, with exact identity, explicit read-only GET, back/resize/log paging and stale result revocation. No original milestone or promise is added, retired, or promoted to FULL by this subordinate repair. M6-14/15/16/17/18/26/27/28/29/32/33/35 remain subject to current-source regression and native/hosted/physical acceptance. See the W4 acceptance guide for controls and evidence boundaries.
+
+
+### W4 Textual parity — same-PR subordinate repair
+
+`RICH-U-C01-F04-HF06` continues PR #56 from the exact HF05 published head `8409f9d1b9cc637bcc3c5abaa99e106f7406b5b6`. The explicit Textual GitHub page shares native workflow, exact-attempt job and log operations with Rich and adds a read-only native PR-session view. Preserve native mutation confirmation, selection identity, safe paging, search and compact portrait layout. See the W4 acceptance guide. No original milestone or acceptance verdict is promoted solely by this source change.

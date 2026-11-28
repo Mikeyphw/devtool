@@ -17,6 +17,8 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
 
 jobs:
   portable_evidence_source:
@@ -37,7 +39,13 @@ jobs:
         with:
           python-version: '3.13'
           check-latest: false
+      - name: Verify eligible merged-tree source evidence (read only)
+        id: tree_reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -B -m devtool.postmerge_ci decide --workflow devtool-portable-ci-qualification.yml --scope ${{ matrix.host }} --proof "${{ runner.temp }}/tree-proof.json"
       - name: Run positive and negative CI evidence source regressions
+        if: steps.tree_reuse.outputs.reuse != 'true'
         shell: pwsh
         run: |
           if ((git rev-parse HEAD).Trim() -ne $env:GITHUB_SHA) {
@@ -48,3 +56,14 @@ jobs:
           python -B devtool/actions_ci_qualification.py --help
           if ($LASTEXITCODE -ne 0) { throw 'Devtool CLI failed' }
           Write-Output 'DEVTOOL_PORTABLE_CI_SOURCE_PASS'
+      - name: Record executed source tree proof
+        if: success() && steps.tree_reuse.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        run: python -B -m devtool.postmerge_ci record --workflow devtool-portable-ci-qualification.yml --scope ${{ matrix.host }} --proof "${{ runner.temp }}/tree-proof.json"
+      - name: Upload scoped source tree evidence (not release acceptance)
+        if: success() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: devtool-tree-proof-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.host }}
+          path: ${{ runner.temp }}/tree-proof.json
+          if-no-files-found: error
+          retention-days: 14

@@ -14,7 +14,7 @@ def missing(): return TextualAvailability(False, reason="textual package is not 
 
 def test_contract_explicitly_removes_legacy_and_preserves_truth():
     contract=textual_replacement_hardening_contract()
-    assert contract["primary_backend"]=="textual"
+    assert contract["primary_backend"]=="rich"
     assert contract["legacy_backend_status"]=="removed"
     assert not contract["legacy_allowed_when"]
     assert contract["textual_owns_truth"] is False
@@ -22,7 +22,7 @@ def test_contract_explicitly_removes_legacy_and_preserves_truth():
 
 
 def test_missing_textual_produces_error_not_fallback():
-    selection=resolve_tui_backend_selection(requested_backend="auto",availability=missing())
+    selection=resolve_tui_backend_selection(requested_backend="textual",availability=missing())
     notice=build_tui_backend_notice(selection)
     assert notice.severity=="error"
     assert "no legacy fallback" in notice.message

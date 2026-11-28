@@ -12,6 +12,8 @@ from typing import Any
 
 import pytest
 
+from tests._compat import short_private_ipc_socket_dir
+
 from devtool.artifact_validation import run_artifact_validation_script
 from devtool.artifacts import write_archive_entries
 from devtool.core.events.bus import EventBus
@@ -169,25 +171,28 @@ def test_ipc_publisher_registers_and_publishes_json_safe_run_id_state(tmp_path: 
 
 
 def test_broker_is_running_requires_real_pong(tmp_path: Path) -> None:
-    sock_path = tmp_path / "fake.sock"
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(str(sock_path))
-    server.listen(1)
-    ready = threading.Event()
+    with short_private_ipc_socket_dir() as directory:
+        sock_path = Path(directory) / "ipc.sock"
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(str(sock_path))
+            server.listen(1)
+            server.settimeout(2)
+            ready = threading.Event()
+            observed = []
 
-    def serve_once() -> None:
-        ready.set()
-        conn, _ = server.accept()
-        with conn:
-            conn.recv(1024)
-            conn.sendall(b'{"type":"not-pong"}\n')
-        server.close()
+            def serve_once() -> None:
+                ready.set()
+                conn, _ = server.accept()
+                with conn:
+                    observed.append(conn.recv(1024))
+                    conn.sendall(b'{"type":"not-pong"}\n')
 
-    thread = threading.Thread(target=serve_once, daemon=True)
-    thread.start()
-    ready.wait(1)
-    assert broker_is_running(sock_path) is False
-    thread.join(timeout=1)
+            thread = threading.Thread(target=serve_once, daemon=True)
+            thread.start()
+            assert ready.wait(1)
+            assert broker_is_running(sock_path) is False
+            thread.join(timeout=2)
+            assert not thread.is_alive() and observed and observed[0]
 
 
 def test_command_result_from_operation_treats_fatal_issues_as_failure() -> None:
